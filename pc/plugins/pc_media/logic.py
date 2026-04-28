@@ -80,7 +80,7 @@ if __name__ == "__main__":
         result = asyncio.run(get_media())
         print(json.dumps(result, ensure_ascii=False))
     except:
-        print(json.dumps({"title": "", "artist": "", "playing": False, "cover": None}))
+        print(json.dumps({"title": "", "subtitle": "", "playing": False, "cover": None}))
 """
         with open(self._media_script, "w", encoding="utf-8") as f:
             f.write(code)
@@ -146,11 +146,6 @@ if __name__ == "__main__":
 
     def get_stats(self):
         with self._data_lock:
-            img_to_send = None
-            if self._media_info["title"] != self._last_sent_image_title:
-                img_to_send = self._media_info["cover"]
-                self._last_sent_image_title = self._media_info["title"]
-
             return {
                 "plugin_id": "pc_media",
                 "volume": self._current_volume,
@@ -158,7 +153,7 @@ if __name__ == "__main__":
                 "playing": self._media_info["playing"],
                 "title": self._media_info["title"],
                 "subtitle": self._media_info["subtitle"],
-                "cover": img_to_send
+                "cover": self._media_info["cover"]
             }
 
     def get_wizard_data(self):

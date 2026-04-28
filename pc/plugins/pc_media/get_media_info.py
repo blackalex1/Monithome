@@ -23,6 +23,7 @@ async def get_media():
         if session:
             pb = session.get_playback_info()
             props = await session.try_get_media_properties_async()
+            img = None
             if props.thumbnail:
                 try:
                     stream = await props.thumbnail.open_read_async()
@@ -32,13 +33,13 @@ async def get_media():
                     img_data = base64.b64encode(bytes(buffer)).decode('utf-8')
                     img = f"data:image/png;base64,{img_data}"
                 except: pass
-            return {"title": props.title, "artist": props.artist, "playing": pb.playback_status == 4 if pb else False, "cover": img}
+            return {"title": props.title, "subtitle": props.artist, "playing": pb.playback_status == 4 if pb else False, "cover": img}
     except: pass
-    return {"title": "", "artist": "", "playing": False, "cover": None}
+    return {"title": "", "subtitle": "", "playing": False, "cover": None}
 
 if __name__ == "__main__":
     try:
         result = asyncio.run(get_media())
-        print(json.dumps(result, ensure_ascii=False)) # ensure_ascii=False сохраняет кириллицу
+        print(json.dumps(result, ensure_ascii=False))
     except:
-        print(json.dumps({"title": "", "artist": "", "playing": False, "image": None}))
+        print(json.dumps({"title": "", "artist": "", "playing": False, "cover": None}))
