@@ -26,64 +26,11 @@ class Plugin:
         CoInitialize()
         self._init_audio()
         
-        self._media_script = os.path.join(os.path.dirname(__file__), "get_media_info.py")
-        self._create_helper_script()
-        
         self._stop_event = threading.Event()
         self._vol_thread = threading.Thread(target=self._volume_monitoring_loop, daemon=True)
         self._vol_thread.start()
-        self._media_thread = threading.Thread(target=self._media_monitoring_loop, daemon=True)
+        self._media_thread = threading.Thread(target=self._media_worker, daemon=True)
         self._media_thread.start()
-
-    def _create_helper_script(self):
-        code = """
-import asyncio
-import json
-import base64
-import sys
-import io
-from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as SessionManager
-from winsdk.windows.storage.streams import DataReader
-
-# Принудительно ставим UTF-8 для вывода на Windows
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
-
-async def get_media():
-    try:
-        manager = await SessionManager.request_async()
-        sessions = manager.get_sessions()
-        session = manager.get_current_session()
-        if not session and sessions: session = sessions[0]
-        for s in sessions:
-            if s.get_playback_info().playback_status == 4:
-                session = s
-                break
-        if session:
-            pb = session.get_playback_info()
-            props = await session.try_get_media_properties_async()
-            img = None
-            if props.thumbnail:
-                try:
-                    stream = await props.thumbnail.open_read_async()
-                    reader = DataReader(stream.get_input_stream_at(0))
-                    await reader.load_async(stream.size)
-                    buffer = reader.read_buffer(stream.size)
-                    img_data = base64.b64encode(bytes(buffer)).decode('utf-8')
-                    img = f"data:image/png;base64,{img_data}"
-                except: pass
-            return {"title": props.title, "subtitle": props.artist, "playing": pb.playback_status == 4 if pb else False, "cover": img}
-    except: pass
-    return {"title": "", "subtitle": "", "playing": False, "cover": None}
-
-if __name__ == "__main__":
-    try:
-        result = asyncio.run(get_media())
-        print(json.dumps(result, ensure_ascii=False))
-    except:
-        print(json.dumps({"title": "", "subtitle": "", "playing": False, "cover": None}))
-"""
-        with open(self._media_script, "w", encoding="utf-8") as f:
-            f.write(code)
 
     def _init_audio(self):
         try:
@@ -108,41 +55,83 @@ if __name__ == "__main__":
                         with self._data_lock:
                             self._current_volume = v
                             self._current_mute = m
-                        self.socketio.emit('stats', {
-                            "plugin_id": "pc_media",
-                            "volume": self._current_volume,
-                            "mute": self._current_mute,
-                            "playing": self._media_info["playing"],
-                            "title": self._media_info["title"],
-                            "subtitle": self._media_info["subtitle"],
-                            "cover": None
-                        })
+                        self.socketio.emit('stats', self.get_stats_lite())
                 except:
                     self._audio_initialized = False
                     self._init_audio()
-            time.sleep(0.1)
+            time.sleep(0.2)
 
-    def _media_monitoring_loop(self):
-        CoInitialize()
-        python_exe = sys.executable
-        while not self._stop_event.is_set():
-            try:
-                # Читаем вывод строго в UTF-8
-                result = subprocess.check_output([python_exe, self._media_script], stderr=subprocess.DEVNULL)
-                info = json.loads(result.decode('utf-8'))
-                
-                if info["title"] != self._media_info["title"] or info["playing"] != self._media_info["playing"]:
-                    with self._data_lock:
-                        self._media_info = info
-                    self.socketio.emit('stats', self.get_stats())
-                else:
-                    with self._data_lock:
-                        # Сохраняем обложку из старого состояния, если новая пустая
-                        if info.get("cover") is None:
-                            info["cover"] = self._media_info.get("cover")
-                        self._media_info = info
-            except: pass
-            time.sleep(0.5)
+    def get_stats_lite(self):
+        """Легкая версия статов для громкости (без обложки)"""
+        with self._data_lock:
+            return {
+                "plugin_id": "pc_media",
+                "volume": self._current_volume,
+                "mute": self._current_mute,
+                "playing": self._media_info["playing"],
+                "title": self._media_info["title"],
+                "subtitle": self._media_info["subtitle"],
+                "cover": None
+            }
+
+    def _media_worker(self):
+        """Поток для мониторинга медиа через WinSDK напрямую"""
+        async def run_loop():
+            from winsdk.windows.media.control import GlobalSystemMediaTransportControlsSessionManager as SessionManager
+            from winsdk.windows.storage.streams import DataReader
+            
+            while not self._stop_event.is_set():
+                try:
+                    manager = await SessionManager.request_async()
+                    session = manager.get_current_session()
+                    if not session:
+                        sessions = manager.get_sessions()
+                        if sessions: session = sessions[0]
+                    
+                    if session:
+                        pb = session.get_playback_info()
+                        props = await session.try_get_media_properties_async()
+                        
+                        img = None
+                        if props.thumbnail:
+                            try:
+                                stream = await props.thumbnail.open_read_async()
+                                reader = DataReader(stream.get_input_stream_at(0))
+                                await reader.load_async(stream.size)
+                                buffer = reader.read_buffer(stream.size)
+                                img_data = base64.b64encode(bytes(buffer)).decode('utf-8')
+                                img = f"data:image/png;base64,{img_data}"
+                            except: pass
+                        
+                        info = {
+                            "title": props.title or "",
+                            "subtitle": props.artist or "",
+                            "playing": pb.playback_status == 4 if pb else False,
+                            "cover": img
+                        }
+                        
+                        # Проверяем изменения
+                        if info["title"] != self._media_info["title"] or info["playing"] != self._media_info["playing"]:
+                            with self._data_lock:
+                                self._media_info = info
+                            self.socketio.emit('stats', self.get_stats())
+                        else:
+                            with self._data_lock:
+                                # Сохраняем обложку, если новая пришла пустой
+                                if info["cover"] is None:
+                                    info["cover"] = self._media_info.get("cover")
+                                self._media_info = info
+                    else:
+                        if self._media_info["title"] != "":
+                            with self._data_lock:
+                                self._media_info = {"title": "", "subtitle": "", "playing": False, "cover": None}
+                            self.socketio.emit('stats', self.get_stats())
+                except: pass
+                await asyncio.sleep(0.5)
+
+        try:
+            asyncio.run(run_loop())
+        except: pass
 
     def get_stats(self):
         with self._data_lock:
