@@ -42,4 +42,4 @@ if __name__ == "__main__":
         result = asyncio.run(get_media())
         print(json.dumps(result, ensure_ascii=False))
     except:
-        print(json.dumps({"title": "", "artist": "", "playing": False, "cover": None}))
+        print(json.dumps({"title": "", "subtitle": "", "playing": False, "cover": None}))

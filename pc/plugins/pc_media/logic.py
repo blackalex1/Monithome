@@ -168,7 +168,7 @@ if __name__ == "__main__":
         }
 
     def handle_wizard(self, selections):
-        """Сохранение настроек медиа"""
+        """Сохранение настроек медиа с защитой метаданных"""
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
         
         try:
@@ -177,6 +177,17 @@ if __name__ == "__main__":
         except:
             current_config = {}
 
+        # Гарантируем метаданные
+        meta = {
+            "version": current_config.get("version", "1.1.0"),
+            "author_name": current_config.get("author_name", "BlackAlex1"),
+            "author_url": current_config.get("author_url", "https://github.com/blackalex1"),
+            "description": current_config.get("description", "Управление громкостью и воспроизведением системного плеера Windows."),
+            "id": "pc_media",
+            "name": "Медиа"
+        }
+
+        current_config.update(meta)
         current_config.update({
             "pc_enabled": "pc_control" in selections,
             "widgets": [{
@@ -189,6 +200,7 @@ if __name__ == "__main__":
         self.config = current_config
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(current_config, f, indent=2, ensure_ascii=False)
+        print(f"[MEDIA] Config saved with metadata protection. Version: {current_config.get('version')}")
 
     def handle_command(self, target, action):
         if action == "get_wizard":

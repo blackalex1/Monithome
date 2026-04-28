@@ -260,16 +260,27 @@ class Plugin:
         }
 
     def handle_wizard(self, selections):
-        """Сохранение выбранных колонок (теперь только данные, без виджетов)"""
+        """Сохранение выбранных колонок с защитой метаданных"""
         config_path = PLUGIN_DIR / "config.json"
         
-        # Загружаем текущий конфиг, чтобы не потерять версию и автора
+        # Загружаем текущий конфиг
         try:
             with open(config_path, "r", encoding="utf-8") as f:
                 current_config = json.load(f)
         except:
             current_config = {}
 
+        # Гарантируем наличие метаданных, даже если файл был пуст или поврежден
+        meta = {
+            "version": current_config.get("version", "1.1.0"),
+            "author_name": current_config.get("author_name", "BlackAlex1"),
+            "author_url": current_config.get("author_url", "https://github.com/blackalex1"),
+            "description": current_config.get("description", "Управление Яндекс Станциями через локальное API Glagol."),
+            "id": "yandex_station",
+            "name": "Яндекс Станции"
+        }
+
+        current_config.update(meta)
         current_config.update({
             "selected_device_ids": selections,
             "dependencies": ["pc_media"],
@@ -279,6 +290,7 @@ class Plugin:
         self.config = current_config
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(current_config, f, indent=2, ensure_ascii=False)
+        print(f"[YANDEX] Config saved with metadata protection. Version: {current_config.get('version')}")
 
     def handle_command(self, target, action, data=None):
         if action == "get_wizard":
