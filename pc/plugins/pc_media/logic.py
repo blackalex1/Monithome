@@ -17,7 +17,7 @@ class Plugin:
         self.manager = manager
         self._volume = None
         self._audio_initialized = False
-        self._media_info = {"title": "", "artist": "", "playing": False, "image": None}
+        self._media_info = {"title": "", "subtitle": "", "playing": False, "cover": None}
         self._current_volume = 0
         self._current_mute = False
         self._last_sent_image_title = ""
@@ -68,18 +68,19 @@ async def get_media():
                     reader = DataReader(stream.get_input_stream_at(0))
                     await reader.load_async(stream.size)
                     buffer = reader.read_buffer(stream.size)
-                    img = base64.b64encode(bytes(buffer)).decode('utf-8')
+                    img_data = base64.b64encode(bytes(buffer)).decode('utf-8')
+                    img = f"data:image/png;base64,{img_data}"
                 except: pass
-            return {"title": props.title, "artist": props.artist, "playing": pb.playback_status == 4 if pb else False, "image": img}
+            return {"title": props.title, "subtitle": props.artist, "playing": pb.playback_status == 4 if pb else False, "cover": img}
     except: pass
-    return {"title": "", "artist": "", "playing": False, "image": None}
+    return {"title": "", "subtitle": "", "playing": False, "cover": None}
 
 if __name__ == "__main__":
     try:
         result = asyncio.run(get_media())
-        print(json.dumps(result, ensure_ascii=False)) # ensure_ascii=False сохраняет кириллицу
+        print(json.dumps(result, ensure_ascii=False))
     except:
-        print(json.dumps({"title": "", "artist": "", "playing": False, "image": None}))
+        print(json.dumps({"title": "", "artist": "", "playing": False, "cover": None}))
 """
         with open(self._media_script, "w", encoding="utf-8") as f:
             f.write(code)
@@ -113,8 +114,8 @@ if __name__ == "__main__":
                             "mute": self._current_mute,
                             "playing": self._media_info["playing"],
                             "title": self._media_info["title"],
-                            "artist": self._media_info["artist"],
-                            "image": None
+                            "subtitle": self._media_info["subtitle"],
+                            "cover": None
                         })
                 except:
                     self._audio_initialized = False
@@ -136,6 +137,9 @@ if __name__ == "__main__":
                     self.socketio.emit('stats', self.get_stats())
                 else:
                     with self._data_lock:
+                        # Сохраняем обложку из старого состояния, если новая пустая
+                        if info.get("cover") is None:
+                            info["cover"] = self._media_info.get("cover")
                         self._media_info = info
             except: pass
             time.sleep(0.5)
@@ -144,7 +148,7 @@ if __name__ == "__main__":
         with self._data_lock:
             img_to_send = None
             if self._media_info["title"] != self._last_sent_image_title:
-                img_to_send = self._media_info["image"]
+                img_to_send = self._media_info["cover"]
                 self._last_sent_image_title = self._media_info["title"]
 
             return {
@@ -153,8 +157,8 @@ if __name__ == "__main__":
                 "mute": self._current_mute,
                 "playing": self._media_info["playing"],
                 "title": self._media_info["title"],
-                "artist": self._media_info["artist"],
-                "image": img_to_send
+                "subtitle": self._media_info["subtitle"],
+                "cover": img_to_send
             }
 
     def get_wizard_data(self):
@@ -170,24 +174,26 @@ if __name__ == "__main__":
 
     def handle_wizard(self, selections):
         """Сохранение настроек медиа"""
-        new_config = {
-            "id": "pc_media",
-            "name": "Медиа",
-            "pc_enabled": "pc_control" in selections,
-            "widgets": []
-        }
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
         
-        # Всегда добавляем ОДИН общий виджет, если хоть что-то выбрано (или просто по умолчанию)
-        new_config["widgets"].append({
-            "id": "unified_media_center",
-            "type": "unified_media",
-            "label": "Управление Медиа"
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                current_config = json.load(f)
+        except:
+            current_config = {}
+
+        current_config.update({
+            "pc_enabled": "pc_control" in selections,
+            "widgets": [{
+                "id": "unified_media_center",
+                "type": "unified_media",
+                "label": "Управление Медиа"
+            }]
         })
         
-        self.config = new_config
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        self.config = current_config
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(new_config, f, indent=2, ensure_ascii=False)
+            json.dump(current_config, f, indent=2, ensure_ascii=False)
 
     def handle_command(self, target, action):
         if action == "get_wizard":

@@ -355,8 +355,12 @@ def handle_auth_attempt(data):
         # Уведомляем менеджеров
         socketio.emit('pairing_complete', {'sid': sid})
         
-        # Отправляем данные после успеха
+        # Отправляем ВСЕ данные сразу после успеха
         send_ui_config(broadcast=False)
+        for p_id, p_instance in plugins.items():
+            if hasattr(p_instance, 'get_stats'):
+                try: emit('stats', p_instance.get_stats())
+                except: pass
     else:
         emit('auth_failed', {'message': 'Invalid code'})
 

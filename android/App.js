@@ -100,7 +100,16 @@ export default function App() {
 
     newSocket.on('stats', (data) => {
       const pluginId = data.plugin_id || 'system_stats';
-      setAllStats(prev => ({ ...prev, [pluginId]: data }));
+      
+      setAllStats(prev => {
+        const prevPluginData = prev[pluginId] || {};
+        // Если пришла пустая обложка, сохраняем старую
+        const mergedData = { ...data };
+        if (mergedData.cover === null && prevPluginData.cover) {
+          mergedData.cover = prevPluginData.cover;
+        }
+        return { ...prev, [pluginId]: mergedData };
+      });
       
       const numericKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
       if (numericKeys.length > 0) {

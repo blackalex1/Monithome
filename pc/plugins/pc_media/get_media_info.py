@@ -23,18 +23,18 @@ async def get_media():
         if session:
             pb = session.get_playback_info()
             props = await session.try_get_media_properties_async()
-            img = None
             if props.thumbnail:
                 try:
                     stream = await props.thumbnail.open_read_async()
                     reader = DataReader(stream.get_input_stream_at(0))
                     await reader.load_async(stream.size)
                     buffer = reader.read_buffer(stream.size)
-                    img = base64.b64encode(bytes(buffer)).decode('utf-8')
+                    img_data = base64.b64encode(bytes(buffer)).decode('utf-8')
+                    img = f"data:image/png;base64,{img_data}"
                 except: pass
-            return {"title": props.title, "artist": props.artist, "playing": pb.playback_status == 4 if pb else False, "image": img}
+            return {"title": props.title, "artist": props.artist, "playing": pb.playback_status == 4 if pb else False, "cover": img}
     except: pass
-    return {"title": "", "artist": "", "playing": False, "image": None}
+    return {"title": "", "artist": "", "playing": False, "cover": None}
 
 if __name__ == "__main__":
     try:

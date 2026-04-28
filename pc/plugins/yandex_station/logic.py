@@ -261,18 +261,24 @@ class Plugin:
 
     def handle_wizard(self, selections):
         """Сохранение выбранных колонок (теперь только данные, без виджетов)"""
-        new_config = {
-            "id": "yandex_station",
-            "name": "Яндекс Станции",
-            "selected_device_ids": selections,
-            "dependencies": ["pc_media"], # Универсальная декларация зависимости
-            "widgets": [] # Теперь виджеты здесь не нужны, их создает pc_media
-        }
-        
-        self.config = new_config
         config_path = PLUGIN_DIR / "config.json"
+        
+        # Загружаем текущий конфиг, чтобы не потерять версию и автора
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                current_config = json.load(f)
+        except:
+            current_config = {}
+
+        current_config.update({
+            "selected_device_ids": selections,
+            "dependencies": ["pc_media"],
+            "widgets": []
+        })
+        
+        self.config = current_config
         with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(new_config, f, indent=2, ensure_ascii=False)
+            json.dump(current_config, f, indent=2, ensure_ascii=False)
 
     def handle_command(self, target, action, data=None):
         if action == "get_wizard":
