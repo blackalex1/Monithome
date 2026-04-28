@@ -9,6 +9,10 @@ import websockets
 from pathlib import Path
 
 import logging
+import requests
+import asyncio
+import ipaddress
+from zeroconf import ServiceBrowser, Zeroconf
 
 # Настройка логирования (только ошибки)
 logging.basicConfig(level=logging.ERROR, format='[%(asctime)s] %(message)s')
@@ -17,6 +21,21 @@ logger = logging.getLogger("YANDEX")
 # Определяем пути относительно файла плагина
 PLUGIN_DIR = Path(__file__).parent
 TOKENS_FILE = PLUGIN_DIR / "glagol_tokens.json"
+AUTH_FILE = PLUGIN_DIR / ".env"
+
+class SpeakerDiscovery:
+    def __init__(self):
+        self.found_devices = {}
+    def remove_service(self, zeroconf, type, name): pass
+    def update_service(self, zeroconf, type, name): pass
+    def add_service(self, zeroconf, type, name):
+        info = zeroconf.get_service_info(type, name)
+        if info:
+            addresses = [str(ipaddress.ip_address(addr)) for addr in info.addresses]
+            props = {k.decode(): v.decode() if isinstance(v, bytes) else v for k, v in info.properties.items()}
+            device_id = props.get("deviceId")
+            if device_id:
+                self.found_devices[device_id] = {"ip": addresses[0], "platform": props.get("platform"), "name": name.split(".")[0]}
 
 class Plugin:
     def __init__(self, socketio, config, manager):
@@ -28,6 +47,8 @@ class Plugin:
         self.states = {}
         self.connections = {} 
         self.loops = {} 
+        self._refreshing_tokens = False
+        self._last_refresh_time = 0
         
         self._load_tokens()
         self._last_state_hash = ""
@@ -50,6 +71,66 @@ class Plugin:
             except Exception as e:
                 print(f"[YANDEX] Error loading tokens: {e}")
 
+    def _refresh_tokens_sync(self):
+        """Автоматическое обновление токенов без участия пользователя"""
+        if self._refreshing_tokens or (time.time() - self._last_refresh_time < 60):
+            return False # Не частим
+        
+        self._refreshing_tokens = True
+        self._last_refresh_time = time.time()
+        print("[YANDEX] Triggering automatic token refresh...")
+        
+        try:
+            # 1. Получаем X-Token из .env
+            x_token = None
+            if AUTH_FILE.exists():
+                with open(AUTH_FILE, "r") as f:
+                    for line in f:
+                        if line.startswith("YANDEX_TOKEN="):
+                            x_token = line.split("=")[1].strip()
+            
+            if not x_token:
+                print("[YANDEX] Refresh failed: No YANDEX_TOKEN in .env")
+                return False
+
+            # 2. Ищем колонки в сети (mDNS)
+            zeroconf = Zeroconf()
+            discovery = SpeakerDiscovery()
+            browser = ServiceBrowser(zeroconf, "_yandexio._tcp.local.", discovery)
+            time.sleep(5)
+            zeroconf.close()
+            local_devices = discovery.found_devices
+
+            # 3. Запрашиваем новые Glagol-токены у Яндекса
+            headers = {"Authorization": f"OAuth {x_token}", "X-Yandex-Token": x_token}
+            r = requests.get("https://quasar.yandex.ru/glagol/device_list", headers=headers, timeout=10)
+            if r.status_code != 200: return False
+            
+            quasar_list = r.json().get("devices", [])
+            new_results = {}
+            for q_dev in quasar_list:
+                d_id = q_dev.get("id")
+                g_token = q_dev.get("glagol_token")
+                if g_token and d_id in local_devices:
+                    new_results[d_id] = {
+                        "name": q_dev.get("name", "Колонка").strip(),
+                        "glagol_token": g_token,
+                        "platform": q_dev.get("platform"),
+                        "ip": local_devices[d_id]["ip"]
+                    }
+
+            if new_results:
+                with open(TOKENS_FILE, "w", encoding="utf-8") as f:
+                    json.dump(new_results, f, ensure_ascii=False, indent=2)
+                self.devices = new_results
+                print(f"[YANDEX] Successfully refreshed tokens for {len(new_results)} devices.")
+                return True
+        except Exception as e:
+            print(f"[YANDEX] Auto-refresh error: {e}")
+        finally:
+            self._refreshing_tokens = False
+        return False
+
     def _device_worker(self, device_id):
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
@@ -59,11 +140,21 @@ class Plugin:
             try:
                 loop.run_until_complete(self._maintain_connection(device_id))
             except Exception as e:
-                print(f"[YANDEX] Connection error for {device_id}: {e}")
+                err_str = str(e)
+                print(f"[YANDEX] Connection error for {device_id}: {err_str}")
+                
+                # Если ошибка токена (код 4000 или текст 'Invalid token')
+                if "4000" in err_str or "Invalid token" in err_str:
+                    print(f"[YANDEX] Invalid token detected for {device_id}. Attempting auto-refresh...")
+                    if self._refresh_tokens_sync():
+                        # Если токены обновились, подождем немного и попробуем снова
+                        time.sleep(1)
+                        continue 
+
                 self.states[device_id]["online"] = False
                 self._broadcast_state()
             
-            time.sleep(2)
+            time.sleep(5)
 
     async def _maintain_connection(self, device_id):
         device = self.devices[device_id]
