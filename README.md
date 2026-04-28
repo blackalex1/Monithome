@@ -19,8 +19,11 @@
 ## 📸 Скриншоты
 
 <p align="center">
-  <img src="./screenshots/pc.png" width="45%" alt="Manager UI">
-  <img src="./screenshots/main.png" width="45%" alt="Mobile UI">
+  <img src="./screenshots/pc.png" width="90%" alt="Manager UI">
+</p>
+
+<p align="center">
+  <img src="./screenshots/main.png" width="90%" alt="Mobile UI">
 </p>
 
 ---
