@@ -1,9 +1,9 @@
 {
   "expo": {
-    "name": "PC Monitor",
-    "slug": "pc-monitor-native",
+    "name": "Monithome",
+    "slug": "monithome-native",
     "version": "1.0.0",
-    "orientation": "default",
+    "orientation": "landscape",
     "userInterfaceStyle": "dark",
     "assetBundlePatterns": [
       "**/*"

@@ -6,7 +6,47 @@ class Plugin:
         self.socketio = socketio
         self.config = config
 
+    def get_wizard_data(self):
+        """Метаданные для настройки кнопок системы"""
+        return {
+            "title": "Системные команды",
+            "description": "Выберите команды, которые будут доступны на планшете.",
+            "items": [
+                {"id": "lock", "label": "Блокировка", "icon": "Lock"},
+                {"id": "sleep", "label": "Режим сна", "icon": "Moon"},
+                {"id": "restart", "label": "Перезагрузка", "icon": "RefreshCw"},
+                {"id": "shutdown", "label": "Выключение", "icon": "Power"}
+            ]
+        }
+
+    def handle_wizard(self, selections):
+        """Сохранение выбранных кнопок"""
+        import json
+        all_buttons = {
+            "lock": { "label": "Блок.", "action": "lock", "icon": "Lock" },
+            "sleep": { "label": "Сон", "action": "sleep", "icon": "Moon", "need_confirm": True },
+            "restart": { "label": "Рестарт", "action": "restart", "icon": "RefreshCw", "color": "text-yellow-500", "need_confirm": True },
+            "shutdown": { "label": "Выкл.", "action": "shutdown", "icon": "Power", "color": "text-red-500", "need_confirm": True }
+        }
+        selected_buttons = [all_buttons[b_id] for b_id in selections if b_id in all_buttons]
+        new_config = {
+            "id": "pc_system", "name": "Система",
+            "actions": [{"id": "system_buttons", "type": "button_group", "label": "Питание и сессия", "buttons": selected_buttons}]
+        }
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(new_config, f, indent=2, ensure_ascii=False)
+
     def handle_command(self, target, action):
+        if action == "get_wizard":
+            data = self.get_wizard_data()
+            self.socketio.emit('wizard_data', {
+                "plugin_id": "pc_system", 
+                "wizard": data,
+                "plugin_info": {"id": "pc_system", "config": self.config}
+            })
+            return
+        
         print(f"PC System Command: {action}")
         if action == 'lock':
             ctypes.windll.user32.LockWorkStation()
@@ -16,3 +56,4 @@ class Plugin:
             os.system("shutdown /r /t 5")
         elif action == 'shutdown':
             os.system("shutdown /s /t 5")
+

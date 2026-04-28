@@ -2,7 +2,7 @@ import {
   Cpu, Activity, HardDrive, Thermometer, 
   Power, RefreshCcw, Moon, Play, Pause, 
   SkipForward, SkipBack, Volume2, Mic, Send,
-  Zap, Layers, Music, RefreshCw, Lock
+  Zap, Layers, Music, RefreshCw, Lock, Shield
 } from 'lucide-react-native';
 
 export const IconMap = {
@@ -28,12 +28,14 @@ export const IconMap = {
   'layers': Layers,
   'music': Music,
   'lock': Lock,
-  'Lock': Lock
+  'Lock': Lock,
+  'shield': Shield,
+  'Shield': Shield
 };
 
 export { 
   Cpu, Activity, HardDrive, Thermometer, 
   Power, RefreshCcw, Moon, Play, Pause, 
   SkipForward, SkipBack, Volume2, Mic, Send,
-  Zap, Layers, Music, RefreshCw, Lock
+  Zap, Layers, Music, RefreshCw, Lock, Shield
 };

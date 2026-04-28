@@ -13,7 +13,6 @@ class Plugin:
     def __init__(self, socketio, config, manager):
         self.socketio = socketio
         self.config = config
-        self._cached_disks = []
         self._stop_event = threading.Event()
         
         # Начальное состояние, СИНХРОНИЗИРОВАННОЕ с config.json
@@ -27,34 +26,17 @@ class Plugin:
             "gpu_load": 0,     # Соответствует gpu_chart
             "gpu_temp": 0,     # Соответствует gpu_temp_chart
             "has_gpu": False,  # Условие для показа GPU блока
-            "disks": [],
             "hostname": socket.gethostname(),
             "os": platform.system()
         }
         
-        self._update_disks()
-        
         self._thread = threading.Thread(target=self._stats_loop, daemon=True)
         self._thread.start()
 
-    def _update_disks(self):
-        disks = []
-        try:
-            for partition in psutil.disk_partitions():
-                if 'cdrom' in partition.opts or partition.fstype == '': continue
-                try:
-                    usage = psutil.disk_usage(partition.mountpoint)
-                    disks.append({
-                        "device": str(partition.device),
-                        "mountpoint": str(partition.mountpoint),
-                        "total": round(usage.total / (1024**3), 1),
-                        "used": round(usage.used / (1024**3), 1),
-                        "percent": usage.percent
-                    })
-                except: pass
-            self._cached_disks = disks
-            self._stats_cache["disks"] = disks
-        except: pass
+
+    def stop(self):
+        """Останавливает фоновый поток плагина"""
+        self._stop_event.set()
 
     def _stats_loop(self):
         # Прогрев CPU
@@ -135,25 +117,34 @@ class Plugin:
                     except: pass
 
                 # Названия
-                cpu_name = self._stats_cache.get('cpu_name', '')
-                if not cpu_name:
+                cpu_name = driver_stats.get('cpu_name', self._stats_cache.get('cpu_name', ''))
+                if not cpu_name or "Family" in cpu_name:
                     try:
-                        cpu_name = subprocess.check_output("wmic cpu get name", shell=True).decode().split('\n')[1].strip()
-                    except: cpu_name = platform.processor()
+                        # Попытка через WMI для получения красивого названия (Intel Core i7...)
+                        w = wmi.WMI()
+                        processors = w.Win32_Processor()
+                        if processors:
+                            cpu_name = processors[0].Name
+                    except:
+                        if not cpu_name: cpu_name = platform.processor()
+
+                gpu_name = ab_stats.get('gpu_name', driver_stats.get('gpu_name', self._stats_cache.get('gpu_name', '')))
 
                 new_stats = {
                     "plugin_id": "system_stats",
                     "cpu": cpu_v,
                     "cpu_temp": cpu_t,
                     "cpu_name": cpu_name,
+                    "cpu_temp_name": cpu_name,
                     "ram_percent": ram.percent,
                     "ram_used": round(ram.used / (1024**3), 1),
                     "ram_total": round(ram.total / (1024**3), 1),
                     "gpu_load": gpu_l,
                     "gpu_temp": gpu_t,
                     "gpu_name": gpu_name,
+                    "gpu_load_name": gpu_name,
+                    "gpu_temp_name": gpu_name,
                     "has_gpu": has_gpu,
-                    "disks": self._cached_disks,
                     "hostname": socket.gethostname(),
                     "os": platform.system()
                 }
@@ -168,7 +159,83 @@ class Plugin:
     def get_stats(self):
         return self._stats_cache
 
+    def get_wizard_data(self):
+        """Возвращает метаданные для универсального мастера настройки"""
+        sensors = [
+            {"id": "cpu", "label": "Загрузка процессора (CPU %)", "type": "chart"},
+            {"id": "cpu_temp", "label": "Температура процессора (°C)", "type": "chart"},
+            {"id": "ram_percent", "label": "Использование ОЗУ (%)", "type": "stat"},
+            {"id": "ram_used", "label": "Использование ОЗУ (ГБ)", "type": "stat"}
+        ]
+        
+        if self._stats_cache.get("has_gpu"):
+            sensors.append({"id": "gpu_load", "label": "Загрузка видеокарты (GPU %)", "type": "chart"})
+            sensors.append({"id": "gpu_temp", "label": "Температура видеокарты (°C)", "type": "chart"})
+            
+        return {
+            "title": "Настройка Мониторинга",
+            "description": "Выберите датчики, которые будут отображаться на планшете.",
+            "items": sensors
+        }
+
+    def handle_wizard(self, selections):
+        """Универсальный метод для сохранения настроек через мастер"""
+        import json
+        
+        widgets = []
+        # CPU
+        cpu_g = []
+        if 'cpu' in selections:
+            cpu_g.append({ "id": "cpu_chart", "type": "chart", "label": "CPU Загрузка", "data_key": "cpu", "color": "#38bdf8" })
+        if 'cpu_temp' in selections:
+            cpu_g.append({ "id": "cpu_temp_chart", "type": "chart", "label": "CPU Темп.", "data_key": "cpu_temp", "color": "#ef4444", "unit": "°C" })
+        if cpu_g: widgets.append({ "id": "cpu_row", "type": "row", "children": cpu_g })
+
+        # GPU
+        gpu_g = []
+        if 'gpu_load' in selections:
+            gpu_g.append({ "id": "gpu_chart", "type": "chart", "label": "GPU Загрузка", "data_key": "gpu_load", "color": "#fbbf24" })
+        if 'gpu_temp' in selections:
+            gpu_g.append({ "id": "gpu_temp_chart", "type": "chart", "label": "GPU Темп.", "data_key": "gpu_temp", "color": "#f97316", "unit": "°C" })
+        if gpu_g: widgets.append({ "id": "gpu_row", "type": "row", "condition": "has_gpu", "children": gpu_g })
+
+        # RAM (Умное объединение)
+        if 'ram_percent' in selections and 'ram_used' in selections:
+            widgets.append({
+                "id": "ram_combined_widget",
+                "type": "stat",
+                "label": "ОЗУ (Занято / Всего)",
+                "data_key": "ram_combined", # Специальный ключ для планшета
+                "unit": "GB"
+            })
+        elif 'ram_percent' in selections:
+            widgets.append({
+                "id": "ram_percent_widget",
+                "type": "stat",
+                "label": "ОЗУ (%)",
+                "data_key": "ram_percent",
+                "unit": "%"
+            })
+        elif 'ram_used' in selections:
+            widgets.append({
+                "id": "ram_gb_widget",
+                "type": "stat",
+                "label": "ОЗУ (ГБ)",
+                "data_key": "ram_used",
+                "unit": "GB"
+            })
+
+        self.config["widgets"] = widgets
+        
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(self.config, f, indent=2, ensure_ascii=False)
+
     def handle_command(self, target, action):
-        if action == "refresh_disks":
-            self._update_disks()
-            self.socketio.emit('stats', self.get_stats())
+        if action == "get_wizard":
+            data = self.get_wizard_data()
+            self.socketio.emit('wizard_data', {
+                "plugin_id": "system_stats", 
+                "wizard": data,
+                "plugin_info": {"id": "system_stats", "config": self.config}
+            })

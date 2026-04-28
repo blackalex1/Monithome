@@ -157,7 +157,48 @@ if __name__ == "__main__":
                 "image": img_to_send
             }
 
+    def get_wizard_data(self):
+        """Метаданные для мастера настройки медиа"""
+        items = [
+            {"id": "pc_control", "label": "Управление музыкой на ПК", "type": "media"}
+        ]
+        return {
+            "title": "Медиа Центр",
+            "description": "Настройте единый пульт управления музыкой на ПК и Яндекс Станциях.",
+            "items": items
+        }
+
+    def handle_wizard(self, selections):
+        """Сохранение настроек медиа"""
+        new_config = {
+            "id": "pc_media",
+            "name": "Медиа",
+            "pc_enabled": "pc_control" in selections,
+            "widgets": []
+        }
+        
+        # Всегда добавляем ОДИН общий виджет, если хоть что-то выбрано (или просто по умолчанию)
+        new_config["widgets"].append({
+            "id": "unified_media_center",
+            "type": "unified_media",
+            "label": "Управление Медиа"
+        })
+        
+        self.config = new_config
+        config_path = os.path.join(os.path.dirname(__file__), "config.json")
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(new_config, f, indent=2, ensure_ascii=False)
+
     def handle_command(self, target, action):
+        if action == "get_wizard":
+            data = self.get_wizard_data()
+            self.socketio.emit('wizard_data', {
+                "plugin_id": "pc_media", 
+                "wizard": data,
+                "plugin_info": {"id": "pc_media", "config": self.config}
+            })
+            return
+
         if action.startswith("set_volume:"):
             try:
                 val_int = int(action.split(":")[1])
@@ -165,8 +206,6 @@ if __name__ == "__main__":
                     self._volume.SetMasterVolumeLevelScalar(val_int / 100.0, None)
                     with self._data_lock:
                         self._current_volume = val_int
-                # При ручной установке мы не шлем статистику обратно, 
-                # чтобы не забивать канал, т.к. планшет и так знает уровень.
             except: pass
         elif action == 'volume_up': pyautogui.press('volumeup')
         elif action == 'volume_down': pyautogui.press('volumedown')
@@ -179,3 +218,4 @@ if __name__ == "__main__":
         
         if not action.startswith("set_volume:"):
             self.socketio.emit('stats', self.get_stats())
+

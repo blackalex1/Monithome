@@ -146,22 +146,57 @@ class Plugin:
         return changed
 
     def _broadcast_state(self):
-        devices_list = []
-        for d_id, s in self.states.items():
-            devices_list.append({
-                "id": d_id, "name": s["name"], "online": s["online"],
-                "playing": s["playing"], "volume": s["volume"],
-                "title": s["title"], "subtitle": s["artist"],
-                "cover": s["cover"], "alice_state": s["alice_state"]
-            })
-        
-        current_hash = json.dumps(devices_list, sort_keys=True)
+        stats = self.get_stats()
+        current_hash = json.dumps(stats["devices"], sort_keys=True)
         if current_hash != self._last_state_hash:
-            logger.info(f"Broadcasting new state for {len(devices_list)} devices")
-            self.socketio.emit('stats', {"plugin_id": "yandex_station", "devices": devices_list})
+            logger.info(f"Broadcasting new state for {len(stats['devices'])} devices")
+            self.socketio.emit('stats', stats)
             self._last_state_hash = current_hash
 
+    def get_wizard_data(self):
+        """Метаданные для мастера настройки колонок"""
+        devices = []
+        for d_id, d in self.devices.items():
+            devices.append({
+                "id": d_id,
+                "label": d.get("name", d_id),
+                "type": "yandex_station"
+            })
+        return {
+            "title": "Выбор колонок",
+            "description": "Выберите колонки, которыми вы хотите управлять с планшета.",
+            "items": devices
+        }
+
+    def handle_wizard(self, selections):
+        """Сохранение выбранных колонок (теперь только данные, без виджетов)"""
+        new_config = {
+            "id": "yandex_station",
+            "name": "Яндекс Станции",
+            "selected_device_ids": selections,
+            "dependencies": ["pc_media"], # Универсальная декларация зависимости
+            "widgets": [] # Теперь виджеты здесь не нужны, их создает pc_media
+        }
+        
+        self.config = new_config
+        config_path = PLUGIN_DIR / "config.json"
+        with open(config_path, "w", encoding="utf-8") as f:
+            json.dump(new_config, f, indent=2, ensure_ascii=False)
+
     def handle_command(self, target, action, data=None):
+        if action == "get_wizard":
+            data = self.get_wizard_data()
+            self.socketio.emit('wizard_data', {
+                "plugin_id": "yandex_station", 
+                "wizard": data,
+                "plugin_info": {
+                    "id": "yandex_station", 
+                    "config": self.config,
+                    "dependencies": ["pc_media"] # Объявляем зависимость универсально
+                }
+            })
+            return
+
         if target not in self.connections or target not in self.loops: return
         
         cmd = action
@@ -207,12 +242,19 @@ class Plugin:
         asyncio.run_coroutine_threadsafe(self._request_state(target), loop)
 
     def get_stats(self):
+        allowed_ids = self.config.get("selected_device_ids", [])
+        
         devices_list = []
         for d_id, s in self.states.items():
+            # Если пользователь не выбрал эту колонку — не шлем её данные вообще
+            if allowed_ids and d_id not in allowed_ids:
+                continue
+                
             devices_list.append({
                 "id": d_id, "name": s["name"], "online": s["online"],
                 "playing": s["playing"], "volume": s["volume"],
                 "title": s["title"], "subtitle": s["artist"],
-                "cover": s["cover"]
+                "cover": s["cover"], "alice_state": s.get("alice_state", "IDLE")
             })
         return {"plugin_id": "yandex_station", "devices": devices_list}
+

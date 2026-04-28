@@ -10,7 +10,9 @@ import {
 
 const { width: screenWidth } = Dimensions.get('window');
 
-const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, activeTarget, onSetTarget, isSmall, allStats, activeTargets }) => {
+const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, activeTarget, onSetTarget, isSmall, allStats, activeTargets, lang }) => {
+  const t = (label, labelEn) => lang === 'en' ? (labelEn || label) : label;
+  const getLabel = (w) => t(w.label, w.label_en);
   const [aliceText, setAliceText] = useState("");
   const [localSource, setLocalSource] = useState(null);
 
@@ -39,6 +41,7 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
                 isSmall={true}
                 allStats={allStats}
                 activeTargets={activeTargets}
+                lang={lang}
               />
             </View>
           ))}
@@ -50,16 +53,32 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
       let value = stats?.[widget.data_key] || 0;
       let unit = widget.unit || '';
       let displayValue = `${value}${unit}`;
+      let secondaryValue = null;
 
-      if (widget.data_key === 'ram_percent' && stats?.ram_used) {
-        displayValue = `${stats.ram_used} / ${stats.ram_total} GB`;
+      if (widget.data_key === 'ram_combined' && stats) {
+        displayValue = lang === 'ru' ? `${stats.ram_used} / ${stats.ram_total} ГБ` : `${stats.ram_used} / ${stats.ram_total} GB`;
+        secondaryValue = `${stats.ram_percent}%`;
+        value = stats.ram_percent; // Для прогресс-бара
+      } else if (widget.data_key === 'ram_percent' && stats) {
+        displayValue = `${stats.ram_percent}%`;
+        value = stats.ram_percent;
+      } else if (widget.data_key === 'ram_used' && stats) {
+        displayValue = lang === 'ru' ? `${stats.ram_used} / ${stats.ram_total} ГБ` : `${stats.ram_used} / ${stats.ram_total} GB`;
+        value = stats.ram_percent;
       }
 
       return (
         <View style={[styles.glassCard, isSmall && { padding: 16 }]}>
-          <View style={styles.row}>
-            <Icon size={isSmall ? 18 : 22} color="#38bdf8" />
-            <Text style={styles.cardTitle}>{widget.label}</Text>
+          <View style={[styles.row, { justifyContent: 'space-between' }]}>
+            <View style={styles.row}>
+              <Icon size={isSmall ? 18 : 22} color="#38bdf8" />
+              <Text style={styles.cardTitle}>{getLabel(widget)}</Text>
+            </View>
+            {secondaryValue && (
+              <Text style={[styles.statValueText, { marginTop: 0, fontSize: 16, color: '#38bdf8' }]}>
+                {secondaryValue}
+              </Text>
+            )}
           </View>
           <Text style={[styles.statValueText, isSmall && { fontSize: 24, marginTop: 8 }]}>{displayValue}</Text>
           {renderProgress(value, value > 80 ? '#ef4444' : (value > 60 ? '#f59e0b' : '#38bdf8'))}
@@ -79,7 +98,7 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
             <View style={styles.row}>
               <ChartIcon size={22} color="#38bdf8" />
               <View>
-                <Text style={styles.cardTitle}>{widget.label}</Text>
+                <Text style={styles.cardTitle}>{getLabel(widget)}</Text>
                 {componentName ? <Text style={[styles.osText, { marginLeft: 12, fontSize: 10 }]}>{componentName}</Text> : null}
               </View>
             </View>
@@ -119,7 +138,7 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
           <View style={[styles.row, { justifyContent: 'space-between', marginBottom: 15 }]}>
             <View style={styles.row}>
               <HardDrive size={22} color="#38bdf8" />
-              <Text style={styles.cardTitle}>Диски</Text>
+              <Text style={styles.cardTitle}>{t('Диски', 'Drives')}</Text>
             </View>
             <Pressable onPress={() => onCommand(pluginId, 'update_disks')} style={styles.miniBtn}>
               <RefreshCw size={16} color="#fff" />
@@ -128,12 +147,12 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
           {disks.map((disk, i) => (
             <View key={i} style={{ marginBottom: 16 }}>
               <View style={[styles.row, { justifyContent: 'space-between' }]}>
-                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>{disk.device} ({disk.label || 'Локальный диск'})</Text>
+                <Text style={{ color: '#fff', fontSize: 14, fontWeight: '600' }}>{disk.device} ({disk.label || t('Локальный диск', 'Local Drive')})</Text>
                 <Text style={{ color: '#94a3b8', fontSize: 12 }}>{disk.percent}%</Text>
               </View>
               {renderProgress(disk.percent, disk.percent > 90 ? '#ef4444' : '#38bdf8')}
               <Text style={{ color: '#64748b', fontSize: 10, marginTop: 4 }}>
-                Свободно {disk.free} ГБ из {disk.total} ГБ
+                {t('Свободно', 'Free')} {disk.free} {t('ГБ', 'GB')} {t('из', 'of')} {disk.total} {t('ГБ', 'GB')}
               </Text>
             </View>
           ))}
@@ -143,14 +162,21 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
     case 'unified_media':
       const yandexStats = allStats?.['yandex_station']?.devices || [];
       const pcStats = allStats?.['pc_media'] || {};
-      const sources = [
+      const allSources = [
         { id: 'pc', name: 'Компьютер', type: 'pc', online: true, ...pcStats },
         ...(Array.isArray(yandexStats) ? yandexStats : []).map(d => ({ ...d, type: 'yandex' }))
       ];
 
+      // Фильтруем источники, если виджет привязан к конкретному устройству
+      const sources = widget.device_id 
+        ? allSources.filter(s => s.id === widget.device_id)
+        : allSources;
+
+      if (sources.length === 0) return null;
+
       const yandexActive = activeTargets?.['yandex_station'];
       const pcActive = activeTargets?.['pc_media'];
-      const currentSourceId = localSource || activeTarget || yandexActive || pcActive || 'pc';
+      const currentSourceId = widget.device_id || localSource || activeTarget || yandexActive || pcActive || 'pc';
       const currentSource = sources.find(s => s.id === currentSourceId) || sources[0];
       const isYandex = currentSource.type === 'yandex';
       const pluginToUse = isYandex ? 'yandex_station' : 'pc_media';
@@ -158,28 +184,30 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
 
       return (
         <View style={styles.glassCard}>
-          <View style={{ marginBottom: 20, zIndex: 10 }}>
-            <ScrollView 
-              horizontal 
-              showsHorizontalScrollIndicator={false}
-              contentContainerStyle={{ paddingRight: 20 }}
-              keyboardShouldPersistTaps="handled"
-            >
-              {sources.map(s => (
-                <Pressable 
-                  key={s.id} 
-                  onPress={() => {
-                    setLocalSource(s.id);
-                    onSetTarget(s.type === 'yandex' ? 'yandex_station' : 'pc_media', s.id);
-                  }}
-                  style={[styles.sourceTab, currentSourceId === s.id && styles.sourceTabActive]}
-                  hitSlop={{ top: 10, bottom: 10, left: 5, right: 5 }}
-                >
-                  <Text style={[styles.sourceTabText, currentSourceId === s.id && styles.sourceTabTextActive]}>{s.name}</Text>
-                </Pressable>
-              ))}
-            </ScrollView>
-          </View>
+          {!widget.device_id && sources.length > 1 && (
+            <View style={{ marginBottom: 20, zIndex: 10 }}>
+              <ScrollView 
+                horizontal 
+                showsHorizontalScrollIndicator={false}
+                contentContainerStyle={{ paddingRight: 20 }}
+                keyboardShouldPersistTaps="handled"
+              >
+                {sources.map(s => (
+                  <Pressable 
+                    key={s.id} 
+                    onPress={() => {
+                      setLocalSource(s.id);
+                      onSetTarget(s.type === 'yandex' ? 'yandex_station' : 'pc_media', s.id);
+                    }}
+                    style={[styles.sourceTab, currentSourceId === s.id && styles.sourceTabActive]}
+                    hitSlop={{ top: 10, bottom: 10, left: 5, right: 5 }}
+                  >
+                    <Text style={[styles.sourceTabText, currentSourceId === s.id && styles.sourceTabTextActive]}>{s.name}</Text>
+                  </Pressable>
+                ))}
+              </ScrollView>
+            </View>
+          )}
 
           <View style={styles.mediaHeader}>
             {currentSource.cover ? (
@@ -192,7 +220,7 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
             
             <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
               <View style={{ flex: 1 }}>
-                <Text style={styles.miniLabel}>{isYandex ? 'Яндекс Станция' : 'Windows Media'}</Text>
+                <Text style={styles.miniLabel}>{isYandex ? t('Яндекс Станция', 'Yandex Station') : t('Windows Media', 'Windows Media')}</Text>
                 <Text style={styles.mediaTitle} numberOfLines={1}>{currentSource.title || 'Тишина...'}</Text>
                 <Text style={styles.mediaArtist} numberOfLines={1}>{currentSource.subtitle || '—'}</Text>
               </View>
@@ -233,7 +261,7 @@ const MemoWidget = React.memo(({ widget, pluginId, stats, history, onCommand, ac
               <Mic size={18} color="#38bdf8" />
               <TextInput
                 style={styles.voiceInput}
-                placeholder="Сказать Алисе..."
+                placeholder={t('Сказать Алисе...', 'Talk to Alice...')}
                 placeholderTextColor="#64748b"
                 value={aliceText}
                 onChangeText={setAliceText}

@@ -31,6 +31,7 @@ try {
         
         # CPU Monitoring
         if ($hardware.HardwareType -eq "Cpu") {
+            $Stats.cpu_name = $hardware.Name
             foreach ($sensor in $hardware.Sensors) {
                 if ($sensor.SensorType -eq "Temperature") {
                     # Ищем Package (Intel), Tdie/Tctl (AMD) или просто среднюю по ядрам
@@ -48,6 +49,7 @@ try {
         
         # GPU Monitoring
         if ($hardware.HardwareType -match "Gpu") {
+            $Stats.gpu_name = $hardware.Name
             foreach ($sensor in $hardware.Sensors) {
                 if ($sensor.SensorType -eq "Temperature" -and $sensor.Name -match "Core") {
                     $Stats.gpu_temp = [Math]::Round($sensor.Value, 0)

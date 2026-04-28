@@ -1,73 +1,96 @@
-# 🚀 PC Monitor & Smart Home Dashboard
+# 🚀 Monithome
 
-![PC Monitor](https://img.shields.io/badge/React%20Native-20232A?style=for-the-badge&logo=react&logoColor=61DAFB)
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Socket.IO](https://img.shields.io/badge/Socket.io-010101?style=for-the-badge&logo=socket.io&logoColor=white)
+<p align="center">
+  <img src="https://img.shields.io/badge/Monithome-v1.1.0-blue?style=for-the-badge&logo=react&logoColor=white" alt="Version">
+  <img src="https://img.shields.io/badge/Python-3.8+-3776AB?style=for-the-badge&logo=python&logoColor=white" alt="Python">
+  <img src="https://img.shields.io/badge/Platform-Windows-0078D6?style=for-the-badge&logo=windows&logoColor=white" alt="Platform">
+  <img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License">
+</p>
 
-Комплексное клиент-серверное решение для **мониторинга состояния ПК в реальном времени** и управления умным домом (Яндекс Станцией) прямо с экрана вашего планшета или смартфона. 
+---
 
-**Разработано [BlackAlex1](https://github.com/blackalex1)**
+**Monithome** — это современная экосистема для глубокого мониторинга вашего ПК и управления умным домом. Проект объединяет в себе мощный Python-агент для сбора данных и стильный кроссплатформенный дашборд на React / React Native.
+
+> [!TIP]
+> Идеально подходит для использования на старом планшете в качестве внешнего дисплея состояния системы или пульта управления умным домом.
+
+---
+
+## 📸 Скриншоты
+
+<p align="center">
+  <img src="./screenshots/pc.png" width="45%" alt="Manager UI">
+  <img src="./screenshots/main.png" width="45%" alt="Mobile UI">
+</p>
 
 ---
 
 ## 🌟 Основные возможности
 
-### 💻 Мониторинг ПК (Умные графики и статистика)
-*   **Сверхточный мониторинг температур**: Получение данных напрямую с датчиков "железа" благодаря интеграции драйверов **LibreHardwareMonitor** и **MSI Afterburner**.
-*   **ОЗУ и Диски**: Удобное отображение свободного пространства на всех дисках и состояния оперативной памяти.
-*   **Power Control**: Удаленное управление питанием (Блокировка, Спящий режим, Перезагрузка, Выключение) с защитой от случайных нажатий.
+### 💻 Продвинутый мониторинг ПК
+*   **Real-time графики**: Отслеживание CPU, GPU, RAM и температур с минимальной задержкой.
+*   **Низкоуровневый доступ**: Интеграция с **LibreHardwareMonitor** и **MSI Afterburner** для получения самых точных данных.
+*   **Дисковая подсистема**: Мониторинг свободного места на всех накопителях с поддержкой выбора конкретных дисков.
+*   **Power Management**: Дистанционное управление питанием (сон, выключение, перезагрузка, блокировка) с подтверждением действий.
 
-### 🎵 Единый Медиацентр
-*   **Windows Media**: Управление текущим треком на ПК (Пауза, Вперед/Назад, Громкость), отображение обложки альбома и названия песни.
-*   **Яндекс Станция (Умный дом)**: Управление Яндекс Станцией в той же сети через локальный API (Glagol). Поддерживается управление музыкой и **ввод текстовых команд (Алиса)** прямо с планшета!
-
----
-
-## 🛠 Архитектура проекта
-
-Проект разделен на две основные части:
-
-1.  **`pc/` (Серверная часть - Python)**
-    *   `pc_agent.py` — Главный сервер на Flask-SocketIO. Запускается на ПК, который нужно мониторить. Автоматически запрашивает права Администратора для доступа к низкоуровневым драйверам.
-    *   **Плагинная система**: Функционал разбит на независимые модули (мониторинг системы, медиа плеер ПК, яндекс станция, управление питанием).
-    *   **Драйверы**: Включает `LibreHardwareMonitorLib.dll` и скрипты PowerShell для максимальной точности.
-
-2.  **`android/` (Клиентская часть - React Native / Expo)**
-    *   Мобильное приложение, собирающее UI на основе JSON-конфигураций, которые присылает сервер.
-    *   Работает через постоянное WebSockets соединение (минимальная задержка).
+### 🏠 Умный дом и Медиацентр
+*   **Яндекс Станция**: Управляйте музыкой и отправляйте текстовые команды Алисе прямо с планшета.
+*   **Unified Media**: Единый центр управления громкостью и плеерами ПК прямо с планшета.
+*   **Плагинная система**: Легко добавляйте новый функционал или отключайте ненужные модули через встроенный менеджер.
 
 ---
 
-## 🚀 Установка и запуск
+## 🛠 Технологический стек
 
-### 1. Серверная часть (ПК)
-Убедитесь, что у вас установлен **Python 3.8+**.
-```bash
-cd pc
-# Создаем и активируем виртуальное окружение
-python -m venv venv
-venv\Scripts\activate
-
-# Устанавливаем зависимости
-pip install -r requirements.txt
-
-# Запускаем сервер (появится запрос прав Администратора)
-python pc_agent.py
+```mermaid
+graph TD
+    A[Monithome Manager / Web] -->|Socket.IO| B(Python Agent)
+    C[Monithome App / Android] -->|Socket.IO| B
+    B --> D[Plugins]
+    D --> E[System Stats]
+    D --> F[PC Media]
+    D --> G[PC System]
+    D --> H[Yandex Station]
+    E --> I[LibreHardwareMonitor]
 ```
-*При запуске сервер выведет ваш локальный IP-адрес (например, `192.168.1.100`), который нужно будет ввести в приложении.*
 
-### 2. Клиентская часть (Планшет / Телефон)
-Убедитесь, что у вас установлен **Node.js**.
-```bash
-cd android
-
-# Устанавливаем зависимости
-npm install
-
-# Запускаем Expo
-npx expo start --clear
-```
-Отсканируйте QR-код в приложении **Expo Go** на вашем устройстве, чтобы открыть панель управления.
+*   **Backend**: Python, Flask, Socket.IO, Psutil, WMI.
+*   **Web Manager**: Vite, React, TypeScript, Framer Motion, Lucide.
+*   **Mobile Client**: React Native, Expo, Socket.IO Client.
 
 ---
 
+## 🚀 Быстрый старт
+
+### 1. Сервер (ПК)
+1. Установите Python 3.8+.
+2. Перейдите в папку `pc/`:
+   ```bash
+   python -m venv venv
+   venv\Scripts\activate
+   pip install -r requirements.txt
+   python pc_agent.py
+   ```
+*Сервер автоматически запросит права администратора для доступа к датчикам.*
+
+### 2. Менеджер (Web)
+1. Перейдите в `pc_gui/`:
+   ```bash
+   npm install
+   npm run build
+   ```
+*Собранный интерфейс будет доступен по адресу `http://localhost:5000` при запущенном агенте.*
+
+### 3. Планшет / Смартфон (Android)
+1. Установите приложение **Expo Go** на ваше устройство.
+2. Перейдите в `android/`:
+   ```bash
+   npm install
+   npx expo start --clear
+   ```
+3. Введите локальный IP вашего ПК.
+---
+
+<p align="center">
+  <sub>Made with ❤️ for better hardware control</sub>
+</p>
