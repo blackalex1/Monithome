@@ -1,15 +1,17 @@
 # OSX
-#
 .DS_Store
 
 # Android/IntelliJ
-#
 build/
-.idea
-.gradle
+.idea/
+.gradle/
 local.properties
+gradle.properties
 *.iml
 *.hprof
 
 # Bundle artifacts
 *.jsbundle
+
+# Keys and Secrets
+*.keystore

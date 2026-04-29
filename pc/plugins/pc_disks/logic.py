@@ -8,6 +8,7 @@ class Plugin:
     def __init__(self, socketio, config, manager):
         self.socketio = socketio
         self.config = config
+        self.manager = manager
         self._stop_event = threading.Event()
         self._stats_cache = {
             "plugin_id": "pc_disks",
@@ -85,13 +86,13 @@ class Plugin:
         while not self._stop_event.is_set():
             try:
                 self._stats_cache["disks"] = self._get_disks()
-                self.socketio.emit('stats', self._stats_cache)
+                self.manager.broadcast_stats(self._stats_cache)
             except Exception as e:
-                print(f"[DISKS] Loop error: {e}")
+                self.manager.log("DISKS", f"Loop error: {e}", level="error")
             
-            # Диски меняются редко, опрашиваем раз в 30 секунд
+            # Диски меняются редко, опрашиваем раз в 2 минуты
             # Но поток просыпается чаще для проверки stop_event
-            for _ in range(30):
+            for _ in range(120):
                 if self._stop_event.is_set(): break
                 time.sleep(1)
 
@@ -134,17 +135,12 @@ class Plugin:
         self._stats_cache["disks"] = self._get_disks()
         self.socketio.emit('stats', self._stats_cache)
 
+    def get_active_items(self):
+        return self.config.get("selected_disks", [])
+
     def handle_command(self, target, action):
         """Обработка команд от клиента"""
         if action == "update_disks":
             self._stats_cache["disks"] = self._get_disks()
             self.socketio.emit('stats', self._stats_cache)
-            print("[DISKS] Manual update triggered")
-        
-        elif action == "get_wizard":
-            data = self.get_wizard_data()
-            self.socketio.emit('wizard_data', {
-                "plugin_id": "pc_disks", 
-                "wizard": data,
-                "plugin_info": {"id": "pc_disks", "config": self.config}
-            })
+            # logger.info("[DISKS] Manual update triggered")

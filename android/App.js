@@ -1,32 +1,111 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
-import { 
-  View, Text, ScrollView, StatusBar, Pressable, 
-  ActivityIndicator, TextInput, Alert, Dimensions, Linking
-} from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { InteractionManager, Alert } from 'react-native';
 import io from 'socket.io-client';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { Activity, Power, IconMap, Cpu, Zap } from './IconMap';
-import { styles } from './styles';
-import MemoWidget from './MemoWidget';
-
-const { width } = Dimensions.get('window');
+import { PairingScreen, LoginScreen } from './AuthScreens';
+import Dashboard from './Dashboard';
 
 export default function App() {
   const [socket, setSocket] = useState(null);
   const [serverIp, setServerIp] = useState('');
+  const [authToken, setAuthToken] = useState(null);
   const [connected, setConnected] = useState(false);
   const [loading, setLoading] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('Ожидание IP');
   const [uiConfigs, setUiConfigs] = useState([]);
   const [appLanguage, setAppLanguage] = useState('ru');
   const [allStats, setAllStats] = useState({});
+  const [mediaStats, setMediaStats] = useState({});
   const [history, setHistory] = useState({}); 
   const [activeTargets, setActiveTargets] = useState({});
   const [lastUpdate, setLastUpdate] = useState('Нет данных');
   
   const [isPairing, setIsPairing] = useState(false);
   const [pairingInput, setPairingInput] = useState('');
-  const [authToken, setAuthToken] = useState(null);
+  const [userInteracting, setUserInteracting] = useState(false);
+  const [pcStatus, setPcStatus] = useState({ status: 'offline', hostname: '', os: '' });
+  
+  const pendingStats = useRef({});
+  const isInteractingRef = useRef(false);
+  const lastHistoryUpdate = useRef(0);
+  const pendingHistory = useRef({});
+
+  useEffect(() => {
+    const flushInterval = setInterval(() => {
+      if (isInteractingRef.current) return;
+      const hasStats = Object.keys(pendingStats.current).length > 0;
+      if (!hasStats) return;
+
+      InteractionManager.runAfterInteractions(() => {
+        const updates = { ...pendingStats.current };
+        pendingStats.current = {};
+        
+        let mediaChanged = false;
+        const newHistEntries = {};
+
+        // 1. Сначала рассчитываем все изменения
+        Object.keys(updates).forEach(pId => {
+          const data = updates[pId];
+          const plugin = uiConfigs.find(p => p.id === pId);
+          if (plugin && (plugin.type === 'media_source' || plugin.type === 'lyrics_provider')) {
+            mediaChanged = true;
+          }
+
+          // Подготовка истории
+          const numericKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
+          if (numericKeys.length > 0) {
+            newHistEntries[pId] = { keys: numericKeys, data: data };
+          }
+        });
+
+        // 2. Обновляем основной стейт
+        setAllStats(prev => {
+          const newState = { ...prev };
+          Object.keys(updates).forEach(pId => {
+            const prevData = newState[pId] || {};
+            const merged = { ...prevData, ...updates[pId] };
+            if (merged.cover === null && prevData.cover) merged.cover = prevData.cover;
+            newState[pId] = merged;
+          });
+
+          // 3. Если были медиа-данные, обновляем медиа-стейт
+          if (mediaChanged) {
+            setMediaStats(prevMedia => {
+              const newMedia = { ...prevMedia };
+              Object.keys(updates).forEach(pId => {
+                const plugin = uiConfigs.find(p => p.id === pId);
+                if (plugin && (plugin.type === 'media_source' || plugin.type === 'lyrics_provider')) {
+                  newMedia[pId] = newState[pId];
+                }
+              });
+              return newMedia;
+            });
+          }
+          
+          return newState;
+        });
+
+        // 4. Обновляем историю параллельно
+        if (Object.keys(newHistEntries).length > 0) {
+          setHistory(hPrev => {
+            const newHistory = { ...hPrev };
+            Object.keys(newHistEntries).forEach(pId => {
+              const { keys, data } = newHistEntries[pId];
+              const pluginHist = newHistory[pId] || {};
+              const newPluginHist = { ...pluginHist };
+              keys.forEach(key => {
+                const currentArr = pluginHist[key] || Array(30).fill(0);
+                newPluginHist[key] = [...currentArr, data[key]].slice(-30);
+              });
+              newHistory[pId] = newPluginHist;
+            });
+            return newHistory;
+          });
+        }
+      });
+    }, 300);
+    return () => clearInterval(flushInterval);
+  }, [uiConfigs]);
 
   useEffect(() => {
     AsyncStorage.getItem('server_ip').then(ip => { if (ip) setServerIp(ip); });
@@ -40,7 +119,7 @@ export default function App() {
     
     const newSocket = io(`http://${serverIp}:5000`, {
       auth: { token: authToken },
-      transports: ['websocket', 'polling'],
+      transports: ['websocket'],
       reconnection: true,
       reconnectionAttempts: Infinity,
       timeout: 10000
@@ -91,37 +170,23 @@ export default function App() {
     
     newSocket.on('ui_config', (data) => {
       const now = new Date().toLocaleTimeString();
-      const configs = data.config || [];
-      const lang = data.language || 'ru';
-      setUiConfigs(configs);
-      setAppLanguage(lang);
+      setUiConfigs(data.config || []);
+      setAppLanguage(data.language || 'ru');
       setLastUpdate(now);
+      
+      // Попробуем обновить статус из конфига, если он там есть
+      if (data.hostname) {
+        setPcStatus(prev => ({ ...prev, status: 'online', hostname: data.hostname, os: data.os || 'Windows' }));
+      }
+    });
+
+    newSocket.on('status', (data) => {
+      setPcStatus(data);
     });
 
     newSocket.on('stats', (data) => {
       const pluginId = data.plugin_id || 'system_stats';
-      
-      setAllStats(prev => {
-        const prevPluginData = prev[pluginId] || {};
-        // Если пришла пустая обложка, сохраняем старую
-        const mergedData = { ...data };
-        if (mergedData.cover === null && prevPluginData.cover) {
-          mergedData.cover = prevPluginData.cover;
-        }
-        return { ...prev, [pluginId]: mergedData };
-      });
-      
-      const numericKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
-      if (numericKeys.length > 0) {
-        setHistory(prev => {
-          const pluginHist = { ...(prev[pluginId] || {}) };
-          numericKeys.forEach(key => {
-            const currentArr = pluginHist[key] || Array(30).fill(0);
-            pluginHist[key] = [...currentArr, data[key]].slice(-30);
-          });
-          return { ...prev, [pluginId]: pluginHist };
-        });
-      }
+      pendingStats.current[pluginId] = data;
     });
     return () => newSocket.close();
   }, [serverIp, authToken, appLanguage]);
@@ -129,12 +194,22 @@ export default function App() {
   const sendCommand = useCallback((pluginId, action, target) => {
     const finalTarget = target || activeTargets[pluginId] || 'pc';
     if (socket && connected) {
-      socket.emit('command', { plugin_id: pluginId, action: action, target: finalTarget });
+      const now = Date.now();
+      console.log(`[SOCKET] EMIT command '${action}' to ${pluginId} at ${new Date(now).toISOString()}`);
+      
+      // Используем специализированные события для скорости
+      const eventName = pluginId === 'yandex_station' || pluginId === 'pc_media' ? 'media_command' : 'plugin_command';
+      socket.emit(eventName, { plugin_id: pluginId, action: action, target: finalTarget });
     }
   }, [socket, connected, activeTargets]);
 
   const setTarget = useCallback((pluginId, targetId) => {
     setActiveTargets(prev => ({ ...prev, [pluginId]: targetId }));
+  }, []);
+
+  const handleInteraction = useCallback((active) => {
+    isInteractingRef.current = active;
+    setUserInteracting(active);
   }, []);
 
   const submitPairingCode = () => {
@@ -143,201 +218,45 @@ export default function App() {
     }
   };
 
-  // Экран авторизации (Pairing)
   if (isPairing) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <StatusBar barStyle="light-content" />
-        <View style={[styles.glassCard, { width: width - 40, padding: 32 }]}>
-          <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(56, 189, 248, 0.1)', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 24 }}>
-            <IconMap.Shield size={40} color="#38bdf8" />
-          </View>
-          <Text style={[styles.hostname, { textAlign: 'center', fontSize: 24 }]}>
-            {appLanguage === 'ru' ? 'Авторизация' : 'Authorization'}
-          </Text>
-          <Text style={[styles.osText, { textAlign: 'center', marginBottom: 32 }]}>
-            {appLanguage === 'ru' ? 'Введите код, отображаемый на вашем ПК' : 'Enter the code displayed on your PC'}
-          </Text>
-          
-          <View style={[styles.voiceInputContainer, { marginTop: 0, marginBottom: 24, paddingHorizontal: 0 }]}>
-            <TextInput
-              style={[styles.voiceInput, { textAlign: 'center', fontSize: 32, letterSpacing: 10, fontWeight: 'bold' }]}
-              placeholder="000000"
-              placeholderTextColor="#475569"
-              keyboardType="number-pad"
-              maxLength={6}
-              value={pairingInput}
-              onChangeText={setPairingInput}
-            />
-          </View>
-          
-          <Pressable 
-            onPress={submitPairingCode}
-            style={({pressed}) => [
-              styles.playBtn, 
-              { width: '100%', borderRadius: 20, height: 60 },
-              pressed && { opacity: 0.8 }
-            ]}
-          >
-            <Text style={{ color: '#0f172a', fontSize: 18, fontWeight: '800' }}>
-              {appLanguage === 'ru' ? 'ПОДТВЕРДИТЬ' : 'CONFIRM'}
-            </Text>
-          </Pressable>
-          
-          <Pressable onPress={() => { setIsPairing(false); setConnected(false); socket?.disconnect(); }} style={{ marginTop: 24, alignItems: 'center' }}>
-            <Text style={{ color: '#ef4444', fontSize: 14, fontWeight: '700' }}>
-              {appLanguage === 'ru' ? 'ОТМЕНА' : 'CANCEL'}
-            </Text>
-          </Pressable>
-        </View>
-      </View>
+      <PairingScreen 
+        appLanguage={appLanguage}
+        pairingInput={pairingInput}
+        setPairingInput={setPairingInput}
+        submitPairingCode={submitPairingCode}
+        cancelPairing={() => { setIsPairing(false); setConnected(false); socket?.disconnect(); }}
+      />
     );
   }
 
   if (!connected) {
     return (
-      <View style={[styles.container, { justifyContent: 'center', alignItems: 'center' }]}>
-        <StatusBar barStyle="light-content" />
-        <View style={[styles.glassCard, { width: width - 40, padding: 32 }]}>
-          <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: 'rgba(56, 189, 248, 0.1)', alignItems: 'center', justifyContent: 'center', alignSelf: 'center', marginBottom: 24 }}>
-            <Zap size={40} color="#38bdf8" />
-          </View>
-          <Text style={[styles.hostname, { textAlign: 'center', fontSize: 32 }]}>Monithome</Text>
-          <Text style={[styles.osText, { textAlign: 'center', marginBottom: 32 }]}>Smart PC & Home Control</Text>
-          
-          <Text style={styles.sectionTitle}>{appLanguage === 'ru' ? 'IP адрес сервера' : 'Server IP Address'}</Text>
-          <View style={[styles.voiceInputContainer, { marginTop: 0, marginBottom: 24 }]}>
-            <TextInput
-              style={styles.voiceInput}
-              placeholder="Например: 192.168.1.100"
-              placeholderTextColor="#475569"
-              value={serverIp}
-              onChangeText={setServerIp}
-            />
-          </View>
-          
-          <Pressable 
-            onPress={connectToServer}
-            disabled={loading}
-            style={({pressed}) => [
-              styles.playBtn, 
-              { width: '100%', borderRadius: 20, height: 60 },
-              pressed && { opacity: 0.8 },
-              loading && { backgroundColor: '#1e293b' }
-            ]}
-          >
-            {loading ? <ActivityIndicator color="#fff" /> : <Text style={{ color: '#0f172a', fontSize: 18, fontWeight: '800' }}>{appLanguage === 'ru' ? 'ВОЙТИ В СИСТЕМУ' : 'LOGIN'}</Text>}
-          </Pressable>
-          <Text style={[styles.statusText, { textAlign: 'center', marginTop: 20, color: '#64748b' }]}>{connectionStatus}</Text>
-          
-          <Pressable onPress={() => Linking.openURL('https://github.com/blackalex1')} style={{ marginTop: 40, alignItems: 'center' }}>
-            <Text style={{ color: '#475569', fontSize: 12 }}>{appLanguage === 'ru' ? 'Разработано BlackAlex1' : 'Developed by BlackAlex1'}</Text>
-            <Text style={{ color: '#38bdf8', fontSize: 12, marginTop: 4 }}>github.com/blackalex1</Text>
-          </Pressable>
-        </View>
-      </View>
+      <LoginScreen 
+        appLanguage={appLanguage}
+        serverIp={serverIp}
+        setServerIp={setServerIp}
+        connectToServer={connectToServer}
+        loading={loading}
+        connectionStatus={connectionStatus}
+      />
     );
   }
 
   return (
-    <View style={{ flex: 1 }}>
-      {!connected && (
-        <View style={{ position: 'absolute', top: 0, left: 0, right: 0, zIndex: 999, backgroundColor: '#ef4444', padding: 8, alignItems: 'center' }}>
-          <Text style={{ color: '#fff', fontSize: 11, fontWeight: '900', letterSpacing: 1 }}>СОЕДИНЕНИЕ ПОТЕРЯНО • ПЕРЕПОДКЛЮЧЕНИЕ...</Text>
-        </View>
-      )}
-      <ScrollView style={styles.container} contentContainerStyle={{ paddingBottom: 60 }}>
-        <StatusBar barStyle="light-content" />
-        <View style={styles.header}>
-          <View style={{ flex: 1 }}>
-            <Text style={styles.hostname}>{allStats['system_stats']?.hostname || (appLanguage === 'ru' ? 'Мой ПК' : 'My PC')}</Text>
-            <Text style={styles.osText}>{allStats['system_stats']?.os || 'Windows 11'} • Online</Text>
-          </View>
-          <View style={styles.statusBadge}>
-            <Text style={styles.statusText}>Live</Text>
-          </View>
-        </View>
-
-        <View style={styles.mainLayout}>
-          {(() => {
-            const renderedMedia = new Set();
-            return uiConfigs.map(plugin => {
-              if ((!plugin.widgets || plugin.widgets.length === 0) && (!plugin.actions || plugin.actions.length === 0)) return null;
-              return (
-                <View key={plugin.id}>
-                  <Text style={styles.pluginTitle}>
-                    {appLanguage === 'en' ? plugin.name_en || plugin.name : plugin.name}
-                  </Text>
-                  {plugin.widgets?.map(w => {
-                    if (w.type === 'unified_media') {
-                      if (renderedMedia.has('unified_media')) return null;
-                      renderedMedia.add('unified_media');
-                    }
-                    return (
-                      <MemoWidget 
-                        key={w.id} 
-                        widget={w} 
-                        pluginId={plugin.id} 
-                        stats={allStats[plugin.id]} 
-                        history={history[plugin.id]}
-                        onCommand={sendCommand}
-                        activeTarget={activeTargets[plugin.id]}
-                        activeTargets={activeTargets}
-                        onSetTarget={setTarget}
-                        allStats={allStats}
-                        lang={appLanguage}
-                      />
-                    );
-                  })}
-                {plugin.actions?.map(a => (
-                  <View key={a.id} style={styles.glassCard}>
-                    <Text style={styles.sectionTitle}>{appLanguage === 'en' ? a.label_en || a.label : a.label}</Text>
-                    <View style={styles.rowLayout}>
-                      {a.buttons?.map((btn, i) => {
-                        const IconComp = IconMap[btn.icon] || Power;
-                        return (
-                          <Pressable 
-                            key={i} 
-                            onPress={() => {
-                              if (btn.need_confirm) {
-                                Alert.alert(
-                                  appLanguage === 'ru' ? 'Подтверждение' : 'Confirmation',
-                                  appLanguage === 'ru' 
-                                    ? `Вы уверены, что хотите выполнить: ${btn.label}?` 
-                                    : `Are you sure you want to: ${btn.label_en || btn.label}?`,
-                                  [
-                                    { text: appLanguage === 'ru' ? 'Отмена' : 'Cancel', style: 'cancel' },
-                                    { text: appLanguage === 'ru' ? 'Да' : 'Yes', onPress: () => sendCommand(plugin.id, btn.action) }
-                                  ]
-                                );
-                              } else {
-                                sendCommand(plugin.id, btn.action);
-                              }
-                            }}
-                            style={({pressed}) => [styles.actionBtn, pressed && {backgroundColor: 'rgba(255,255,255,0.1)'}]}
-                          >
-                            <IconComp size={20} color={btn.color === 'text-red-500' ? '#ef4444' : '#38bdf8'} />
-                            <Text style={styles.actionBtnText}>{appLanguage === 'en' ? btn.label_en || btn.label : btn.label}</Text>
-                          </Pressable>
-                        );
-                      })}
-                    </View>
-                  </View>
-                ))}
-              </View>
-            );
-          })})() }
-        </View>
-          
-          <View style={{ paddingVertical: 20, alignItems: 'center', borderTopWidth: 1, borderTopColor: 'rgba(255,255,255,0.05)', marginTop: 20 }}>
-            <Text style={{ color: '#38bdf8', fontSize: 10, fontWeight: '700' }}>LAST SYNC: {lastUpdate}</Text>
-          </View>
-          
-          <Pressable onPress={() => Linking.openURL('https://github.com/blackalex1')} style={{ paddingVertical: 30, alignItems: 'center', opacity: 0.5 }}>
-            <Text style={{ color: '#fff', fontSize: 12 }}>Разработано BlackAlex1</Text>
-            <Text style={{ color: '#38bdf8', fontSize: 12, marginTop: 4 }}>github.com/blackalex1</Text>
-          </Pressable>
-        </ScrollView>
-      </View>
+    <Dashboard 
+      connected={connected}
+      allStats={allStats}
+      mediaStats={mediaStats}
+      uiConfigs={uiConfigs}
+      history={history}
+      pcStatus={pcStatus}
+      activeTargets={activeTargets}
+      sendCommand={sendCommand}
+      setTarget={setTarget}
+      lastUpdate={lastUpdate}
+      appLanguage={appLanguage}
+      handleInteraction={handleInteraction}
+    />
   );
 }

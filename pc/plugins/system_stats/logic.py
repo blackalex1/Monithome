@@ -7,12 +7,14 @@ import GPUtil
 import os
 import subprocess
 import wmi
+import json
 from .afterburner_reader import get_afterburner_stats
 
 class Plugin:
     def __init__(self, socketio, config, manager):
         self.socketio = socketio
         self.config = config
+        self.manager = manager
         self._stop_event = threading.Event()
         
         # Начальное состояние, СИНХРОНИЗИРОВАННОЕ с config.json
@@ -32,7 +34,6 @@ class Plugin:
         
         self._thread = threading.Thread(target=self._stats_loop, daemon=True)
         self._thread.start()
-
 
     def stop(self):
         """Останавливает фоновый поток плагина"""
@@ -65,7 +66,6 @@ class Plugin:
                             out_str = process.stdout
                             json_start = out_str.find('{')
                             if json_start != -1:
-                                import json
                                 driver_stats = json.loads(out_str[json_start:])
                 except: pass
 
@@ -121,8 +121,8 @@ class Plugin:
                 if not cpu_name or "Family" in cpu_name:
                     try:
                         # Попытка через WMI для получения красивого названия (Intel Core i7...)
-                        w = wmi.WMI()
-                        processors = w.Win32_Processor()
+                        w_inst = wmi.WMI()
+                        processors = w_inst.Win32_Processor()
                         if processors:
                             cpu_name = processors[0].Name
                     except:
@@ -139,6 +139,7 @@ class Plugin:
                     "ram_percent": ram.percent,
                     "ram_used": round(ram.used / (1024**3), 1),
                     "ram_total": round(ram.total / (1024**3), 1),
+                    "ram_combined": f"{round(ram.used / (1024**3), 1)} / {round(ram.total / (1024**3), 1)}",
                     "gpu_load": gpu_l,
                     "gpu_temp": gpu_t,
                     "gpu_name": gpu_name,
@@ -150,9 +151,10 @@ class Plugin:
                 }
                 
                 self._stats_cache = new_stats
-                self.socketio.emit('stats', new_stats)
+                # Используем менеджер для безопасной рассылки
+                self.manager.broadcast_stats(new_stats)
             except Exception as e:
-                print(f"[SYSTEM] Loop error: {e}")
+                self.manager.log("SYSTEM", f"Loop error: {e}", level="error")
             
             time.sleep(2)
 
@@ -180,8 +182,6 @@ class Plugin:
 
     def handle_wizard(self, selections):
         """Универсальный метод для сохранения настроек через мастер"""
-        import json
-        
         widgets = []
         # CPU
         cpu_g = []
@@ -230,12 +230,11 @@ class Plugin:
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(self.config, f, indent=2, ensure_ascii=False)
+            
+        # Уведомляем менеджер об изменении UI
+        self.manager.broadcast_ui()
 
     def handle_command(self, target, action):
         if action == "get_wizard":
             data = self.get_wizard_data()
-            self.socketio.emit('wizard_data', {
-                "plugin_id": "system_stats", 
-                "wizard": data,
-                "plugin_info": {"id": "system_stats", "config": self.config}
-            })
+            self.manager.emit_to_plugin_ui("system_stats", "wizard_data", data)

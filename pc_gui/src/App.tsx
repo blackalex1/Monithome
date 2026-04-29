@@ -80,43 +80,36 @@ function App() {
     s.on('wizard_data', (data) => {
       setWizardData(data.wizard);
       
-      const currentIds: string[] = [];
-      const plugin = data.plugin_info;
-      
-      if (plugin) {
-        if (plugin.id === 'system_stats') {
-          // Рекурсивный поиск data_key во всех виджетах (включая вложенные в строки)
-          const findKeys = (widgets: any[]) => {
-            widgets?.forEach(w => {
-              if (w.data_key) {
-                if (w.data_key === 'ram_combined') {
-                  currentIds.push('ram_percent', 'ram_used');
-                } else {
-                  currentIds.push(w.data_key);
+      if (data.active_items) {
+        setSelectedWizardItems(data.active_items);
+      } else {
+        const currentIds: string[] = [];
+        const plugin = data.plugin_info;
+        if (plugin) {
+          if (plugin.id === 'system_stats') {
+            const findKeys = (widgets: any[]) => {
+              widgets?.forEach(w => {
+                if (w.data_key) {
+                  if (w.data_key === 'ram_combined') {
+                    currentIds.push('ram_percent', 'ram_used');
+                  } else {
+                    currentIds.push(w.data_key);
+                  }
                 }
-              }
-              if (w.children) findKeys(w.children);
-            });
-          };
-          findKeys(plugin.config?.widgets || []);
-        } else if (plugin.id === 'yandex_station') {
-          if (plugin.config?.selected_device_ids) {
-            currentIds.push(...plugin.config.selected_device_ids);
-          } else {
-            plugin.config?.widgets?.forEach((w: any) => { if (w?.device_id) currentIds.push(w.device_id); });
-          }
-        } else if (plugin.id === 'pc_system') {
-          plugin.config?.actions?.[0]?.buttons?.forEach((b: any) => { if (b?.action) currentIds.push(b.action); });
-        } else if (plugin.id === 'pc_media') {
-          if (plugin.config?.pc_enabled) currentIds.push('pc_control');
-        } else if (plugin.id === 'pc_disks') {
-          if (plugin.config?.selected_disks) {
-            currentIds.push(...plugin.config.selected_disks);
+                if (w.children) findKeys(w.children);
+              });
+            };
+            findKeys(plugin.config?.widgets || []);
+          } else if (plugin.id === 'yandex_station') {
+            currentIds.push(...(plugin.config?.selected_device_ids || []));
+          } else if (plugin.id === 'pc_system') {
+            plugin.config?.actions?.[0]?.buttons?.forEach((b: any) => { if (b?.action) currentIds.push(b.action); });
+          } else if (plugin.id === 'pc_disks') {
+            currentIds.push(...(plugin.config?.selected_disks || []));
           }
         }
+        setSelectedWizardItems(currentIds);
       }
-      
-      setSelectedWizardItems(currentIds);
       setIsWizardLoading(false);
     });
 

@@ -37,17 +37,17 @@ class Plugin:
         with open(config_path, "w", encoding="utf-8") as f:
             json.dump(new_config, f, indent=2, ensure_ascii=False)
 
+    def get_active_items(self):
+        """Возвращает список ID активных действий"""
+        active = []
+        # Ищем ID кнопок в конфигурации
+        for group in self.config.get("actions", []):
+            for btn in group.get("buttons", []):
+                active.append(btn["action"])
+        return active
+
     def handle_command(self, target, action):
-        if action == "get_wizard":
-            data = self.get_wizard_data()
-            self.socketio.emit('wizard_data', {
-                "plugin_id": "pc_system", 
-                "wizard": data,
-                "plugin_info": {"id": "pc_system", "config": self.config}
-            })
-            return
-        
-        print(f"PC System Command: {action}")
+        # get_wizard теперь обрабатывается в pc_agent.py автоматически
         if action == 'lock':
             ctypes.windll.user32.LockWorkStation()
         elif action == 'sleep':
