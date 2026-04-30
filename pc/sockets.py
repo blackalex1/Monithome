@@ -87,7 +87,7 @@ def register_socket_events(socketio, p_manager):
         if data:
             save_master_config(data)
             logger.info("Master config updated and saved")
-            send_ui_config(socketio, broadcast=True)
+            send_ui_config(socketio, p_manager)
 
     @socketio.on('save_plugin_config')
     def handle_save_plugin_config(data):
@@ -98,7 +98,7 @@ def register_socket_events(socketio, p_manager):
             if hasattr(p_instance, 'save_config'):
                 p_instance.save_config(new_config)
                 logger.info(f"Config updated for plugin: {p_id}")
-                send_ui_config(socketio, broadcast=True)
+                send_ui_config(socketio, p_manager)
 
     @socketio.on('toggle_plugin')
     def handle_toggle_plugin(data):
