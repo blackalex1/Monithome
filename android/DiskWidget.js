@@ -1,7 +1,39 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, Text } from 'react-native';
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated';
 import { styles } from './styles';
 import { HardDrive } from './IconMap';
+
+// Компонент одной строки диска с UI-анимацией
+const DiskRow = React.memo(({ disk, t }) => {
+  const sharedProgress = useSharedValue(0);
+
+  useEffect(() => {
+    sharedProgress.value = withTiming(disk.percent, { duration: 500 });
+  }, [disk.percent]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      width: `${sharedProgress.value}%`,
+      backgroundColor: sharedProgress.value > 90 ? '#ef4444' : '#38bdf8'
+    };
+  });
+
+  return (
+    <View>
+      <View style={[styles.row, { justifyContent: 'space-between', marginBottom: 6 }]}>
+        <Text style={{ color: '#f8fafc', fontWeight: 'bold' }}>{disk.device} ({disk.label})</Text>
+        <Text style={{ color: disk.percent > 90 ? '#ef4444' : '#38bdf8', fontWeight: 'bold' }}>{disk.percent}%</Text>
+      </View>
+      <View style={styles.volumeSliderTrack}>
+        <Animated.View style={[styles.volumeSliderFill, animatedStyle]} />
+      </View>
+      <Text style={{ color: '#64748b', fontSize: 10, marginTop: 4 }}>
+        {t('Свободно', 'Free')} {disk.free} {t('ГБ', 'GB')} {t('из', 'of')} {disk.total} {t('ГБ', 'GB')}
+      </Text>
+    </View>
+  );
+});
 
 const DiskWidget = ({ stats, lang }) => {
   const t = (label, labelEn) => lang === 'en' ? (labelEn || label) : label;
@@ -15,25 +47,11 @@ const DiskWidget = ({ stats, lang }) => {
       </View>
       <View style={{ gap: 16 }}>
         {disks.map((disk, idx) => (
-          <View key={idx}>
-            <View style={[styles.row, { justifyContent: 'space-between', marginBottom: 6 }]}>
-              <Text style={{ color: '#f8fafc', fontWeight: 'bold' }}>{disk.device} ({disk.label})</Text>
-              <Text style={{ color: disk.percent > 90 ? '#ef4444' : '#38bdf8', fontWeight: 'bold' }}>{disk.percent}%</Text>
-            </View>
-            <View style={styles.volumeSliderTrack}>
-              <View style={[styles.volumeSliderFill, { 
-                width: `${disk.percent}%`, 
-                backgroundColor: disk.percent > 90 ? '#ef4444' : '#38bdf8' 
-              }]} />
-            </View>
-            <Text style={{ color: '#64748b', fontSize: 10, marginTop: 4 }}>
-              {t('Свободно', 'Free')} {disk.free} {t('ГБ', 'GB')} {t('из', 'of')} {disk.total} {t('ГБ', 'GB')}
-            </Text>
-          </View>
+          <DiskRow key={disk.device || idx} disk={disk} t={t} />
         ))}
       </View>
     </View>
   );
 };
 
-export default DiskWidget;
+export default React.memo(DiskWidget);

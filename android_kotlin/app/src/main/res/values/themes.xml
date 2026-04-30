@@ -1,0 +1,9 @@
+<resources>
+    <style name="Theme.MonitHomeNative" parent="Theme.Material3.Dark.NoActionBar">
+        <item name="colorPrimary">@color/purple_200</item>
+        <item name="colorSecondary">@color/teal_200</item>
+        <item name="android:statusBarColor">@color/black</item>
+    </style>
+
+    <style name="Theme.Material3.Dark" parent="Theme.MonitHomeNative" />
+</resources>

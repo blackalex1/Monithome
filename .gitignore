@@ -56,5 +56,17 @@ Thumbs.db
 scratch/
 pc/scratch/
 test_*.py
+current_cover.png
+test_out.png
 !pc/plugins/system_stats/LibreHardwareMonitorLib.dll
 !pc/plugins/system_stats/get_stats.ps1
+
+# Android Kotlin specific
+android_kotlin/.gradle/
+android_kotlin/build/
+android_kotlin/*/build/
+android_kotlin/local.properties
+android_kotlin/.idea/
+android_kotlin/*.iml
+android_kotlin/.cxx/
+android_kotlin/captures/

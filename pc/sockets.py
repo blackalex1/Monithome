@@ -35,8 +35,11 @@ def register_socket_events(socketio, p_manager):
                 'hostname': master.get('hostname'), 
                 'os': master.get('os')
             })
-            send_ui_config(socketio, broadcast=False)
-            send_stats_to_sid(sid)
+            send_ui_config(socketio, p_manager)
+            send_stats_to_sid(socketio, sid, p_manager)
+            # Задержка: клиент должен успеть зарегистрировать plugin_event-листенеры
+            threading.Timer(2.0, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
+            threading.Timer(3.0, send_lyrics_to_sid, args=(socketio, sid, p_manager)).start()
             return True
 
         trusted = master.get("trusted_tokens", [])
@@ -52,8 +55,11 @@ def register_socket_events(socketio, p_manager):
                 'hostname': master.get('hostname'), 
                 'os': master.get('os')
             })
-            send_ui_config(socketio, broadcast=False)
-            send_stats_to_sid(sid)
+            send_ui_config(socketio, p_manager)
+            send_stats_to_sid(socketio, sid, p_manager)
+            # Задержка: клиент должен успеть зарегистрировать plugin_event-листенеры
+            threading.Timer(2.0, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
+            threading.Timer(3.0, send_lyrics_to_sid, args=(socketio, sid, p_manager)).start()
             return True
         
         code = "".join([str(random.randint(0, 9)) for _ in range(6)])
@@ -100,11 +106,17 @@ def register_socket_events(socketio, p_manager):
         enabled = data.get('enabled')
         master = get_master_config()
         active = master.get("active_plugins", [])
-        if enabled and p_id not in active: active.append(p_id)
-        elif not enabled and p_id in active: active.remove(p_id)
+        
+        if enabled:
+            if p_id not in active: active.append(p_id)
+            p_manager.start_plugin(p_id)
+        else:
+            if p_id in active: active.remove(p_id)
+            p_manager.stop_plugin(p_id)
+            
         master["active_plugins"] = active
         save_master_config(master)
-        send_ui_config(socketio, broadcast=True)
+        send_ui_config(socketio, p_manager)
 
     @socketio.on('auth_attempt')
     def handle_auth_attempt(data):
@@ -130,8 +142,8 @@ def register_socket_events(socketio, p_manager):
                 'hostname': master.get('hostname'), 
                 'os': master.get('os')
             })
-            send_ui_config(socketio, broadcast=False)
-            send_stats_to_sid(sid)
+            send_ui_config(socketio, p_manager)
+            send_stats_to_sid(socketio, sid, p_manager)
         else:
             emit('auth_failed', {'message': 'Invalid code'})
 
@@ -163,7 +175,17 @@ def register_socket_events(socketio, p_manager):
                 })
             else:
                 target = data.get('target', 'all')
-                executor.submit(p_instance.handle_command, target, action)
+                cmd_data = data.get('data')
+                executor.submit(p_instance.handle_command, target, action, cmd_data)
+
+    @socketio.on('apply_plugin_wizard')
+    def handle_apply_wizard(data):
+        p_id = data.get('plugin_id')
+        selections = data.get('selections', [])
+        if p_id in plugins:
+            p_instance = plugins[p_id]
+            # Передаем в плагин как команду сохранения
+            executor.submit(p_instance.handle_command, 'pc', 'handle_wizard', selections)
 
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -171,28 +193,54 @@ def register_socket_events(socketio, p_manager):
         if sid in pending_pairings: del pending_pairings[sid]
         logger.info(f"Client {sid} disconnected")
 
-def send_ui_config(socketio, broadcast=False):
-    master = get_master_config()
-    active_order = master.get("active_plugins", [])
-    ui_config = []
-    for p_id in active_order:
-        if p_id in plugins:
-            p_instance = plugins[p_id]
-            if hasattr(p_instance, 'config'):
-                ui_config.append(p_instance.config.copy())
-    
-    data = {"language": master.get("language", "ru"), "config": ui_config}
-    if broadcast:
-        socketio.emit('ui_config', data, to='authorized')
-        socketio.emit('manager_data', {
-            'master_config': master,
-            'all_plugins': get_all_plugins_info()
-        }, to='authorized')
-    else:
-        emit('ui_config', data)
+def send_ui_config(socketio, p_manager):
+    p_manager.broadcast_ui()
 
-def send_stats_to_sid(sid):
-    for p_id, p_instance in plugins.items():
-        if hasattr(p_instance, 'get_stats'):
-            try: emit('stats', p_instance.get_stats(), room=sid)
-            except: pass
+def send_stats_to_sid(socketio, sid, p_manager):
+    """Отправка полного текущего состояния при подключении в бинарном формате"""
+    import time
+    import msgpack
+    payload = {
+        "stats": p_manager.get_all_stats(),
+        "_server_time": time.time()
+    }
+    binary_payload = msgpack.packb(payload, use_bin_type=True)
+    socketio.emit('stats', binary_payload, room=sid)
+
+def send_covers_to_sid(socketio, sid, p_manager):
+    """Повторная отправка всех обложек при подключении — через JSON, минуя msgpack"""
+    from manager import plugins
+    logger.info(f"Sending current covers to new client {sid}...")
+    for p_id, plugin in plugins.items():
+        # PC Media
+        if hasattr(plugin, '_media_info'):
+            cover = plugin._media_info.get('cover')
+            title = plugin._media_info.get('title', '')
+            if cover:
+                logger.info(f" -> Sending PC Media cover ({len(cover)} bytes)")
+                socketio.emit(f'plugin_event:{p_id}',
+                    {'event': 'cover', 'data': {'cover': cover, 'title': title}},
+                    room=sid)
+        # Yandex Station
+        if hasattr(plugin, 'states'):
+            for d_id, state in plugin.states.items():
+                cover = state.get('cover', '')
+                title = state.get('title', '')
+                if cover:
+                    logger.info(f" -> Sending Yandex cover for {d_id} ({len(cover)} bytes)")
+                    socketio.emit(f'plugin_event:{p_id}',
+                        {'event': 'cover', 'data': {'cover': cover, 'device_id': d_id, 'title': title}},
+                        room=sid)
+
+def send_lyrics_to_sid(socketio, sid, p_manager):
+    """Отправка всех накопленных текстов песен при подключении"""
+    from manager import plugins
+    plugin = plugins.get("yandex_lyrics")
+    if plugin and hasattr(plugin, "_lyrics_cache"):
+        logger.info(f"Sending cached lyrics to new client {sid}...")
+        for d_id, data in plugin._lyrics_cache.items():
+            if data:
+                logger.info(f" -> Sending cached lyrics for {d_id}")
+                socketio.emit('plugin_event:yandex_lyrics',
+                    {'event': 'lyrics', 'data': {'device_id': d_id, 'data': data}},
+                    room=sid)

@@ -306,13 +306,13 @@ export const styles = StyleSheet.create({
     borderBottomColor: 'rgba(255,255,255,0.03)'
   },
   lyricsLine: {
-    color: 'rgba(255,255,255,0.3)',
+    color: 'rgba(255,255,255,0.15)',
     fontSize: 20,
     fontWeight: '700',
     lineHeight: 28
   },
   lyricsLineActive: {
-    color: '#fff',
+    color: Theme.colors.accent,
     fontSize: 24,
     fontWeight: '900'
   }

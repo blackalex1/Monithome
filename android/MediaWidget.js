@@ -1,6 +1,7 @@
 import React, { useState, useMemo, useEffect, useRef } from 'react';
-import { View, Text, Pressable, Image, TextInput, Dimensions, ScrollView, Modal, FlatList } from 'react-native';
+import { View, Text, Pressable, Image, TextInput, Dimensions, ScrollView, Modal, FlatList, StyleSheet } from 'react-native';
 import { styles } from './styles';
+import { usePluginStats } from './store';
 import { Theme } from './Theme';
 import { 
   Music, Play, Pause, SkipBack, SkipForward, Volume2, Mic, X
@@ -8,14 +9,127 @@ import {
 
 const { width: screenWidth } = Dimensions.get('window');
 
-const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, onCommand, onInteraction, lang }) => {
+const LyricLine = React.memo(({ item, isActive }) => {
+  return (
+    <View style={[
+      styles.lyricsLineContainer, 
+      { borderBottomWidth: 0, height: 100, alignItems: 'center', justifyContent: 'center' }
+    ]}>
+      <Text 
+        numberOfLines={2}
+        style={[
+          styles.lyricsLine, 
+          { textAlign: 'center', fontSize: isActive ? 32 : 22, width: '90%' },
+          isActive && styles.lyricsLineActive
+        ]}
+      >
+        {item.text}
+      </Text>
+    </View>
+  );
+});
+
+// Изолированный компонент текста для предотвращения лишних перерисовок основного виджета
+const LyricsView = React.memo(({ currentSource, lang, onClose }) => {
+  const [currentLineIndex, setCurrentLineIndex] = useState(-1);
+  const currentLineIndexRef = useRef(-1);
+  const flatListRef = useRef(null);
+
+  useEffect(() => {
+    if (!currentSource || !currentSource.timings || currentSource.timings.length === 0) return;
+    
+    const SYNC_OFFSET_MS = 400;
+    const updateIndex = () => {
+      const progress = currentSource.progress || 0;
+      const isPlaying = currentSource.playing;
+      const lastUpdate = currentSource.last_update || 0;
+      const serverSentAt = currentSource._server_time || 0;
+      const localReceivedAt = currentSource._local_received_at || (Date.now() / 1000);
+      const now = Date.now() / 1000;
+      
+      const serverLag = (serverSentAt > lastUpdate) ? (serverSentAt - lastUpdate) : 0;
+      const localLag = now - localReceivedAt;
+      const totalDrift = serverLag + localLag;
+      const currentTimeMs = (progress + (isPlaying ? totalDrift : 0)) * 1000 + SYNC_OFFSET_MS;
+      
+      let index = -1;
+      const timings = currentSource.timings;
+      for (let i = 0; i < timings.length; i++) {
+        if (timings[i].time <= currentTimeMs) index = i;
+        else break;
+      }
+      
+      if (index !== currentLineIndexRef.current) {
+        currentLineIndexRef.current = index;
+        setCurrentLineIndex(index);
+        if (flatListRef.current && index !== -1) {
+          try { 
+            flatListRef.current.scrollToIndex({ index, animated: true, viewPosition: 0.5 }); 
+          } catch (e) {}
+        }
+      }
+    };
+
+    const interval = setInterval(updateIndex, 200); // Чуть увеличим интервал для разгрузки потока
+    updateIndex();
+    return () => clearInterval(interval);
+  }, [currentSource?.track_id, currentSource?.progress, currentSource?.playing]);
+
+  return (
+    <View style={[styles.lyricsModal, { flex: 1 }]}>
+      {currentSource?.cover && (
+        <Image 
+          source={{ uri: currentSource.cover }} 
+          style={[StyleSheet.absoluteFill, { opacity: 0.2 }]} 
+          blurRadius={50}
+        />
+      )}
+      <View style={styles.lyricsHeader}>
+        <View style={{ flex: 1, marginRight: 15 }}>
+          <Text style={styles.lyricsTrackTitle} numberOfLines={1}>{currentSource?.title}</Text>
+          <Text style={styles.lyricsTrackArtist} numberOfLines={1}>{currentSource?.subtitle}</Text>
+        </View>
+        <Pressable onPress={onClose} style={styles.miniBtn} hitSlop={20}>
+          <X size={24} color="#fff" />
+        </Pressable>
+      </View>
+      
+      {currentSource?.timings && currentSource.timings.length > 0 ? (
+        <FlatList
+          ref={flatListRef}
+          data={currentSource.timings}
+          keyExtractor={(_, i) => i.toString()}
+          showsVerticalScrollIndicator={false}
+          ListHeaderComponent={() => <View style={{ height: 300 }} />}
+          ListFooterComponent={() => <View style={{ height: 400 }} />}
+          initialNumToRender={10}
+          maxToRenderPerBatch={5}
+          windowSize={5}
+          removeClippedSubviews={true}
+          renderItem={({ item, index }) => (
+            <LyricLine item={item} isActive={index === currentLineIndex} />
+          )}
+          getItemLayout={(data, index) => ({
+            length: 100, offset: 100 * index + 300, index
+          })}
+        />
+      ) : (
+        <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
+          <Text style={[styles.lyricsLine, { color: '#fff', opacity: 0.8, textAlign: 'center', marginTop: 100 }]}>
+            {currentSource?.lyrics || (lang === 'ru' ? 'Текст песни отсутствует' : 'No lyrics available')}
+          </Text>
+        </ScrollView>
+      )}
+    </View>
+  );
+});
+
+const MediaWidget = React.memo(({ widget, allPlugins, activeTargets, onCommand, onInteraction, lang, serverIp }) => {
   const t = (label, labelEn) => lang === 'en' ? (labelEn || label) : label;
   const [aliceText, setAliceText] = useState("");
   const [localSource, setLocalSource] = useState(null);
   const [slidingVol, setSlidingVol] = useState(null);
   const [showLyrics, setShowLyrics] = useState(false);
-  const [currentLineIndex, setCurrentLineIndex] = useState(-1);
-  const flatListRef = useRef(null);
 
   const formatCover = (cover) => {
     if (!cover) return null;
@@ -23,13 +137,8 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
     return `data:image/png;base64,${cover}`;
   };
 
-  // Выделяем только нужные нам статы для медиа и лирики, чтобы не реагировать на каждый чих системных плагинов
-  const relevantStats = useMemo(() => {
-    const mediaIds = allPlugins.filter(p => p.type === 'media_source' || p.type === 'lyrics_provider').map(p => p.id);
-    const obj = {};
-    mediaIds.forEach(id => { obj[id] = allStats[id]; });
-    return obj;
-  }, [allPlugins, allStats]);
+  const mediaIds = useMemo(() => allPlugins.filter(p => p.type === 'media_source' || p.type === 'lyrics_provider').map(p => p.id), [allPlugins]);
+  const relevantStats = usePluginStats(mediaIds);
 
   const sources = useMemo(() => {
     const mediaPlugins = allPlugins.filter(p => p && p.type === 'media_source');
@@ -49,7 +158,6 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
             plugin_name: p.name,
             cover: formatCover(d.cover)
           };
-          
           for (const lp of lyricsProviders) {
             const lData = relevantStats[lp.id]?.devices?.[d.id];
             if (lData) {
@@ -73,90 +181,27 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
         });
       }
     }
-
-    // Если в виджете указан конкретный device_id, фильтруем по нему
-    let filtered = allSources;
-    if (widget.device_id) {
-      filtered = filtered.filter(s => s.id === widget.device_id);
-    }
-    return filtered;
+    return widget.device_id ? allSources.filter(s => s.id === widget.device_id) : allSources;
   }, [allPlugins, relevantStats, widget.device_id]);
 
   const [lastActiveId, setLastActiveId] = useState(widget.device_id || (sources.find(s => s.playing)?.id) || sources[0]?.id);
 
-  // Следим за играющим источником и обновляем "последний активный"
   useEffect(() => {
     const playing = sources.find(s => s.playing);
-    if (playing) {
-      setLastActiveId(playing.id);
-    } else if (!lastActiveId && sources.length > 0) {
-      setLastActiveId(sources[0].id);
-    }
-  }, [sources, lastActiveId]);
+    if (playing) setLastActiveId(playing.id);
+  }, [sources]);
 
   const currentSourceId = useMemo(() => {
-    // 1. Приоритет явно заданному ID в настройках виджета
     if (widget.device_id) return widget.device_id;
-    // 2. Приоритет ручному выбору пользователя через вкладки
     if (localSource && sources.find(s => s.id === localSource)) return localSource;
-    // 3. Липкий выбор последнего активного (играющего)
-    if (lastActiveId && sources.find(s => s.id === lastActiveId)) {
-      return lastActiveId;
-    }
-    const playing = sources.find(s => s.playing);
-    return playing ? playing.id : (sources[0]?.id);
+    if (lastActiveId && sources.find(s => s.id === lastActiveId)) return lastActiveId;
+    return sources.find(s => s.playing)?.id || sources[0]?.id;
   }, [widget.device_id, localSource, lastActiveId, sources]);
 
   const currentSource = useMemo(() => {
     if (sources.length === 0) return null;
     return sources.find(s => s.id === currentSourceId) || sources[0];
   }, [sources, currentSourceId]);
-
-  useEffect(() => {
-    if (!showLyrics || !currentSource || !currentSource.timings || currentSource.timings.length === 0) return;
-    const interval = setInterval(() => {
-      const progress = currentSource.progress || 0;
-      const lastUpd = currentSource.last_update || (Date.now() / 1000);
-      const isPlaying = currentSource.playing;
-      const currentTimeMs = (progress + (isPlaying ? (Date.now() / 1000 - lastUpd) : 0)) * 1000;
-      
-      let index = -1;
-      for (let i = 0; i < currentSource.timings.length; i++) {
-        if (currentSource.timings[i].time <= currentTimeMs) index = i;
-        else break;
-      }
-      if (index !== currentLineIndex) {
-        setCurrentLineIndex(index);
-        if (flatListRef.current && index !== -1) {
-          try { flatListRef.current.scrollToIndex({ index, animated: true, viewPosition: 0.5 }); } catch (e) {}
-        }
-      }
-    }, 100);
-    return () => clearInterval(interval);
-  }, [showLyrics, currentSource?.track_id, currentSource?.progress, currentSource?.playing, currentLineIndex]);
-
-  const sourceTabs = useMemo(() => {
-    if (widget.device_id || sources.length <= 1) return null;
-    return (
-      <View style={{ marginBottom: 20 }}>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false}>
-          {sources.map(s => {
-            const isActive = currentSourceId === s.id;
-            return (
-              <Pressable 
-                key={s.id} 
-                onPress={() => setLocalSource(s.id)}
-                style={[styles.sourceTab, isActive && styles.sourceTabActive]}
-                hitSlop={{ top: 15, bottom: 15, left: 10, right: 10 }}
-              >
-                <Text style={[styles.sourceTabText, isActive && styles.sourceTabTextActive]}>{s.name}</Text>
-              </Pressable>
-            );
-          })}
-        </ScrollView>
-      </View>
-    );
-  }, [sources, currentSourceId, widget.device_id]);
 
   if (!currentSource || sources.length === 0) return null;
 
@@ -166,7 +211,22 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
 
   return (
     <View style={styles.glassCard}>
-      {sourceTabs}
+      {/* Вкладки источников */}
+      {!widget.device_id && sources.length > 1 && (
+        <View style={{ marginBottom: 20 }}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false}>
+            {sources.map(s => (
+              <Pressable 
+                key={s.id} 
+                onPress={() => setLocalSource(s.id)}
+                style={[styles.sourceTab, currentSourceId === s.id && styles.sourceTabActive]}
+              >
+                <Text style={[styles.sourceTabText, currentSourceId === s.id && styles.sourceTabTextActive]}>{s.name}</Text>
+              </Pressable>
+            ))}
+          </ScrollView>
+        </View>
+      )}
 
       <View style={styles.mediaHeader}>
         {currentSource.cover ? (
@@ -179,7 +239,7 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
         
         <View style={{ flex: 1, flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', gap: 10 }}>
           <View style={{ flex: 1 }}>
-            <Text style={styles.miniLabel}>{currentSource.plugin_name || (isStandalone ? 'System' : 'Remote')}</Text>
+            <Text style={styles.miniLabel}>{currentSource.plugin_name || 'Source'}</Text>
             <Text style={styles.mediaTitle} numberOfLines={1}>{currentSource.title || 'Тишина...'}</Text>
             <Text style={styles.mediaArtist} numberOfLines={1}>{currentSource.subtitle || '—'}</Text>
             {(currentSource.lyrics || (currentSource.timings && currentSource.timings.length > 0)) && (
@@ -190,39 +250,11 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
           </View>
           
           <View style={{ flexDirection: 'row', gap: 10 }}>
-            <Pressable 
-              onPressIn={() => {
-                onInteraction(true);
-                console.log(`[MEDIA] Pressed PREV at ${new Date().toISOString()}`);
-                onCommand(pluginToUse, 'prev_track', finalTarget);
-                setTimeout(() => onInteraction(false), 1000);
-              }} 
-              style={styles.miniBtn}
-            >
-              <SkipBack size={22} color="#fff" />
-            </Pressable>
-            <Pressable 
-              onPressIn={() => {
-                onInteraction(true);
-                console.log(`[MEDIA] Pressed PLAY/PAUSE at ${new Date().toISOString()}`);
-                onCommand(pluginToUse, 'play_pause', finalTarget);
-                setTimeout(() => onInteraction(false), 1000);
-              }} 
-              style={styles.playBtn}
-            >
+            <Pressable onPress={() => onCommand(pluginToUse, 'prev_track', finalTarget)} style={styles.miniBtn}><SkipBack size={22} color="#fff" /></Pressable>
+            <Pressable onPress={() => onCommand(pluginToUse, 'play_pause', finalTarget)} style={styles.playBtn}>
               {currentSource.playing ? <Pause size={28} color="#0f172a" /> : <Play size={28} color="#0f172a" />}
             </Pressable>
-            <Pressable 
-              onPressIn={() => {
-                onInteraction(true);
-                console.log(`[MEDIA] Pressed NEXT at ${new Date().toISOString()}`);
-                onCommand(pluginToUse, 'next_track', finalTarget);
-                setTimeout(() => onInteraction(false), 1000);
-              }} 
-              style={styles.miniBtn}
-            >
-              <SkipForward size={22} color="#fff" />
-            </Pressable>
+            <Pressable onPress={() => onCommand(pluginToUse, 'next_track', finalTarget)} style={styles.miniBtn}><SkipForward size={22} color="#fff" /></Pressable>
           </View>
         </View>
       </View>
@@ -236,7 +268,6 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
           style={styles.volumeSliderTrack}
           onStartShouldSetResponder={() => true}
           onResponderGrant={(e) => {
-            onInteraction(true);
             const newVol = Math.round((e.nativeEvent.locationX / (screenWidth - 80)) * 100);
             setSlidingVol(newVol);
             onCommand(pluginToUse, `set_volume:${newVol}`, finalTarget);
@@ -247,7 +278,6 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
             if (newVol % 3 === 0) onCommand(pluginToUse, `set_volume:${newVol}`, finalTarget);
           }}
           onResponderRelease={() => {
-            onInteraction(false);
             setTimeout(() => setSlidingVol(null), 500);
           }}
         >
@@ -273,39 +303,12 @@ const MediaWidget = React.memo(({ widget, allStats, allPlugins, activeTargets, o
         </View>
       )}
 
-      <Modal visible={showLyrics} animationType="slide" transparent={true}>
-        <View style={styles.lyricsModal}>
-          <View style={styles.lyricsHeader}>
-            <View style={{ flex: 1, marginRight: 15 }}>
-              <Text style={styles.lyricsTrackTitle} numberOfLines={1}>{currentSource.title}</Text>
-              <Text style={styles.lyricsTrackArtist} numberOfLines={1}>{currentSource.subtitle}</Text>
-            </View>
-            <Pressable onPress={() => setShowLyrics(false)} style={styles.miniBtn}><X size={24} color="#fff" /></Pressable>
-          </View>
-          
-          {currentSource.timings && currentSource.timings.length > 0 ? (
-            <FlatList
-              ref={flatListRef}
-              data={currentSource.timings}
-              keyExtractor={(_, i) => i.toString()}
-              showsVerticalScrollIndicator={false}
-              contentContainerStyle={{ paddingBottom: 100 }}
-              renderItem={({ item, index }) => (
-                <View style={styles.lyricsLineContainer}>
-                  <Text style={[styles.lyricsLine, index === currentLineIndex && styles.lyricsLineActive]}>
-                    {item.text}
-                  </Text>
-                </View>
-              )}
-            />
-          ) : (
-            <ScrollView showsVerticalScrollIndicator={false} contentContainerStyle={{ paddingBottom: 100 }}>
-              <Text style={[styles.lyricsLine, { color: '#fff', opacity: 0.8 }]}>
-                {currentSource.lyrics || (lang === 'ru' ? 'Текст песни отсутствует' : 'No lyrics available')}
-              </Text>
-            </ScrollView>
-          )}
-        </View>
+      <Modal visible={showLyrics} animationType="none" transparent={true} onRequestClose={() => setShowLyrics(false)}>
+        <LyricsView 
+          currentSource={currentSource} 
+          lang={lang} 
+          onClose={() => setShowLyrics(false)} 
+        />
       </Modal>
     </View>
   );

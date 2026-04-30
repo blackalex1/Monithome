@@ -3,67 +3,51 @@ import threading
 import time
 import os
 import ctypes
+import json
+from base import BasePlugin
 
-class Plugin:
+class Plugin(BasePlugin):
     def __init__(self, socketio, config, manager):
-        self.socketio = socketio
-        self.config = config
-        self.manager = manager
+        super().__init__(socketio, config, manager)
         self._stop_event = threading.Event()
-        self._stats_cache = {
-            "plugin_id": "pc_disks",
-            "disks": []
-        }
+        self._state = {"disks": []}
         
-        # Сразу получаем данные при инициализации
-        self._stats_cache["disks"] = self._get_disks()
-        
-        self._thread = threading.Thread(target=self._stats_loop, daemon=True)
-        self._thread.start()
+    def start(self):
+        """Запуск фонового опроса дисков"""
+        # Первый опрос сразу
+        self._update_disks_state()
+        threading.Thread(target=self._stats_loop, daemon=True).start()
 
     def stop(self):
-        """Останавливает фоновый поток плагина"""
         self._stop_event.set()
 
     def _get_disks(self, filter_selected=True):
         disks = []
         try:
-            # Получаем все разделы, исключая CD-ROM и пустые типы ФС
             for part in psutil.disk_partitions(all=False):
                 if 'cdrom' in part.opts or part.fstype == '':
                     continue
-                
                 try:
                     usage = psutil.disk_usage(part.mountpoint)
-                    
-                    # Очищаем имя устройства для отображения (например, C: вместо C:\)
                     device = part.device.replace('\\', '')
                     if not device and part.mountpoint:
                         device = part.mountpoint.replace('\\', '')
 
-                    # Пытаемся получить метку тома в Windows
                     label = ""
                     if os.name == 'nt':
                         try:
                             volumeNameBuffer = ctypes.create_unicode_buffer(1024)
-                            fileSystemNameBuffer = ctypes.create_unicode_buffer(1024)
                             ctypes.windll.kernel32.GetVolumeInformationW(
                                 ctypes.c_wchar_p(part.mountpoint),
-                                volumeNameBuffer,
-                                ctypes.sizeof(volumeNameBuffer),
-                                None, None, None,
-                                fileSystemNameBuffer,
-                                ctypes.sizeof(fileSystemNameBuffer)
+                                volumeNameBuffer, ctypes.sizeof(volumeNameBuffer),
+                                None, None, None, None, 0
                             )
                             label = volumeNameBuffer.value
-                        except:
-                            pass
+                        except: pass
 
-                    # Фильтрация, если есть настройки выбранных дисков
                     if filter_selected:
                         selected = self.config.get("selected_disks", [])
-                        if selected and device not in selected:
-                            continue
+                        if selected and device not in selected: continue
 
                     disks.append({
                         "device": device,
@@ -71,76 +55,62 @@ class Plugin:
                         "total": round(usage.total / (1024**3), 1),
                         "used": round(usage.used / (1024**3), 1),
                         "free": round(usage.free / (1024**3), 1),
+                        "free_text": f"Свободно: {round(usage.free / (1024**3), 1)} ГБ из {round(usage.total / (1024**3), 1)} ГБ",
                         "percent": usage.percent
                     })
-                except Exception as e:
-                    # Некоторые диски могут быть заблокированы или недоступны
-                    print(f"[DISKS] Error reading {part.mountpoint}: {e}")
-                    
-        except Exception as e:
-            print(f"[DISKS] Error getting partitions: {e}")
-            
+                except: pass
+        except: pass
         return disks
+
+    def _update_disks_state(self):
+        self._state["disks"] = self._get_disks()
+        self.update_state(self._state)
 
     def _stats_loop(self):
         while not self._stop_event.is_set():
             try:
-                self._stats_cache["disks"] = self._get_disks()
-                self.manager.broadcast_stats(self._stats_cache)
+                self._update_disks_state()
             except Exception as e:
-                self.manager.log("DISKS", f"Loop error: {e}", level="error")
+                self.log(f"Loop error: {e}", level="error")
             
-            # Диски меняются редко, опрашиваем раз в 2 минуты
-            # Но поток просыпается чаще для проверки stop_event
+            # Диски меняются редко, спим долго, но проверяем stop_event
             for _ in range(120):
                 if self._stop_event.is_set(): break
                 time.sleep(1)
 
     def get_stats(self):
-        """Возвращает кэшированные данные (вызывается при подключении нового клиента)"""
-        return self._stats_cache
+        return self._state
 
     def get_wizard_data(self):
-        """Возвращает данные для мастера настройки"""
         all_disks = self._get_disks(filter_selected=False)
-        items = []
-        for d in all_disks:
-            items.append({
-                "id": d["device"],
-                "label": f"Диск {d['device']} ({d['label']})",
-                "type": "checkbox"
-            })
-        
+        items = [{"id": d["device"], "label": f"Диск {d['device']} ({d['label']})", "type": "checkbox"} for d in all_disks]
         return {
             "title": "Настройка дисков",
-            "description": "Выберите локальные диски, которые вы хотите видеть в мониторинге.",
+            "description": "Выберите локальные диски для мониторинга.",
             "items": items
         }
 
     def handle_wizard(self, selections):
-        """Сохраняет выбранные в мастере диски в config.json"""
-        # В данном случае мы можем просто сохранить список разрешенных ID устройств
-        # и фильтровать их в _get_disks. 
-        # Но для простоты реализации по просьбе пользователя, 
-        # мы можем добавить поле "filter" в конфиг.
-        
         self.config["selected_disks"] = selections
-        
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
         with open(config_path, "w", encoding="utf-8") as f:
-            import json
             json.dump(self.config, f, indent=2, ensure_ascii=False)
         
-        # Обновляем кэш сразу
-        self._stats_cache["disks"] = self._get_disks()
-        self.socketio.emit('stats', self._stats_cache)
+        self._update_disks_state()
+        self.manager.broadcast_ui()
 
     def get_active_items(self):
         return self.config.get("selected_disks", [])
 
-    def handle_command(self, target, action):
-        """Обработка команд от клиента"""
-        if action == "update_disks":
-            self._stats_cache["disks"] = self._get_disks()
-            self.socketio.emit('stats', self._stats_cache)
-            # logger.info("[DISKS] Manual update triggered")
+    def handle_command(self, target, action, data=None):
+        if action == "get_wizard":
+            self.manager.emit_to_plugin_ui(self.p_id, "wizard_data", self.get_wizard_data())
+        elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:
+            selections = []
+            if isinstance(data, list):
+                selections = data
+            elif isinstance(data, dict):
+                selections = data.get("selections") or data.get("data") or data.get("items") or []
+            self.handle_wizard(selections)
+        elif action == "update_disks":
+            self._update_disks_state()

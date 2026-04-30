@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { InteractionManager, Alert } from 'react-native';
 import io from 'socket.io-client';
+import { decode } from "@msgpack/msgpack";
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { PairingScreen, LoginScreen } from './AuthScreens';
 import Dashboard from './Dashboard';
+import { GlobalStore, usePluginStats } from './store';
 
 export default function App() {
   const [socket, setSocket] = useState(null);
@@ -14,9 +16,6 @@ export default function App() {
   const [connectionStatus, setConnectionStatus] = useState('Ожидание IP');
   const [uiConfigs, setUiConfigs] = useState([]);
   const [appLanguage, setAppLanguage] = useState('ru');
-  const [allStats, setAllStats] = useState({});
-  const [mediaStats, setMediaStats] = useState({});
-  const [history, setHistory] = useState({}); 
   const [activeTargets, setActiveTargets] = useState({});
   const [lastUpdate, setLastUpdate] = useState('Нет данных');
   
@@ -33,77 +32,20 @@ export default function App() {
   useEffect(() => {
     const flushInterval = setInterval(() => {
       if (isInteractingRef.current) return;
-      const hasStats = Object.keys(pendingStats.current).length > 0;
+      const updates = { ...pendingStats.current };
+      const hasStats = Object.keys(updates).length > 0;
       if (!hasStats) return;
 
+      pendingStats.current = {};
+
       InteractionManager.runAfterInteractions(() => {
-        const updates = { ...pendingStats.current };
-        pendingStats.current = {};
-        
-        let mediaChanged = false;
-        const newHistEntries = {};
+        const sTime = updates["_server_time"] || (Date.now() / 1000);
+        GlobalStore.serverTime = sTime;
 
-        // 1. Сначала рассчитываем все изменения
-        Object.keys(updates).forEach(pId => {
-          const data = updates[pId];
-          const plugin = uiConfigs.find(p => p.id === pId);
-          if (plugin && (plugin.type === 'media_source' || plugin.type === 'lyrics_provider')) {
-            mediaChanged = true;
-          }
-
-          // Подготовка истории
-          const numericKeys = Object.keys(data).filter(k => typeof data[k] === 'number');
-          if (numericKeys.length > 0) {
-            newHistEntries[pId] = { keys: numericKeys, data: data };
-          }
-        });
-
-        // 2. Обновляем основной стейт
-        setAllStats(prev => {
-          const newState = { ...prev };
-          Object.keys(updates).forEach(pId => {
-            const prevData = newState[pId] || {};
-            const merged = { ...prevData, ...updates[pId] };
-            if (merged.cover === null && prevData.cover) merged.cover = prevData.cover;
-            newState[pId] = merged;
-          });
-
-          // 3. Если были медиа-данные, обновляем медиа-стейт
-          if (mediaChanged) {
-            setMediaStats(prevMedia => {
-              const newMedia = { ...prevMedia };
-              Object.keys(updates).forEach(pId => {
-                const plugin = uiConfigs.find(p => p.id === pId);
-                if (plugin && (plugin.type === 'media_source' || plugin.type === 'lyrics_provider')) {
-                  newMedia[pId] = newState[pId];
-                }
-              });
-              return newMedia;
-            });
-          }
-          
-          return newState;
-        });
-
-        // 4. Обновляем историю параллельно
-        if (Object.keys(newHistEntries).length > 0) {
-          setHistory(hPrev => {
-            const newHistory = { ...hPrev };
-            Object.keys(newHistEntries).forEach(pId => {
-              const { keys, data } = newHistEntries[pId];
-              const pluginHist = newHistory[pId] || {};
-              const newPluginHist = { ...pluginHist };
-              keys.forEach(key => {
-                const currentArr = pluginHist[key] || Array(30).fill(0);
-                newPluginHist[key] = [...currentArr, data[key]].slice(-30);
-              });
-              newHistory[pId] = newPluginHist;
-            });
-            return newHistory;
-          });
-        }
+        // Массовое обновление хранилища (включая историю внутри GlobalStore)
+        GlobalStore.bulkUpdate(updates);
       });
-    }, 300);
+    }, 400); 
     return () => clearInterval(flushInterval);
   }, [uiConfigs]);
 
@@ -185,8 +127,49 @@ export default function App() {
     });
 
     newSocket.on('stats', (data) => {
-      const pluginId = data.plugin_id || 'system_stats';
-      pendingStats.current[pluginId] = data;
+      let payload = data;
+      // Если пришли бинарные данные (ArrayBuffer или Uint8Array)
+      if (data instanceof ArrayBuffer || ArrayBuffer.isView(data)) {
+        try {
+          payload = decode(data);
+        } catch (e) {
+          console.error("[MSGPACK] Decode error:", e);
+          return;
+        }
+      }
+      
+      const statsData = payload.stats || payload;
+      const serverTime = payload._server_time || statsData._server_time || (Date.now() / 1000);
+      const PRIORITY_PLUGINS = ['yandex_station', 'pc_media', 'yandex_lyrics'];
+
+      const priorityUpdates = {};
+      let hasPriority = false;
+
+      if (statsData.plugin_id) {
+        if (PRIORITY_PLUGINS.includes(statsData.plugin_id)) {
+          priorityUpdates[statsData.plugin_id] = statsData;
+          hasPriority = true;
+        } else {
+          pendingStats.current[statsData.plugin_id] = statsData;
+        }
+      } else {
+        Object.keys(statsData).forEach(key => {
+          if (key === "_server_time") return;
+          if (PRIORITY_PLUGINS.includes(key)) {
+            priorityUpdates[key] = statsData[key];
+            hasPriority = true;
+          } else {
+            pendingStats.current[key] = statsData[key];
+          }
+        });
+      }
+
+      if (hasPriority) {
+        GlobalStore.bulkUpdate(priorityUpdates);
+      }
+
+      pendingStats.current["_server_time"] = serverTime;
+      setLoading(false);
     });
     return () => newSocket.close();
   }, [serverIp, authToken, appLanguage]);
@@ -246,10 +229,7 @@ export default function App() {
   return (
     <Dashboard 
       connected={connected}
-      allStats={allStats}
-      mediaStats={mediaStats}
       uiConfigs={uiConfigs}
-      history={history}
       pcStatus={pcStatus}
       activeTargets={activeTargets}
       sendCommand={sendCommand}
@@ -257,6 +237,7 @@ export default function App() {
       lastUpdate={lastUpdate}
       appLanguage={appLanguage}
       handleInteraction={handleInteraction}
+      serverIp={serverIp}
     />
   );
 }
