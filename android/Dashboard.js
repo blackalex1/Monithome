@@ -105,6 +105,7 @@ export default function Dashboard({
       
       <FlatList
         data={uiConfigs}
+        extraData={uiConfigs}
         renderItem={renderPlugin}
         keyExtractor={item => item.id}
         contentContainerStyle={[styles.scrollContent, { paddingBottom: 100 }]}

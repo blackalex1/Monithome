@@ -52,16 +52,11 @@ object SocketManager {
             // Обработка конфигурации плагинов (из manager_data)
             socket?.on("manager_data") { args ->
                 try {
-                    val data = when {
-                        args[0] is JSONObject -> args[0] as JSONObject
-                        args.size > 1 && args[1] is JSONObject -> args[1] as JSONObject
-                        else -> JSONObject(args[0].toString())
-                    }
+                    val data = if (args[0] is JSONObject) args[0] as JSONObject else JSONObject(args[0].toString())
                     if (data.has("all_plugins")) {
                         val pluginsObj = data.get("all_plugins")
-                        val pluginsJson = pluginsObj.toString()
                         val listType = object : TypeToken<List<PluginInfo>>() {}.type
-                        val plugins: List<PluginInfo> = gson.fromJson(pluginsJson, listType)
+                        val plugins: List<PluginInfo> = gson.fromJson(pluginsObj.toString(), listType)
                         registerPluginListeners(plugins)
                         PluginRepository.updateUiConfigs(plugins)
                     }
@@ -72,16 +67,11 @@ object SocketManager {
 
             socket?.on("ui_config") { args ->
                 try {
-                    val data = when {
-                        args[0] is JSONObject -> args[0] as JSONObject
-                        args.size > 1 && args[1] is JSONObject -> args[1] as JSONObject
-                        else -> JSONObject(args[0].toString())
-                    }
+                    val data = if (args[0] is JSONObject) args[0] as JSONObject else JSONObject(args[0].toString())
                     if (data.has("config")) {
                         val pluginsObj = data.get("config")
-                        val pluginsJson = pluginsObj.toString()
                         val listType = object : TypeToken<List<PluginInfo>>() {}.type
-                        val plugins: List<PluginInfo> = gson.fromJson(pluginsJson, listType)
+                        val plugins: List<PluginInfo> = gson.fromJson(pluginsObj.toString(), listType)
                         registerPluginListeners(plugins)
                         PluginRepository.updateUiConfigs(plugins)
                     }

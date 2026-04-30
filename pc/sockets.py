@@ -26,16 +26,10 @@ def register_socket_events(socketio, p_manager):
         if is_localhost:
             logger.info(f"Local Manager UI connected (sid: {sid})")
             join_room('authorized')
-            emit('manager_data', {
-                'master_config': master,
-                'all_plugins': get_all_plugins_info()
-            })
-            emit('status', {
-                'status': 'online', 
-                'hostname': master.get('hostname'), 
-                'os': master.get('os')
-            })
-            send_ui_config(socketio, p_manager)
+            
+            # Отправляем всё через единый метод с небольшой задержкой для стабильности
+            threading.Timer(0.3, send_ui_config, args=(socketio, p_manager, sid)).start()
+            
             send_stats_to_sid(socketio, sid, p_manager)
             # Задержка: клиент должен успеть зарегистрировать plugin_event-листенеры
             threading.Timer(2.0, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
@@ -46,16 +40,10 @@ def register_socket_events(socketio, p_manager):
         if token in trusted and token is not None:
             logger.info(f"Authorized device connected (sid: {sid})")
             join_room('authorized')
-            emit('manager_data', {
-                'master_config': master,
-                'all_plugins': get_all_plugins_info()
-            })
-            emit('status', {
-                'status': 'online', 
-                'hostname': master.get('hostname'), 
-                'os': master.get('os')
-            })
-            send_ui_config(socketio, p_manager)
+            
+            # Отправляем всё через единый метод с небольшой задержкой для стабильности
+            threading.Timer(0.3, send_ui_config, args=(socketio, p_manager, sid)).start()
+            
             send_stats_to_sid(socketio, sid, p_manager)
             # Задержка: клиент должен успеть зарегистрировать plugin_event-листенеры
             threading.Timer(2.0, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
@@ -85,8 +73,13 @@ def register_socket_events(socketio, p_manager):
     @socketio.on('save_master_config')
     def handle_save_master_config(data):
         if data:
+            # Увеличиваем версию конфига для принудительного обновления на клиентах
+            if isinstance(data, dict):
+                current_ver = data.get("_v", 0)
+                data["_v"] = current_ver + 1
+            
             save_master_config(data)
-            logger.info("Master config updated and saved")
+            logger.info(f"Master config updated to v{data.get('_v')} and saved")
             send_ui_config(socketio, p_manager)
 
     @socketio.on('save_plugin_config')
@@ -193,8 +186,8 @@ def register_socket_events(socketio, p_manager):
         if sid in pending_pairings: del pending_pairings[sid]
         logger.info(f"Client {sid} disconnected")
 
-def send_ui_config(socketio, p_manager):
-    p_manager.broadcast_ui()
+def send_ui_config(socketio, p_manager, target_sid=None):
+    p_manager.broadcast_ui(target_sid=target_sid)
 
 def send_stats_to_sid(socketio, sid, p_manager):
     """Отправка полного текущего состояния при подключении в бинарном формате"""

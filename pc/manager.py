@@ -187,8 +187,9 @@ class PluginManager:
             binary_payload = msgpack.packb(payload, use_bin_type=True)
             self.socketio.emit('stats', binary_payload, to='authorized')
 
-    def broadcast_ui(self):
-        """Уведомление всех клиентов об изменении структуры UI"""
+    def broadcast_ui(self, target_sid=None):
+        """Уведомление клиентов об изменении структуры UI. 
+        Если указан target_sid, отправляет только этому клиенту."""
         try:
             master = get_master_config()
             active_order = master.get("active_plugins", [])
@@ -198,35 +199,68 @@ class PluginManager:
                 if p_id in self.plugins:
                     p_instance = self.plugins[p_id]
                     if hasattr(p_instance, 'config'):
-                        ui_config.append(p_instance.config.copy())
+                        p_info = {'id': p_id, 'active': True}
+                        if isinstance(p_instance.config, dict):
+                            p_info['config'] = p_instance.config # Для браузера (вложенно)
+                            p_info.update(p_instance.config)     # Для планшета (плоско)
+                        ui_config.append(p_info)
             
             data = {
                 "language": master.get("language", "ru"),
-                "config": ui_config
+                "config": ui_config,
+                "hostname": master.get("hostname", platform.node()),
+                "os": master.get("os", platform.system()),
+                "_v": master.get("_v", 0),
+                "_ts": time.time()
             }
             
-            self.socketio.emit('ui_config', data, to='authorized')
-            # Также обновляем метаданные в менеджере
+            target = target_sid if target_sid else 'authorized'
+            self.socketio.emit('ui_config', data, to=target)
+            
             self.socketio.emit('manager_data', {
                 'master_config': master,
                 'all_plugins': self.get_all_plugins_info_internal()
-            }, to='authorized')
+            }, to=target)
             
-            self.log("CORE", "UI Configuration broadcasted successfully")
+            self.log("CORE", f"UI Config sent to {target}. Order: {active_order}")
         except Exception as e:
             self.log("CORE", f"Failed to broadcast UI config: {e}", level="error")
 
     def get_all_plugins_info_internal(self):
-        """Внутренний метод для получения инфо о плагинах"""
+        """Внутренний метод для получения инфо о плагинах в правильном порядке"""
         info = []
         master = get_master_config()
         active_list = master.get("active_plugins", [])
+        
+        # Сначала добавляем активные плагины в правильном порядке
+        for p_id in active_list:
+            if p_id in self.plugins:
+                p = self.plugins[p_id]
+                if hasattr(p, 'config'):
+                    # Важно: сохраняем структуру {'id': ..., 'active': ..., 'config': {...}} для браузера
+                    p_info = {
+                        'id': p_id, 
+                        'active': True,
+                        'config': p.config
+                    }
+                    # И добавляем плоские поля для планшета
+                    if isinstance(p.config, dict):
+                        p_info.update(p.config)
+                    info.append(p_info)
+        
+        # Затем добавляем остальные
         for p_id, p in self.plugins.items():
-            if hasattr(p, 'config'):
-                p_info = {'id': p_id, 'active': p_id in active_list, 'config': p.config}
-                if isinstance(p.config, dict):
-                    for k, v in p.config.items(): p_info[k] = v
-                info.append(p_info)
+            if p_id not in active_list:
+                if hasattr(p, 'config'):
+                    p_info = {
+                        'id': p_id, 
+                        'active': False,
+                        'config': p.config
+                    }
+                    if isinstance(p.config, dict):
+                        p_info.update(p.config)
+                    info.append(p_info)
+                    
         return info
 
     def start(self):

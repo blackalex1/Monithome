@@ -41,7 +41,7 @@ fun DashboardScreen() {
                 }
             }
         } else {
-            // Нативный аналог FlatList - очень быстрый и независимый
+            // Нативный аналог FlatList - теперь полностью динамический
             LazyColumn(
                 modifier = Modifier
                     .fillMaxSize()
@@ -49,24 +49,24 @@ fun DashboardScreen() {
                 contentPadding = PaddingValues(16.dp),
                 verticalArrangement = Arrangement.spacedBy(16.dp)
             ) {
-                // 1. Сначала рисуем общий Медиа Центр (он сам найдет источники)
-                item {
-                    MediaWidget()
-                }
+                // Флаг, чтобы отрисовать общий медиа-центр только один раз
+                var mediaWidgetRendered = false
 
-                item {
-                    Text("МОНИТОРИНГ", color = Color.Gray, fontSize = 12.sp, fontWeight = FontWeight.Bold)
-                }
-
-                // 2. Показываем плагины (те, у которых есть или виджеты, или экшены)
-                val visiblePlugins = uiConfigs.filter { plugin ->
-                    val hasUi = !plugin.widgets.isNullOrEmpty() || !plugin.actions.isNullOrEmpty()
-                    val isNotOnlyMedia = plugin.widgets?.none { it.type == "unified_media" } ?: true
-                    hasUi && isNotOnlyMedia
-                }
-                
-                items(visiblePlugins) { plugin ->
-                    PluginCard(plugin)
+                items(uiConfigs, key = { "${it.id}_${uiConfigs.indexOf(it)}" }) { plugin ->
+                    val isMedia = plugin.widgets?.any { it.type == "unified_media" } ?: false
+                    
+                    if (isMedia) {
+                        if (!mediaWidgetRendered) {
+                            MediaWidget()
+                            mediaWidgetRendered = true
+                        }
+                    } else {
+                        // Обычный плагин (stats, disks, etc)
+                        val hasUi = !plugin.widgets.isNullOrEmpty() || !plugin.actions.isNullOrEmpty()
+                        if (hasUi) {
+                            PluginCard(plugin)
+                        }
+                    }
                 }
             }
         }
