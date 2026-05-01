@@ -54,6 +54,7 @@ function App() {
   const [selectedWizardItems, setSelectedWizardItems] = useState<string[]>([]);
   const [isWizardLoading, setIsWizardLoading] = useState(false);
   const [pairingRequest, setPairingRequest] = useState<{sid: string, code: string} | null>(null);
+  const [yandexQrData, setYandexQrData] = useState<any>(null);
 
   useEffect(() => {
     const s = io();
@@ -93,6 +94,14 @@ function App() {
       setWizardData(data.wizard);
       setSelectedWizardItems(data.active_items || []);
       setIsWizardLoading(false);
+    });
+
+    s.on('plugin_event:yandex_station', (data: any) => {
+      if (data.event === 'show_qr') {
+        setYandexQrData(data.data);
+      } else if (data.event === 'auth_success') {
+        setYandexQrData(null);
+      }
     });
 
     return () => { s.disconnect(); };
@@ -415,6 +424,38 @@ function App() {
              >
                {t.pairing.cancel}
              </button>
+          </div>
+        </div>
+      )}
+
+      {/* Yandex Login Modal */}
+      {yandexQrData && (
+        <div className="modal-overlay" style={{ zIndex: 1100 }}>
+          <div className="glass-card" style={{ maxWidth: '500px', width: '95%', textAlign: 'center', padding: '2.5rem' }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '2rem' }}>
+              <h2 style={{ fontSize: '1.5rem', fontWeight: 700, margin: 0 }}>Яндекс Авторизация</h2>
+              <button className="action-btn" onClick={() => setYandexQrData(null)}>
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><line x1="18" y1="6" x2="6" y2="18"></line><line x1="6" y1="6" x2="18" y2="18"></line></svg>
+              </button>
+            </div>
+
+            <p style={{ opacity: 0.7, marginBottom: '1.5rem' }}>{yandexQrData.instructions || 'Отсканируйте QR-код для входа в Яндекс'}</p>
+            
+            <div style={{ background: '#fff', padding: '20px', borderRadius: '16px', display: 'inline-block', marginBottom: '1.5rem' }}>
+              <img src={yandexQrData.qr_url} alt="Yandex QR" style={{ width: '280px', height: '280px' }} />
+            </div>
+
+            <div style={{ color: 'var(--accent-cyan)', fontWeight: 600, marginBottom: '2rem' }}>
+              {yandexQrData.status || 'Ожидание сканирования...'}
+            </div>
+
+            <button 
+              className="control-btn" 
+              style={{ width: '100%', padding: '1rem' }} 
+              onClick={() => setYandexQrData(null)}
+            >
+              Закрыть
+            </button>
           </div>
         </div>
       )}

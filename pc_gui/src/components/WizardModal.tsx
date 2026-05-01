@@ -63,42 +63,91 @@ export function WizardModal({
               {wizardData.description}
             </p>
             
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '2rem' }}>
-              {wizardData?.items?.map((item: any) => {
-                const isSelected = selectedWizardItems.includes(item.id);
-                
-                return (
-                  <div 
-                    key={item.id}
-                    onClick={() => {
-                      setSelectedWizardItems(prev => 
-                        isSelected ? prev.filter(id => id !== item.id) : [...prev, item.id]
-                      );
-                    }}
-                    style={{ 
-                      background: isSelected ? 'rgba(0, 242, 255, 0.1)' : 'rgba(255,255,255,0.03)',
-                      border: `1px solid ${isSelected ? 'var(--accent-cyan)' : 'rgba(255,255,255,0.1)'}`,
-                      borderRadius: '12px',
-                      padding: '12px',
-                      cursor: 'pointer',
-                      display: 'flex',
-                      alignItems: 'center',
-                      gap: '12px',
-                      transition: 'all 0.2s'
-                    }}
-                  >
-                    <div style={{ 
-                      width: 20, height: 20, borderRadius: '6px', 
-                      border: '2px solid var(--accent-cyan)',
-                      display: 'flex', alignItems: 'center', justifyContent: 'center',
-                      background: isSelected ? 'var(--accent-cyan)' : 'transparent'
-                    }}>
-                      {isSelected && <Check size={14} color="#000" strokeWidth={4} />}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '2rem' }}>
+              {/* Informational items (text, images, buttons, links) */}
+              {wizardData?.items?.filter((i: any) => i.type !== 'yandex_station' && i.type !== 'setting').map((item: any) => {
+                if (item.type === 'text') {
+                  return (
+                    <div key={item.id} style={{ padding: '4px 0', fontSize: '0.95rem', color: item.color || '#fff', textAlign: 'center' }}>
+                      {item.label}
+                      {item.description && <div style={{ fontSize: '0.8rem', opacity: 0.6, marginTop: '4px' }}>{item.description}</div>}
                     </div>
-                    <span style={{ fontSize: '0.9rem', fontWeight: isSelected ? '600' : '400' }}>{item.label}</span>
-                  </div>
-                );
+                  );
+                }
+
+                if (item.type === 'image' || item.type === 'qr') {
+                  return (
+                    <div key={item.id} style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '10px', padding: '15px', background: 'rgba(255,255,255,0.03)', borderRadius: '12px' }}>
+                      <div style={{ background: '#fff', padding: '10px', borderRadius: '8px', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                        <img src={item.url} alt={item.label} style={{ width: item.size || '250px', height: 'auto' }} />
+                      </div>
+                      {item.label && <span style={{ fontSize: '0.85rem', opacity: 0.8 }}>{item.label}</span>}
+                    </div>
+                  );
+                }
+
+                if (item.type === 'button') {
+                  return (
+                    <button 
+                      key={item.id} 
+                      className="control-btn" 
+                      style={{ width: '100%', padding: '12px', justifyContent: 'center', background: 'var(--accent-cyan)', color: '#000' }}
+                      onClick={() => onPluginCommand(item.id.replace('action:', ''))}
+                    >
+                      {item.label}
+                    </button>
+                  );
+                }
+
+                if (item.type === 'link') {
+                   return (
+                     <div key={item.id} style={{ textAlign: 'center' }}>
+                       <a href={item.url} target="_blank" rel="noreferrer" style={{ color: 'var(--accent-cyan)', textDecoration: 'none', wordBreak: 'break-all', fontSize: '0.9rem' }}>
+                         {item.label}
+                       </a>
+                     </div>
+                   );
+                }
+                return null;
               })}
+
+              {/* Selectable settings/devices in a grid */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
+                {wizardData?.items?.filter((i: any) => i.type === 'yandex_station' || i.type === 'setting').map((item: any) => {
+                  const isSelected = selectedWizardItems.includes(item.id);
+                  return (
+                    <div 
+                      key={item.id}
+                      onClick={() => {
+                        setSelectedWizardItems(prev => 
+                          isSelected ? prev.filter(id => id !== item.id) : [...prev, item.id]
+                        );
+                      }}
+                      style={{ 
+                        background: isSelected ? 'rgba(0, 242, 255, 0.1)' : 'rgba(255,255,255,0.03)',
+                        border: `1px solid ${isSelected ? 'var(--accent-cyan)' : 'rgba(255,255,255,0.1)'}`,
+                        borderRadius: '12px',
+                        padding: '12px',
+                        cursor: 'pointer',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '12px',
+                        transition: 'all 0.2s'
+                      }}
+                    >
+                      <div style={{ 
+                        width: 20, height: 20, borderRadius: '6px', 
+                        border: '2px solid var(--accent-cyan)',
+                        display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        background: isSelected ? 'var(--accent-cyan)' : 'transparent'
+                      }}>
+                        {isSelected && <Check size={14} color="#000" strokeWidth={4} />}
+                      </div>
+                      <span style={{ fontSize: '0.9rem', fontWeight: isSelected ? '600' : '400' }}>{item.label}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
             
             <div style={{ display: 'flex', gap: '1rem', justifyContent: 'flex-end' }}>

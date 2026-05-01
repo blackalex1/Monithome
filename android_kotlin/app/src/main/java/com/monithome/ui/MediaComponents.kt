@@ -387,7 +387,13 @@ fun MediaWidget() {
 
 fun formatTime(seconds: Double): String {
     val totalSeconds = seconds.toLong()
-    val mins = totalSeconds / 60
+    val hours = totalSeconds / 3600
+    val mins = (totalSeconds % 3600) / 60
     val secs = totalSeconds % 60
-    return "%02d:%02d".format(mins, secs)
+    
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, mins, secs)
+    } else {
+        "%02d:%02d".format(mins, secs)
+    }
 }

@@ -4,6 +4,7 @@ import base64
 import sys
 import time
 import os
+from datetime import datetime, timezone
 import threading
 import ctypes
 
@@ -100,6 +101,8 @@ async def main_loop():
     last_print_time = 0
     last_sent_cover_title = ""
     is_first_run = True
+    last_base_p_sec = -1.0
+    last_poll_time = time.time()
     
     print(json.dumps({"log": "Entering main_loop"}), flush=True)
     vol_manager = SystemVolume()
@@ -160,45 +163,69 @@ async def main_loop():
                     props = await session.try_get_media_properties_async()
                     timeline = session.get_timeline_properties()
                     
-                    info.update({
-                        "title": props.title or "",
-                        "artist": props.artist or props.album_artist or "",
-                        "playing": (pb.playback_status == 4) if pb else False,
-                    })
+                    if props:
+                        info["title"] = props.title or ""
+                        info["artist"] = props.artist or props.album_artist or ""
+                    if pb:
+                        info["playing"] = (pb.playback_status == 4)
 
                     # Если трек уже доиграл до конца (статус 5 или позиция >= длительности)
                     if pb and pb.playback_status == 5:
                         session = None
                         info["playing"] = False
 
+                    # Сначала проверяем смену состояния
+                    is_media_changed = (props and (props.title != last_info.get("title") or props.artist != last_info.get("artist")))
+                    is_playing_changed = info.get("playing") != last_info.get("playing")
+                    
                     if timeline:
-                        try:
-                            d_sec = float(timeline.end_time.duration) / 10000000.0
-                            base_p_sec = float(timeline.position.duration) / 10000000.0
-                            
-                            # КОМПЕНСАЦИЯ ВРЕМЕНИ: Firefox и другие браузеры редко обновляют позицию.
-                            # Мы добавляем время, прошедшее с момента последнего обновления сессии.
-                            lut = timeline.last_updated_time.timestamp()
-                            elapsed = time.time() - lut
-                            
-                            p_sec = base_p_sec
-                            if pb and pb.playback_status == 4: # Если играет - добавляем прошедшее время
-                                p_sec += elapsed
-                                
-                            if p_sec > d_sec and d_sec > 0: p_sec = d_sec
-                            
-                            # Фильтр: если до конца осталось меньше 0.5 сек - считаем трек законченным
+                        d_sec = float(timeline.end_time.total_seconds())
+                        base_p_sec = float(timeline.position.total_seconds())
+                        
+                        # АВТООПРЕДЕЛЕНИЕ: Сама ли Windows двигает время (динамическая позиция)
+                        # или оно "замерло" (статическая позиция).
+                        now = datetime.now(timezone.utc)
+                        now_ts = now.timestamp()
+                        
+                        system_delta = base_p_sec - last_base_p_sec
+                        time_delta = now_ts - last_poll_time
+                        
+                        # Если позиция в системе изменилась примерно на то же время, что прошло в реальности,
+                        # значит Windows сама инкрементирует Position (динамический режим).
+                        is_dynamic = abs(system_delta - time_delta) < 0.2
+                        
+                        p_sec = base_p_sec
+                        if info.get("playing") and not is_dynamic:
+                            # Компенсируем только если система сама "тормозит" (статический режим)
+                            lut = timeline.last_updated_time
+                            elapsed = (now - lut).total_seconds()
+                            p_sec += max(0, elapsed)
+                        
+                        last_base_p_sec = base_p_sec
+                        last_poll_time = now_ts
+                        
+                        # ФИЛЬТР МОНОТОННОСТИ: если мы в рамках одного трека и он играет, 
+                        # не позволяем времени прыгать назад (это фиксирует джиттер Windows)
+                        if not is_media_changed and not is_playing_changed and info.get("playing"):
+                            last_p = last_info.get("progress", 0.0)
+                            # Если разница невелика (до 5 сек), обеспечиваем плавный рост.
+                            # Если разница большая - значит была перемотка, принимаем новое значение.
+                            if p_sec < last_p and (last_p - p_sec) < 5.0:
+                                p_sec = last_p
+                        
+                        if p_sec > d_sec and d_sec > 0: p_sec = d_sec
+                        
+                        # Сброс при смене трека или окончании
+                        if is_media_changed or (d_sec > 0 and p_sec >= d_sec - 0.5):
                             if d_sec > 0 and p_sec >= d_sec - 0.5:
                                 session = None
                                 info["playing"] = False
                                 info["title"] = ""
                                 info["artist"] = ""
-                                
-                            info["duration"] = d_sec
-                            info["progress"] = p_sec
-                        except AttributeError:
-                            info["duration"] = float(timeline.end_time.total_seconds())
-                            info["progress"] = float(timeline.position.total_seconds())
+                            p_sec = max(0.0, p_sec) if not is_media_changed else 0.0
+
+                        info["duration"] = d_sec
+                        info["progress"] = p_sec
                 except: pass
 
             # ЛОГИКА ОТПРАВКИ
@@ -209,6 +236,7 @@ async def main_loop():
             if is_media_changed:
                 info["progress"] = 0.0
                 info["duration"] = 0.0
+                last_base_p_sec = -1.0
                 
             is_vol_changed = (info["volume"] != last_info.get("volume") or 
                              info["mute"] != last_info.get("mute"))

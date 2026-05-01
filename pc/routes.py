@@ -1,5 +1,6 @@
 import time
 import io
+import os
 import logging
 from flask import render_template, Response
 from PIL import Image, ImageDraw, ImageFont
