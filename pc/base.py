@@ -60,11 +60,46 @@ class BasePlugin:
             "description": desc,
             "version": self.config.get("version", "1.0.0"),
             "author_name": self.config.get("author_name"),
-            "author": self.config.get("author"),
-            "active": self.manager.is_plugin_active(self.p_id),
+            "author": self.config.get("author") or self.config.get("author_url"),
+            "active": self.p_id in self.manager.plugins,
             "dependencies": self.config.get("dependencies", []),
             "config": self.config
         }
+
+    def handle_command(self, target: str, action: str, data: Any = None):
+        """Универсальный обработчик команд. Плагины могут расширять его."""
+        if action == "get_wizard":
+            # Отправляем данные мастера и список текущих активных элементов
+            wizard_data = self.get_wizard_data() if hasattr(self, 'get_wizard_data') else {}
+            active_items = self.get_active_items() if hasattr(self, 'get_active_items') else []
+            
+            self.socketio.emit("wizard_data", {
+                "plugin_id": self.p_id,
+                "wizard": wizard_data,
+                "active_items": active_items
+            }, room='authorized')
+            return True
+            
+        elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:
+            # Стандартизируем извлечение данных из разных форматов Socket.io
+            selections = []
+            if isinstance(data, list):
+                selections = data
+            elif isinstance(data, dict):
+                selections = data.get("selections") or data.get("data") or data.get("items") or []
+            
+            if hasattr(self, 'handle_wizard'):
+                self.handle_wizard(selections)
+                return True
+        
+        return False
+
+    def get_initial_events(self) -> List[Dict[str, Any]]:
+        """
+        Возвращает список событий (event, data), которые нужно отправить 
+        новому клиенту сразу после подключения (например, обложка, текст песни).
+        """
+        return []
 
     def save_config(self, new_config):
         """Универсальный метод сохранения конфига плагина"""

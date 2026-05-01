@@ -116,26 +116,16 @@ class Plugin(BasePlugin):
         }
 
     def handle_wizard(self, selections):
-        self.config["selected_disks"] = selections
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config, f, indent=2, ensure_ascii=False)
-        
+        self.save_config({"selected_disks": selections})
         self._update_disks_state()
-        self.manager.broadcast_ui()
 
     def get_active_items(self):
         return self.config.get("selected_disks", [])
 
     def handle_command(self, target, action, data=None):
-        if action == "get_wizard":
-            self.manager.emit_to_plugin_ui(self.p_id, "wizard_data", self.get_wizard_data())
-        elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:
-            selections = []
-            if isinstance(data, list):
-                selections = data
-            elif isinstance(data, dict):
-                selections = data.get("selections") or data.get("data") or data.get("items") or []
-            self.handle_wizard(selections)
-        elif action == "update_disks":
+        # Сначала даем базе обработать общие команды (мастер настройки)
+        if super().handle_command(target, action, data):
+            return
+
+        if action == "update_disks":
             self._update_disks_state()

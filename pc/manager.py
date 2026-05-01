@@ -8,13 +8,12 @@ import platform
 import os
 from typing import Dict, List, Any, Optional, Set, Callable
 
-from plugin_manager import load_plugins
+from plugin_manager import load_plugins, discovered_plugins
 from config import get_master_config
 
 logger = logging.getLogger("CORE")
 
-# Глобальные переменные для плагинов
-discovered_plugins = load_plugins()
+# Глобальные переменные для активных инстансов плагинов
 plugins = {}
 
 class PluginManager:
@@ -85,6 +84,25 @@ class PluginManager:
                 self.log("CORE", f"Error getting stats from {p_id}: {e}", level="error")
         
         return all_stats
+
+    def get_all_initial_events(self) -> List[Dict[str, Any]]:
+        """Сбор всех начальных событий от всех плагинов (обложки, тексты и т.д.)"""
+        all_events = []
+        for p_id, plugin in self.plugins.items():
+            try:
+                if hasattr(plugin, 'get_initial_events'):
+                    events = plugin.get_initial_events()
+                    if events:
+                        # Оборачиваем события в формат plugin_event
+                        for e in events:
+                            all_events.append({
+                                "plugin_id": p_id,
+                                "event": e.get("event"),
+                                "data": e.get("data")
+                            })
+            except Exception as e:
+                self.log("CORE", f"Error getting initial events from {p_id}: {e}", level="error")
+        return all_events
 
     def subscribe(self, event_name: str, callback: Callable):
         """Подписка на внутренние события ядра"""
@@ -177,47 +195,20 @@ class PluginManager:
             time.sleep(10)
 
     def broadcast_ui(self, target_sid=None):
-        """Рассылка актуальной конфигурации UI"""
+        """Рассылка актуальной конфигурации UI всем клиентам"""
         master = get_master_config()
-        active_ids = master.get("active_plugins", [])
-        order = master.get("plugin_order", [])
+        # Получаем актуальный список плагинов со всеми переводами
+        all_plugins = self.get_all_plugins_info()
         
-        # Если порядок не задан, используем порядок из active_plugins
-        if not order:
-            order = active_ids
-            
-        ui_plugins = []
-        for p_id in order:
-            if p_id in active_ids and p_id in self.discovered:
-                p_info = self.discovered[p_id].copy()
-                p_dir = p_info.get("path")
-                
-                # Применяем рекурсивный перевод всех строковых констант
-                p_info = self._translate_recursive(p_info, p_id, p_dir)
-                
-                # Раскрываем внутренний config для совместимости с моделями на планшете
-                # (делаем update БЕЗ pop, чтобы сохранить объект config для редактора)
-                if "config" in p_info:
-                    p_info.update(p_info["config"])
-                
-                # Совместимость полей автора
-                if "author_url" in p_info and not p_info.get("author"):
-                    p_info["author"] = p_info["author_url"]
-                    
-                p_info["id"] = p_id
-                # Удаляем несериализуемые объекты
-                if "class" in p_info: del p_info["class"]
-                ui_plugins.append(p_info)
-                
-        config = {
-            "plugins": ui_plugins,
-            "master": master
+        payload = {
+            "plugins": all_plugins,
+            "master": master,
+            "_v": master.get("_v", 0)
         }
         
-        if target_sid:
-            self.socketio.emit('ui_config', config, room=target_sid, namespace='/')
-        else:
-            self.socketio.emit('ui_config', config, room='authorized', namespace='/')
+        room = target_sid if target_sid else 'authorized'
+        self.socketio.emit('ui_config', payload, room=room, namespace='/')
+        self.log("CORE", f"Broadcasted UI config to {room}")
 
     def start_plugin(self, p_id: str):
         """Динамический запуск плагина"""
@@ -263,26 +254,60 @@ class PluginManager:
             self.discovered[p_id]["config"] = new_config
 
     def get_all_plugins_info(self) -> List[Dict[str, Any]]:
-        """Для админ-панели"""
+        """Сбор информации о всех плагинах для UI (активных и нет)"""
         master = get_master_config()
-        active = master.get("active_plugins", [])
+        active_ids = master.get("active_plugins", [])
+        from i18n import i18n_engine
+        
+        # Определяем порядок отображения: сначала согласно plugin_order (или active_plugins как резерв)
+        order = master.get("plugin_order") or master.get("active_plugins", [])
+        all_ids = list(self.discovered.keys())
+        
+        # Сначала добавляем те, что есть в списке порядка, затем все остальные (новые)
+        sorted_ids = [p_id for p_id in order if p_id in all_ids]
+        sorted_ids += [p_id for p_id in all_ids if p_id not in sorted_ids]
         
         info = []
-        for p_id, p_data in self.discovered.items():
-            item = p_data.copy()
-            item = self._translate_recursive(item, p_id, item.get("path"))
-            # Раскрываем config для отображения в UI (имя, автор и т.д.)
-            if "config" in item:
-                item.update(item["config"])
+        for p_id in sorted_ids:
+            p_data = self.discovered[p_id]
+            plugin = self.plugins.get(p_id)
+            p_dir = os.path.dirname(p_data.get('path', ''))
             
-            # Совместимость полей автора
-            if "author_url" in item and not item.get("author"):
-                item["author"] = item["author_url"]
-                
+            if plugin:
+                # 1. Если плагин запущен, берем его актуальные (локализованные) данные
+                try:
+                    item = plugin.get_metadata()
+                except Exception as e:
+                    self.log(p_id, f"Error getting metadata: {e}", "error")
+                    item = p_data.copy()
+            else:
+                # 2. Если плагин не запущен, берем из обнаруженных и переводим вручную
+                item = p_data.copy()
+                cfg = item.get("config", {})
+                item["name"] = i18n_engine.get_string(p_id, "plugin_name", p_dir, item.get("name"))
+                item["description"] = i18n_engine.get_string(p_id, "plugin_description", p_dir, item.get("description"))
+                item["version"] = cfg.get("version", "1.0.0")
+                item["author_name"] = cfg.get("author_name")
+                item["author"] = cfg.get("author") or cfg.get("author_url")
+                item["dependencies"] = cfg.get("dependencies", [])
+                item["config"] = cfg
+            
+            # Применяем рекурсивный перевод для всех вложенных структур (если есть)
+            item = self._translate_recursive(item, p_id, p_dir)
+            
+            # Развертываем UI-критичные поля из конфига в корень (для совместимости с Android и браузером)
+            cfg = item.get("config", {})
+            for key in ["type", "widgets", "actions", "version", "author_name", "author"]:
+                if key in cfg:
+                    item[key] = cfg[key]
+            
+            # Убеждаемся, что id и статус активности верные
             item["id"] = p_id
-            item["active"] = p_id in active
+            item["active"] = p_id in active_ids
+            
             # Удаляем несериализуемые объекты
             if "class" in item: del item["class"]
+            
             info.append(item)
         return info
 

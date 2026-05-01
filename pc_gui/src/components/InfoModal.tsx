@@ -25,10 +25,10 @@ export function InfoModal({ plugin, allPlugins, onClose, t }: InfoModalProps) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem' }}>
           <div>
             <h3 style={{ fontSize: '1.1rem', fontWeight: 700, marginBottom: '0.5rem' }}>
-              {t.sidebar.plugins === 'Plugins' ? plugin.name_en || plugin.name : plugin.name}
+              {plugin.name}
             </h3>
             <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: '0.9rem', lineHeight: '1.6', margin: 0 }}>
-              {t.sidebar.plugins === 'Plugins' ? plugin.description_en || plugin.description : plugin.description}
+              {plugin.description}
             </p>
           </div>
 
@@ -113,7 +113,7 @@ export function InfoModal({ plugin, allPlugins, onClose, t }: InfoModalProps) {
                     {(() => {
                       const depP = allPlugins.find(p => p.id === dep);
                       if (!depP) return dep;
-                      return t.sidebar.plugins === 'Plugins' ? depP.name_en || depP.name : depP.name;
+                      return depP.name;
                     })()}
                   </span>
                 ))}

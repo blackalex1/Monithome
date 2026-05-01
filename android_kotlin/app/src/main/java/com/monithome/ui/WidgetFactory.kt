@@ -12,6 +12,7 @@ import androidx.compose.ui.unit.sp
 import com.monithome.data.PluginRepository
 import com.monithome.models.PluginInfo
 import com.monithome.models.Widget
+import com.monithome.utils.resolveStat
 
 @Composable
 fun WidgetRenderer(pluginId: String, widget: Widget) {
@@ -58,10 +59,7 @@ fun PluginCard(plugin: PluginInfo) {
 @Composable
 fun StatWidget(widget: Widget, stats: Map<String, Any>) {
     val key = widget.dataKey ?: ""
-    val displayKey = "display_$key"
-    
-    // Приоритет отдаем форматированной строке от сервера (например, "8 / 16 GB")
-    val valueStr = (stats[displayKey] ?: stats[key])?.toString() ?: "0"
+    val valueStr = stats.resolveStat(key, widget.unit)
     
     val valueFloat = (stats["${key}_percent"] as? Number)?.toFloat() 
         ?: (stats[key] as? Number)?.toFloat() 
@@ -73,7 +71,7 @@ fun StatWidget(widget: Widget, stats: Map<String, Any>) {
         ValueBlock(
             label = widget.label ?: "",
             value = valueStr,
-            unit = if (stats.containsKey(displayKey)) "" else (widget.unit ?: ""),
+            unit = "", // resolveStat уже включает unit если нужно
             icon = if (!widget.icon.isNullOrEmpty()) mapIcon(widget.icon) else null
         )
         AnimatedProgressBar(

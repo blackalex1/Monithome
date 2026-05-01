@@ -137,21 +137,7 @@ object PluginRepository {
                 val devicesMap: Map<String, LyricsData>? = gson.fromJson(devicesJson, type)
                 
                 devicesMap?.forEach { (dId, rawData) ->
-                    var lyricsData = rawData
-                    // Парсим LRC, если есть текст, но нет таймингов
-                    if (!lyricsData.lyrics.isNullOrEmpty() && lyricsData.timings.isNullOrEmpty()) {
-                        val parsedTimings = parseLrc(lyricsData.lyrics)
-                        if (parsedTimings.isNotEmpty()) {
-                            lyricsData = lyricsData.copy(timings = parsedTimings)
-                        }
-                    }
-
-                    // Обновляем состояние в любом случае (даже если пусто), 
-                    // чтобы сбросить статус "Загрузка..."
-                    val currentMap = _lyrics.value.toMutableMap()
-                    currentMap[dId] = lyricsData
-                    _lyrics.value = currentMap
-                    android.util.Log.d("PluginRepo", "Lyrics updated for $dId (lines=${lyricsData.timings?.size ?: 0})")
+                    processLyrics(dId, rawData)
                 }
             } catch (e: Exception) {
                 android.util.Log.e("PluginRepo", "Failed to extract lyrics: ${e.message}")
@@ -224,6 +210,23 @@ object PluginRepository {
         }
     }
 
+    private fun processLyrics(deviceId: String, rawData: LyricsData) {
+        var lyricsData = rawData
+        // Парсим LRC, если есть текст, но нет таймингов
+        if (!lyricsData.lyrics.isNullOrEmpty() && lyricsData.timings.isNullOrEmpty()) {
+            val parsedTimings = parseLrc(lyricsData.lyrics)
+            if (parsedTimings.isNotEmpty()) {
+                lyricsData = lyricsData.copy(timings = parsedTimings)
+            }
+        }
+
+        // Обновляем состояние
+        val currentMap = _lyrics.value.toMutableMap()
+        currentMap[deviceId] = lyricsData
+        _lyrics.value = currentMap
+        android.util.Log.d("PluginRepo", "Lyrics updated for $deviceId (lines=${lyricsData.timings?.size ?: 0})")
+    }
+
     fun handlePluginEvent(pluginId: String, event: String, data: Any) {
         when (event) {
             "lyrics" -> {
@@ -232,19 +235,9 @@ object PluginRepository {
                     val json = org.json.JSONObject(jsonStr)
                     val deviceId = if (json.has("device_id")) json.getString("device_id") else "all"
                     val lyricsObj = if (json.has("data")) json.get("data").toString() else jsonStr
-                    var lyricsData = Gson().fromJson(lyricsObj, LyricsData::class.java)
+                    val lyricsData = Gson().fromJson(lyricsObj, LyricsData::class.java)
                     
-                    // Парсим LRC на лету
-                    if (!lyricsData.lyrics.isNullOrEmpty() && lyricsData.timings.isNullOrEmpty()) {
-                        val parsedTimings = parseLrc(lyricsData.lyrics)
-                        if (parsedTimings.isNotEmpty()) {
-                            lyricsData = lyricsData.copy(timings = parsedTimings)
-                        }
-                    }
-                    
-                    _lyrics.value = _lyrics.value.toMutableMap().apply {
-                        put(deviceId, lyricsData)
-                    }
+                    processLyrics(deviceId, lyricsData)
                 } catch (e: Exception) {
                     android.util.Log.e("PluginRepo", "Lyrics parse error: ${e.message}")
                 }

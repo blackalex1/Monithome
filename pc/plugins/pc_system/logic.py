@@ -29,15 +29,10 @@ class Plugin(BasePlugin):
             "shutdown": { "label": self.i18n("shutdown_short"), "action": "shutdown", "icon": "Power", "color": "text-red-500", "need_confirm": True }
         }
         selected_buttons = [all_buttons[b_id] for b_id in selections if b_id in all_buttons]
-        self.config.update({
+        
+        self.save_config({
             "actions": [{"id": "system_buttons", "type": "button_group", "label": self.i18n("power_group"), "buttons": selected_buttons}]
         })
-        
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config, f, indent=2, ensure_ascii=False)
-        
-        self.manager.broadcast_ui()
 
     def get_active_items(self):
         active = []
@@ -47,16 +42,8 @@ class Plugin(BasePlugin):
         return active
 
     def handle_command(self, target, action, data=None):
-        if action == "get_wizard":
-            self.manager.emit_to_plugin_ui(self.p_id, "wizard_data", self.get_wizard_data())
-            return
-        elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:
-            selections = []
-            if isinstance(data, list):
-                selections = data
-            elif isinstance(data, dict):
-                selections = data.get("selections") or data.get("data") or data.get("items") or []
-            self.handle_wizard(selections)
+        # Базовая обработка (мастер настройки)
+        if super().handle_command(target, action, data):
             return
 
         self.log(f"Executing system command: {action}")
@@ -64,10 +51,9 @@ class Plugin(BasePlugin):
         if action == 'lock':
             ctypes.windll.user32.LockWorkStation()
         elif action == 'sleep':
-            # Более надежный метод сна через PowerShell (не блокируется гибернацией)
             os.system("powershell -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)\"")
         elif action == 'restart':
-            os.system("shutdown /r /t 5 /f") # /f - принудительно закрыть зависшие программы
+            os.system("shutdown /r /t 5 /f")
         elif action == 'shutdown':
             os.system("shutdown /s /t 5 /f")
 

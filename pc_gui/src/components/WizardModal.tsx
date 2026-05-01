@@ -64,7 +64,7 @@ export function WizardModal({
             </p>
             
             <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px', marginBottom: '2rem' }}>
-              {wizardData.items.map((item: any) => {
+              {wizardData?.items?.map((item: any) => {
                 const isSelected = selectedWizardItems.includes(item.id);
                 
                 return (

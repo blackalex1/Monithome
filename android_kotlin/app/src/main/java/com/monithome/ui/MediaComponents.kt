@@ -68,7 +68,9 @@ fun MediaWidget() {
                     displayName = dev["name"]?.toString() ?: config.name ?: com.monithome.data.LanguageManager.i18n("speaker")
                 ))
             }
-        } else if (devices == null) {
+        } else {
+            // Если список пуст или null (например, плагин только запустился), 
+            // добавляем его как единый источник, чтобы вкладка не пропадала.
             sources.add(FlatSource(
                 pluginId = pId,
                 deviceId = "all",

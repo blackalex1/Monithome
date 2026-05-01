@@ -212,15 +212,21 @@ class Plugin(BasePlugin):
 
         return best_result if best_result["full"] or best_result["timings"] else None
 
-    def get_stats(self):
-        return {"plugin_id": "yandex_lyrics", "devices": self._lyrics_cache}
+    def get_initial_events(self):
+        """Отправка накопленных текстов песен новому клиенту"""
+        events = []
+        for d_id, data in self._lyrics_cache.items():
+            if data:
+                events.append({
+                    "event": "lyrics",
+                    "data": {"device_id": d_id, "data": data}
+                })
+        return events
 
     def handle_command(self, target, action, data=None):
-        if action == "get_wizard":
-            self.manager.emit_to_plugin_ui(self.p_id, "wizard_data", self.get_wizard_data())
-        elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:
-            selections = data if isinstance(data, list) else (data.get("selections") or data.get("data") or []) if isinstance(data, dict) else []
-            self.handle_wizard(selections)
+        # Базовая обработка
+        if super().handle_command(target, action, data):
+            return
 
     def stop(self):
         self._stop_event.set()

@@ -243,7 +243,7 @@ fun LyricsHeader(title: String, artist: String, hasNoLyrics: Boolean, onDismiss:
             }
             IconButton(
                 onClick = onDismiss,
-                modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.1f))
+                modifier = Modifier.size(44.dp).clip(CircleShape).background(Color.Black.copy(alpha = 0.4f))
             ) {
                 Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
             }

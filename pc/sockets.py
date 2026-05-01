@@ -36,9 +36,8 @@ def register_socket_events(socketio, p_manager):
             p_manager.emit_event("client_connected", sid)
             send_stats_to_sid(socketio, sid, p_manager)
             
-            # Задержка для обложек и текстов
-            threading.Timer(1.5, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
-            threading.Timer(2.5, send_lyrics_to_sid, args=(socketio, sid, p_manager)).start()
+            # Отправляем все "тяжелые" начальные данные (обложки, тексты и т.д.)
+            threading.Timer(1.5, send_initial_plugin_data, args=(socketio, sid, p_manager)).start()
             return True
         
         code = "".join([str(random.randint(0, 9)) for _ in range(6)])
@@ -95,9 +94,18 @@ def register_socket_events(socketio, p_manager):
             if isinstance(data, dict):
                 current_ver = data.get("_v", 0)
                 data["_v"] = current_ver + 1
+                
+                # Обновляем язык в движке, если он изменился
+                from i18n import i18n_engine
+                new_lang = data.get("language")
+                if new_lang:
+                    i18n_engine.set_language(new_lang)
             
             save_master_config(data)
             logger.info(f"Master config updated to v{data.get('_v')} and saved")
+            
+            # Обновляем кэши плагинов (чтобы пересчитались локализованные названия)
+            p_manager.force_refresh_all()
             send_ui_config(socketio, p_manager)
 
     @socketio.on('save_plugin_config')
@@ -190,28 +198,16 @@ def register_socket_events(socketio, p_manager):
         action = data.get('action')
         p_instance = plugins.get(p_id)
         
-        # Если инстанс не найден (например, плагин не активен или в процессе релоада)
+        # Если инстанс не найден (например, плагин не активен)
         if not p_instance and action == 'get_wizard':
             if p_id in p_manager.discovered:
                 from plugin_manager import instantiate_plugin
                 p_instance = instantiate_plugin(p_id, p_manager)
         
         if p_instance:
-            if action == 'get_wizard' and hasattr(p_instance, 'get_wizard_data'):
-                wizard = p_instance.get_wizard_data()
-                active_items = []
-                if hasattr(p_instance, 'get_active_items'):
-                    active_items = p_instance.get_active_items()
-                
-                emit('wizard_data', {
-                    'plugin_id': p_id,
-                    'wizard': wizard,
-                    'active_items': active_items
-                })
-            else:
-                target = data.get('target', 'all')
-                cmd_data = data.get('data')
-                executor.submit(p_instance.handle_command, target, action, cmd_data)
+            target = data.get('target', 'all')
+            cmd_data = data.get('data')
+            executor.submit(p_instance.handle_command, target, action, cmd_data)
 
     @socketio.on('apply_plugin_wizard')
     def handle_apply_wizard(data):
@@ -248,40 +244,13 @@ def send_stats_to_sid(socketio, sid, p_manager):
             socketio.emit('stats_json', payload, room=sid)
         except: pass
 
-def send_covers_to_sid(socketio, sid, p_manager):
-    """Повторная отправка всех обложек при подключении — через JSON, минуя msgpack"""
-    from manager import plugins
-    logger.info(f"Sending current covers to new client {sid}...")
-    for p_id, plugin in plugins.items():
-        # PC Media
-        if hasattr(plugin, '_media_info'):
-            cover = plugin._media_info.get('cover')
-            title = plugin._media_info.get('title', '')
-            if cover:
-                logger.info(f" -> Sending PC Media cover ({len(cover)} bytes)")
-                socketio.emit(f'plugin_event:{p_id}',
-                    {'event': 'cover', 'data': {'cover': cover, 'title': title}},
-                    room=sid)
-        # Yandex Station
-        if hasattr(plugin, 'states'):
-            for d_id, state in plugin.states.items():
-                cover = state.get('cover', '')
-                title = state.get('title', '')
-                if cover:
-                    logger.info(f" -> Sending Yandex cover for {d_id} ({len(cover)} bytes)")
-                    socketio.emit(f'plugin_event:{p_id}',
-                        {'event': 'cover', 'data': {'cover': cover, 'device_id': d_id, 'title': title}},
-                        room=sid)
-
-def send_lyrics_to_sid(socketio, sid, p_manager):
-    """Отправка всех накопленных текстов песен при подключении"""
-    from manager import plugins
-    plugin = plugins.get("yandex_lyrics")
-    if plugin and hasattr(plugin, "_lyrics_cache"):
-        logger.info(f"Sending cached lyrics to new client {sid}...")
-        for d_id, data in plugin._lyrics_cache.items():
-            if data:
-                logger.info(f" -> Sending cached lyrics for {d_id}")
-                socketio.emit('plugin_event:yandex_lyrics',
-                    {'event': 'lyrics', 'data': {'device_id': d_id, 'data': data}},
-                    room=sid)
+def send_initial_plugin_data(socketio, sid, p_manager):
+    """Сбор и отправка всех накопленных данных от плагинов (обложки, тексты и т.д.)"""
+    logger.info(f"Sending initial plugin data to client {sid}...")
+    events = p_manager.get_all_initial_events()
+    for e in events:
+        p_id = e.get("plugin_id")
+        event_name = e.get("event")
+        data = e.get("data")
+        if p_id and event_name:
+            socketio.emit(f'plugin_event:{p_id}', {'event': event_name, 'data': data}, room=sid)

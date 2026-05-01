@@ -105,17 +105,6 @@ fun AnimatedProgressBar(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp)
     ) {
-        if (label != null) {
-            Text(
-                label,
-                color = MonitTheme.TextSecondary,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.Bold,
-                modifier = Modifier.width(40.dp) // Фиксированная ширина для выравнивания
-            )
-            Spacer(modifier = Modifier.width(8.dp))
-        }
-        
         Box(
             modifier = Modifier
                 .weight(1f)
@@ -132,6 +121,17 @@ fun AnimatedProgressBar(
                             colors = listOf(barColor.copy(alpha = 0.7f), barColor)
                         )
                     )
+            )
+        }
+
+        if (label != null) {
+            Spacer(modifier = Modifier.width(12.dp))
+            Text(
+                label,
+                color = MonitTheme.TextSecondary,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.width(42.dp)
             )
         }
     }

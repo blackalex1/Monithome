@@ -16,7 +16,7 @@ export function PluginCard({ plugin, allPlugins, togglePlugin, openEditor, openI
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
         <div>
           <h3 style={{ fontSize: '1.25rem', fontWeight: 700, margin: 0 }}>
-            {t.sidebar.plugins === 'Plugins' ? plugin.name_en || plugin.name : plugin.name}
+            {plugin.name}
           </h3>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
             {plugin.author ? (

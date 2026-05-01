@@ -14,6 +14,7 @@ export interface PluginInfo {
 
 export interface MasterConfig {
   active_plugins: string[];
+  plugin_order?: string[];
   language?: string;
   plugin_settings: any;
 }

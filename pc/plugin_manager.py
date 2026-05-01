@@ -47,9 +47,11 @@ def load_plugins():
                     
     return discovered
 
+# Глобальный кэш обнаруженных плагинов
+discovered_plugins = load_plugins()
+
 def instantiate_plugin(p_id, manager):
     """Создает экземпляр плагина"""
-    from manager import discovered_plugins
     if p_id in discovered_plugins:
         p_data = discovered_plugins[p_id]
         p_class = p_data["class"]

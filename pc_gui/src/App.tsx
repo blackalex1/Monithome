@@ -71,6 +71,12 @@ function App() {
       setMasterConfig(data.master_config);
     });
 
+    s.on('ui_config', (data) => {
+      if (data.plugins) {
+        setAllPlugins(data.plugins);
+      }
+    });
+
     s.on('pairing_request', (data) => {
       setPairingRequest(data);
     });
@@ -85,37 +91,7 @@ function App() {
 
     s.on('wizard_data', (data) => {
       setWizardData(data.wizard);
-      
-      if (data.active_items) {
-        setSelectedWizardItems(data.active_items);
-      } else {
-        const currentIds: string[] = [];
-        const plugin = data.plugin_info;
-        if (plugin) {
-          if (plugin.id === 'system_stats') {
-            const findKeys = (widgets: any[]) => {
-              widgets?.forEach(w => {
-                if (w.data_key) {
-                  if (w.data_key === 'ram_combined') {
-                    currentIds.push('ram_percent', 'ram_used');
-                  } else {
-                    currentIds.push(w.data_key);
-                  }
-                }
-                if (w.children) findKeys(w.children);
-              });
-            };
-            findKeys(plugin.config?.widgets || []);
-          } else if (plugin.id === 'yandex_station') {
-            currentIds.push(...(plugin.config?.selected_device_ids || []));
-          } else if (plugin.id === 'pc_system') {
-            plugin.config?.actions?.[0]?.buttons?.forEach((b: any) => { if (b?.action) currentIds.push(b.action); });
-          } else if (plugin.id === 'pc_disks') {
-            currentIds.push(...(plugin.config?.selected_disks || []));
-          }
-        }
-        setSelectedWizardItems(currentIds);
-      }
+      setSelectedWizardItems(data.active_items || []);
       setIsWizardLoading(false);
     });
 
@@ -172,12 +148,12 @@ function App() {
     if (targetIdx < 0 || targetIdx >= newOrder.length) return;
     
     [newOrder[idx], newOrder[targetIdx]] = [newOrder[targetIdx], newOrder[idx]];
-    saveMaster({ ...masterConfig, active_plugins: newOrder });
+    saveMaster({ ...masterConfig, active_plugins: newOrder, plugin_order: newOrder });
   };
 
   const updateOrder = (newOrder: string[]) => {
     if (!masterConfig) return;
-    saveMaster({ ...masterConfig, active_plugins: newOrder });
+    saveMaster({ ...masterConfig, active_plugins: newOrder, plugin_order: newOrder });
   };
 
   const changeLanguage = (newLang: Language) => {

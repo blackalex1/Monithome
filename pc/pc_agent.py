@@ -6,7 +6,8 @@ from flask_socketio import SocketIO
 import psutil
 import sys
 import ctypes
-from manager import PluginManager, initialize_plugins, discovered_plugins
+from manager import PluginManager, initialize_plugins
+from plugin_manager import discovered_plugins
 from routes import register_routes
 from sockets import register_socket_events
 

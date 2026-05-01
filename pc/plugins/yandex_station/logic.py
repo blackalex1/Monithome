@@ -117,6 +117,23 @@ class Plugin(BasePlugin):
         self.manager.emit_to_plugin_ui(self.p_id, "yandex_config", payload, sid=sid)
         self.log(f"Broadcasted standalone state (enabled={payload['enabled']}) with {len(configs)} devices to {sid if sid else 'all'}.")
 
+    def get_initial_events(self):
+        """Отправка всех текущих обложек новому клиенту"""
+        events = []
+        for d_id, state in self.states.items():
+            cover = state.get('cover', '')
+            title = state.get('title', '')
+            if cover:
+                events.append({
+                    "event": "cover",
+                    "data": {
+                        "cover": cover,
+                        "device_id": d_id,
+                        "title": title
+                    }
+                })
+        return events
+
     def stop(self):
         self.log("Stopping Yandex Station plugin...")
         self._stop_event.set()
@@ -259,8 +276,8 @@ class Plugin(BasePlugin):
                 core_changed = True
                 break
         
-        // if core_changed:
-        //    self.log(f"DEBUG: State changed for {device_id}: playing={new_vals.get('playing')}, title={new_vals.get('title')}")
+        # if core_changed:
+        #    self.log(f"DEBUG: State changed for {device_id}: playing={new_vals.get('playing')}, title={new_vals.get('title')}")
 
         old_track = self.states[device_id].get("track_id")
         is_new_track = bool(new_vals.get("track_id")) and new_vals.get("track_id") != old_track
@@ -359,14 +376,14 @@ class Plugin(BasePlugin):
             self.manager.reload_plugin("yandex_lyrics")
 
     def get_active_items(self):
-        active = list(self.config.get("selected_device_ids", []))
+        active = list(self.config.get("selected_device_ids") or [])
         if self.config.get("tablet_control", False):
             active.append("setting:tablet_control")
         return active
 
     def handle_command(self, target, action, data=None):
-        if action == "handle_wizard":
-            self.handle_wizard(data)
+        # Сначала даем базе обработать общие команды (мастер настройки)
+        if super().handle_command(target, action, data):
             return
 
         if action == "get_yandex_config":

@@ -5,8 +5,10 @@
   "cpu_temp": "CPU Temp",
   "gpu_usage": "GPU Load",
   "gpu_temp": "GPU Temp",
-  "ram_label": "RAM (Used / Total)",
+  "ram_label": "RAM",
   "ram_percent": "RAM (%)",
+  "ram_percent_label": "RAM (%)",
+  "ram_combined_label": "RAM (Used / Total)",
   "wizard_title": "Monitoring Setup",
   "wizard_desc": "Select the sensors you want to display on the dashboard."
 }

@@ -19,13 +19,15 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.StrokeCap
 
+import com.monithome.utils.resolveStat
+import com.monithome.utils.toComposeColor
+
 @Composable
 fun ChartWidget(pluginId: String, widget: Widget) {
     val stats by PluginRepository.getPluginStats(pluginId).collectAsState()
     val history = PluginRepository.getHistory(pluginId)[widget.dataKey ?: ""] ?: emptyList()
     val key = widget.dataKey ?: ""
-    val displayKey = "display_$key"
-    val currentValue = (stats[displayKey] ?: stats[key])?.toString() ?: "0"
+    val currentValue = stats.resolveStat(key, widget.unit)
     
     // Получаем название компонента (процессора или видеокарты)
     val componentName = remember(key, stats) {
@@ -36,8 +38,7 @@ fun ChartWidget(pluginId: String, widget: Widget) {
         }
     }
 
-    val colorHex = widget.color ?: "#38bdf8"
-    val color = try { Color(colorHex.toColorInt()) } catch (e: Exception) { MonitTheme.Primary }
+    val color = widget.color.toComposeColor()
 
     GlassCard(
         modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
@@ -81,7 +82,7 @@ fun ChartWidget(pluginId: String, widget: Widget) {
                 }
                 
                 Text(
-                    text = "$currentValue${if (stats.containsKey(displayKey)) "" else (widget.unit ?: "")}", 
+                    text = currentValue, 
                     color = Color.White, 
                     fontWeight = FontWeight.Black,
                     fontSize = 16.sp,

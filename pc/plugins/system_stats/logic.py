@@ -52,7 +52,10 @@ class Plugin(BasePlugin):
                 "display_ram_used": f"{ram_used} GB",
                 "ram_total": ram_total,
                 "ram_combined": ram_percent, 
-                "display_ram_combined": f"{ram_used} / {ram_total} GB"
+                "display_ram_combined": f"{ram_used} / {ram_total} GB",
+                "secondary_ram_combined": f"{int(ram_percent)}%",
+                "ram_used_total": ram_percent,
+                "display_ram_used_total": f"{ram_used} / {ram_total} GB"
             })
             # Мы НЕ вызываем update_state здесь, так как _stats_loop 
             # отправит общий пакет данных с температурами каждые 2 секунды.
@@ -158,19 +161,19 @@ class Plugin(BasePlugin):
     def get_wizard_data(self):
         """Возвращает метаданные для универсального мастера настройки"""
         sensors = [
-            {"id": "cpu", "label": "cpu_usage", "type": "chart"},
-            {"id": "cpu_temp", "label": "cpu_temp", "type": "chart"},
-            {"id": "ram_percent", "label": "ram_percent", "type": "stat"},
-            {"id": "ram_used", "label": "ram_label", "type": "stat"}
+            {"id": "cpu", "label": self.i18n("cpu_usage"), "type": "chart"},
+            {"id": "cpu_temp", "label": self.i18n("cpu_temp"), "type": "chart"},
+            {"id": "ram_percent", "label": self.i18n("ram_percent"), "type": "stat"},
+            {"id": "ram_used", "label": self.i18n("ram_label"), "type": "stat"}
         ]
         
         if self._state.get("has_gpu"):
-            sensors.append({"id": "gpu_load", "label": "gpu_usage", "type": "chart"})
-            sensors.append({"id": "gpu_temp", "label": "gpu_temp", "type": "chart"})
+            sensors.append({"id": "gpu_load", "label": self.i18n("gpu_usage"), "type": "chart"})
+            sensors.append({"id": "gpu_temp", "label": self.i18n("gpu_temp"), "type": "chart"})
             
         return {
-            "title": "wizard_title",
-            "description": "wizard_desc",
+            "title": self.i18n("wizard_title"),
+            "description": self.i18n("wizard_desc"),
             "items": sensors
         }
 
@@ -227,36 +230,32 @@ class Plugin(BasePlugin):
         ram_sel_percent = 'ram_percent' in selections
         ram_sel_used = 'ram_used' in selections
 
+        # RAM (ОЗУ) - Умное объединение согласно запросу пользователя
         if ram_sel_percent and ram_sel_used:
             widgets.append({
                 "id": "ram_combined_widget",
                 "type": "stat",
-                "label": "ram_label",
+                "label": "ram_label", # "ОЗУ"
                 "data_key": "ram_combined",
                 "icon": "ram",
-                "color_ranges": [
-                    {"min": 0, "max": 60, "color": "#38bdf8"},
-                    {"min": 60, "max": 85, "color": "#f59e0b"},
-                    {"min": 85, "max": 100, "color": "#ef4444"}
-                ]
+                "unit": "%"
             })
         elif ram_sel_percent:
             widgets.append({
                 "id": "ram_percent_widget",
                 "type": "stat",
-                "label": "ram_percent",
+                "label": "ram_percent_label", # "ОЗУ (%)"
                 "data_key": "ram_percent",
                 "unit": "%",
-                "icon": "Layers"
+                "icon": "ram"
             })
         elif ram_sel_used:
             widgets.append({
                 "id": "ram_gb_widget",
                 "type": "stat",
-                "label": "ram_label",
-                "data_key": "ram_used",
-                "unit": "GB",
-                "icon": "Layers"
+                "label": "ram_combined_label", # "ОЗУ (Занято / Всего)"
+                "data_key": "ram_used_total",
+                "icon": "ram"
             })
 
         # Сохраняем обновленные виджеты через базовый метод
@@ -267,9 +266,16 @@ class Plugin(BasePlugin):
         active = []
         widgets = self.config.get("widgets", [])
         for w in widgets:
-            # Если это комбинированный виджет ОЗУ
-            if w.get("data_key") == "ram_combined":
+            w_id = w.get("id")
+            # ОЗУ требует особой логики из-за разных режимов отображения
+            if w_id == "ram_combined_widget":
                 active.extend(["ram_percent", "ram_used"])
+                continue
+            if w_id == "ram_percent_widget":
+                active.append("ram_percent")
+                continue
+            if w_id == "ram_gb_widget":
+                active.append("ram_used")
                 continue
                 
             if w.get("type") == "row":
@@ -280,15 +286,9 @@ class Plugin(BasePlugin):
         return active
 
     def handle_command(self, target, action, data=None):
-        if action == "get_wizard":
-            wizard_data = self.get_wizard_data()
-            self.manager.emit_to_plugin_ui("system_stats", "wizard_data", wizard_data)
-        elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:
-            # Пытаемся извлечь список из разных форматов
-            selections = []
-            if isinstance(data, list):
-                selections = data
-            elif isinstance(data, dict):
-                selections = data.get("selections") or data.get("data") or data.get("items") or []
-            
-            self.handle_wizard(selections)
+        # Сначала даем базе обработать общие команды (мастер настройки)
+        if super().handle_command(target, action, data):
+            return
+        
+        # Если появятся другие команды, обрабатываем здесь
+        pass

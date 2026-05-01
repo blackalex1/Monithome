@@ -27,6 +27,18 @@ class Plugin(BasePlugin):
         self._stop_event = threading.Event()
         self.log("PC Media plugin initialized")
 
+    def get_initial_events(self):
+        """Отправка текущей обложки новому клиенту"""
+        if self._media_info.get('cover'):
+            return [{
+                "event": "cover",
+                "data": {
+                    "cover": self._media_info.get('cover'),
+                    "title": self._media_info.get('title', '')
+                }
+            }]
+        return []
+
     def start(self):
         """Запуск фонового потока мониторинга"""
         self.log("Starting media monitoring worker...")
@@ -110,7 +122,23 @@ class Plugin(BasePlugin):
             stats["duration"] = float(stats.get("duration", 0.0))
             stats["progress"] = float(stats.get("progress", 0.0))
             stats["volume"] = int(stats.get("volume", 0))
+            stats["device_name"] = self.i18n("pc_media_device", "Этот компьютер")
             return stats
+
+    def get_wizard_data(self):
+        return {
+            "title": self.i18n("wizard_title"),
+            "description": self.i18n("wizard_desc"),
+            "items": [
+                {"id": "pc_media_enabled", "label": self.i18n("enable_monitoring"), "type": "checkbox"}
+            ]
+        }
+
+    def handle_wizard(self, selections):
+        self.save_config({"pc_enabled": "pc_media_enabled" in selections})
+
+    def get_active_items(self):
+        return ["pc_media_enabled"] if self.config.get("pc_enabled", True) else []
 
     def _send_cover_from_file(self, title):
         """Читает обложку из файла и отправляет в UI"""
@@ -131,6 +159,10 @@ class Plugin(BasePlugin):
             self.log(f"Failed to read/send cover file: {e}", level="error")
 
     def handle_command(self, target, action, data=None):
+        # Сначала даем базе обработать общие команды (мастер настройки)
+        if super().handle_command(target, action, data):
+            return
+
         if action.startswith("set_volume:"):
             try:
                 level = int(action.split(":")[1])

@@ -5,8 +5,10 @@
   "cpu_temp": "Температура CPU",
   "gpu_usage": "Загрузка GPU",
   "gpu_temp": "Температура GPU",
-  "ram_label": "ОЗУ (Занято / Всего)",
+  "ram_label": "ОЗУ",
   "ram_percent": "ОЗУ (%)",
+  "ram_percent_label": "ОЗУ (%)",
+  "ram_combined_label": "ОЗУ (Занято / Всего)",
   "wizard_title": "Настройка Мониторинга",
   "wizard_desc": "Выберите датчики, которые будут отображаться на планшете."
 }
