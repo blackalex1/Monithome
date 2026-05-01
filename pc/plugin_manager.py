@@ -31,12 +31,15 @@ def load_plugins():
                     module_name = f"plugins.{item.name}.logic"
                     spec = importlib.util.spec_from_file_location(module_name, str(logic_path))
                     module = importlib.util.module_from_spec(spec)
+                    import sys
+                    sys.modules[module_name] = module
                     spec.loader.exec_module(module)
                     
                     if hasattr(module, 'Plugin'):
                         discovered[item.name] = {
                             "class": module.Plugin,
-                            "config": config
+                            "config": config,
+                            "path": str(item.absolute())
                         }
                         print(f"[CORE] Discovered plugin: {item.name}")
                 except Exception as e:

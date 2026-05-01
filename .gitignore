@@ -70,3 +70,14 @@ android_kotlin/.idea/
 android_kotlin/*.iml
 android_kotlin/.cxx/
 android_kotlin/captures/
+android_kotlin/**/*.jks
+android_kotlin/**/*.ap_
+android_kotlin/**/google-services.json
+
+# Temporary & Cache
+*.bak
+*.tmp
+*.temp
+.cache/
+.mypy_cache/
+.ruff_cache/

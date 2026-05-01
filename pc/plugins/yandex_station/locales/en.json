@@ -1,0 +1,8 @@
+{
+  "plugin_name": "Yandex Station",
+  "plugin_description": "Integration with Yandex smart speakers for media control and status monitoring.",
+  "speaker": "Speaker",
+  "loading": "Loading...",
+  "wizard_title": "Select Speakers",
+  "wizard_desc": "Select speakers to control."
+}

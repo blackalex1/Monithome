@@ -107,12 +107,12 @@ object PluginRepository {
                         }
                     }
 
-                    if (!lyricsData.lyrics.isNullOrEmpty() || !lyricsData.timings.isNullOrEmpty()) {
-                        val currentMap = _lyrics.value.toMutableMap()
-                        currentMap[dId] = lyricsData
-                        _lyrics.value = currentMap
-                        android.util.Log.d("PluginRepo", "Extracted lyrics for $dId (lines=${lyricsData.timings?.size ?: 0})")
-                    }
+                    // Обновляем состояние в любом случае (даже если пусто), 
+                    // чтобы сбросить статус "Загрузка..."
+                    val currentMap = _lyrics.value.toMutableMap()
+                    currentMap[dId] = lyricsData
+                    _lyrics.value = currentMap
+                    android.util.Log.d("PluginRepo", "Lyrics updated for $dId (lines=${lyricsData.timings?.size ?: 0})")
                 }
             } catch (e: Exception) {
                 android.util.Log.e("PluginRepo", "Failed to extract lyrics: ${e.message}")

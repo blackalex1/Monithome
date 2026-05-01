@@ -12,6 +12,20 @@ def register_routes(app, p_manager):
     def index():
         return render_template('index.html')
 
+    @app.route('/locales/<path:filename>')
+    def serve_locales(filename):
+        from flask import send_from_directory
+        import os
+        # Путь к папке locales в исходниках (для разработки) или в dist (для продакшена)
+        # Если есть папка dist, берем оттуда
+        dist_locales = os.path.abspath(os.path.join(app.root_path, '../pc_gui/dist/locales'))
+        if os.path.exists(dist_locales):
+            return send_from_directory(dist_locales, filename)
+        
+        # Иначе берем из public (если работаем без сборки или в дев-режиме)
+        public_locales = os.path.abspath(os.path.join(app.root_path, '../pc_gui/public/locales'))
+        return send_from_directory(public_locales, filename)
+
     @app.route('/api/karaoke/static/<device_id>')
     def karaoke_static(device_id):
         # 1. Сбор данных

@@ -124,8 +124,12 @@ class Plugin(BasePlugin):
                 with self._lock:
                     self._state.update({
                         "cpu_temp": cpu_t,
+                        "display_cpu_temp": f"{cpu_t}°C",
                         "gpu_load": gpu_l,
+                        "display_gpu_load": f"{gpu_l}%",
                         "gpu_temp": gpu_t,
+                        "display_gpu_temp": f"{gpu_t}°C",
+                        "display_cpu": f"{self._state.get('cpu', 0)}%",
                         "has_gpu": has_gpu,
                         "cpu_name": cpu_name,
                         "gpu_name": gpu_name
@@ -142,19 +146,19 @@ class Plugin(BasePlugin):
     def get_wizard_data(self):
         """Возвращает метаданные для универсального мастера настройки"""
         sensors = [
-            {"id": "cpu", "label": "Загрузка процессора (CPU %)", "type": "chart"},
-            {"id": "cpu_temp", "label": "Температура процессора (°C)", "type": "chart"},
-            {"id": "ram_percent", "label": "Использование ОЗУ (%)", "type": "stat"},
-            {"id": "ram_used", "label": "Использование ОЗУ (ГБ)", "type": "stat"}
+            {"id": "cpu", "label": "cpu_usage", "type": "chart"},
+            {"id": "cpu_temp", "label": "cpu_temp", "type": "chart"},
+            {"id": "ram_percent", "label": "ram_percent", "type": "stat"},
+            {"id": "ram_used", "label": "ram_label", "type": "stat"}
         ]
         
         if self._state.get("has_gpu"):
-            sensors.append({"id": "gpu_load", "label": "Загрузка видеокарты (GPU %)", "type": "chart"})
-            sensors.append({"id": "gpu_temp", "label": "Температура видеокарты (°C)", "type": "chart"})
+            sensors.append({"id": "gpu_load", "label": "gpu_usage", "type": "chart"})
+            sensors.append({"id": "gpu_temp", "label": "gpu_temp", "type": "chart"})
             
         return {
-            "title": "Настройка Мониторинга",
-            "description": "Выберите датчики, которые будут отображаться на планшете.",
+            "title": "wizard_title",
+            "description": "wizard_desc",
             "items": sensors
         }
 
@@ -164,17 +168,47 @@ class Plugin(BasePlugin):
         # CPU
         cpu_g = []
         if 'cpu' in selections:
-            cpu_g.append({ "id": "cpu_chart", "type": "chart", "label": "CPU Загрузка", "data_key": "cpu", "color": "#38bdf8" })
+            cpu_g.append({ 
+                "id": "cpu_chart", 
+                "type": "chart", 
+                "label": "cpu_usage", 
+                "data_key": "cpu", 
+                "color": "#38bdf8", 
+                "icon": "cpu" 
+            })
         if 'cpu_temp' in selections:
-            cpu_g.append({ "id": "cpu_temp_chart", "type": "chart", "label": "CPU Темп.", "data_key": "cpu_temp", "color": "#ef4444", "unit": "°C" })
+            cpu_g.append({ 
+                "id": "cpu_temp_chart", 
+                "type": "chart", 
+                "label": "cpu_temp", 
+                "data_key": "cpu_temp", 
+                "color": "#ef4444", 
+                "unit": "°C", 
+                "icon": "cpu" 
+            })
         if cpu_g: widgets.append({ "id": "cpu_row", "type": "row", "children": cpu_g })
 
         # GPU
         gpu_g = []
         if 'gpu_load' in selections:
-            gpu_g.append({ "id": "gpu_chart", "type": "chart", "label": "GPU Загрузка", "data_key": "gpu_load", "color": "#fbbf24" })
+            gpu_g.append({ 
+                "id": "gpu_chart", 
+                "type": "chart", 
+                "label": "gpu_usage", 
+                "data_key": "gpu_load", 
+                "color": "#fbbf24", 
+                "icon": "gpu" 
+            })
         if 'gpu_temp' in selections:
-            gpu_g.append({ "id": "gpu_temp_chart", "type": "chart", "label": "GPU Темп.", "data_key": "gpu_temp", "color": "#f97316", "unit": "°C" })
+            gpu_g.append({ 
+                "id": "gpu_temp_chart", 
+                "type": "chart", 
+                "label": "gpu_temp", 
+                "data_key": "gpu_temp", 
+                "color": "#f97316", 
+                "unit": "°C", 
+                "icon": "gpu" 
+            })
         if gpu_g: widgets.append({ "id": "gpu_row", "type": "row", "condition": "has_gpu", "children": gpu_g })
 
         # RAM (Умное объединение)
@@ -185,10 +219,9 @@ class Plugin(BasePlugin):
             widgets.append({
                 "id": "ram_combined_widget",
                 "type": "stat",
-                "label": "ОЗУ (Занято / Всего)",
-                "label_en": "RAM Usage",
+                "label": "ram_label",
                 "data_key": "ram_combined",
-                "icon": "Layers",
+                "icon": "ram",
                 "color_ranges": [
                     {"min": 0, "max": 60, "color": "#38bdf8"},
                     {"min": 60, "max": 85, "color": "#f59e0b"},
@@ -199,8 +232,7 @@ class Plugin(BasePlugin):
             widgets.append({
                 "id": "ram_percent_widget",
                 "type": "stat",
-                "label": "ОЗУ (%)",
-                "label_en": "RAM (%)",
+                "label": "ram_percent",
                 "data_key": "ram_percent",
                 "unit": "%",
                 "icon": "Layers"
@@ -209,8 +241,7 @@ class Plugin(BasePlugin):
             widgets.append({
                 "id": "ram_gb_widget",
                 "type": "stat",
-                "label": "ОЗУ (ГБ)",
-                "label_en": "RAM (GB)",
+                "label": "ram_label",
                 "data_key": "ram_used",
                 "unit": "GB",
                 "icon": "Layers"

@@ -37,3 +37,30 @@ class BasePlugin:
     def log(self, message, level="info"):
         """Логирование от имени плагина"""
         self.manager.log(self.p_id, message, level)
+
+    def i18n(self, key, default=None):
+        """Получение локализованной строки из папки locales плагина"""
+        from i18n import i18n_engine
+        import os
+        import sys
+        # Определяем путь к папке плагина
+        module = sys.modules[self.__class__.__module__]
+        plugin_dir = os.path.dirname(os.path.abspath(module.__file__))
+        return i18n_engine.get_string(self.p_id, key, plugin_dir, default)
+
+    def get_metadata(self, lang=None):
+        """Возвращает метаданные плагина с учетом локализации"""
+        name = self.i18n("plugin_name", self.config.get("name"))
+        desc = self.i18n("plugin_description", self.config.get("description"))
+        
+        return {
+            "id": self.p_id,
+            "name": name,
+            "description": desc,
+            "version": self.config.get("version", "1.0.0"),
+            "author_name": self.config.get("author_name"),
+            "author": self.config.get("author"),
+            "active": self.manager.is_plugin_active(self.p_id),
+            "dependencies": self.config.get("dependencies", []),
+            "config": self.config
+        }

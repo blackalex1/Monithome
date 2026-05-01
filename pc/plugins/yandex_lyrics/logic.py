@@ -63,7 +63,8 @@ class Plugin(BasePlugin):
             return
 
         self._active_fetches[device_id] = track_id
-        self._lyrics_cache[device_id] = {"track_id": track_id, "lyrics": "Loading...", "timings": []}
+        # Используем ключи перевода вместо готовых строк
+        self._lyrics_cache[device_id] = {"track_id": track_id, "lyrics": "loading", "timings": []}
         self.update_state({"devices": self._lyrics_cache})
         
         # Debounce
@@ -75,7 +76,8 @@ class Plugin(BasePlugin):
         threading.Thread(target=delayed_fetch, args=(device_id, track_id), daemon=True).start()
 
     def _fetch_and_broadcast(self, device_id, track_id):
-        self.manager.log("Lyrics", f"Fetching lyrics for track {track_id} (Parallel)...")
+        # Логируем ключами или просто текстом, лог в консоли сервера не обязательно переводить
+        self.manager.log("Lyrics", "Fetching lyrics...")
         lyrics_data = self._fetch_lyrics_parallel(track_id)
         
         if self._active_fetches.get(device_id) != track_id:
@@ -90,14 +92,15 @@ class Plugin(BasePlugin):
             }
             self._lyrics_cache[device_id] = lyrics_entry
             
-            # Отправляем событие в UI для мгновенного отображения
+            # Отправляем событие в UI (здесь данные уже сырые или текст песни, он не переводится)
             self.manager.emit_to_plugin_ui(
                 self.p_id, "lyrics", 
                 {"device_id": device_id, "data": lyrics_entry}
             )
         else:
-            self.manager.log("Lyrics", f"Lyrics not available for {track_id}", level="warning")
-            self._lyrics_cache[device_id] = {"track_id": track_id, "lyrics": None, "timings": []}
+            self.manager.log("Lyrics", "Lyrics not available", level="warning")
+            # Отправляем пустую строку, чтобы Android понял, что текста нет и не затемнял фон
+            self._lyrics_cache[device_id] = {"track_id": track_id, "lyrics": "", "timings": []}
             
         self.update_state({"devices": self._lyrics_cache})
 

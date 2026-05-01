@@ -93,7 +93,7 @@ class Plugin(BasePlugin):
                 if not g_token: continue
                 ip = local_devices.get(d_id, {}).get("ip") or self.devices.get(d_id, {}).get("ip")
                 if ip:
-                    new_results[d_id] = {"name": q_dev.get("name", "Колонка").strip(), "glagol_token": g_token, "platform": q_dev.get("platform"), "ip": ip}
+                    new_results[d_id] = {"name": q_dev.get("name", self.i18n("speaker")).strip(), "glagol_token": g_token, "platform": q_dev.get("platform"), "ip": ip}
             if new_results:
                 with open(TOKENS_FILE, "w", encoding="utf-8") as f: json.dump(new_results, f, ensure_ascii=False, indent=2)
                 self.devices = new_results
@@ -212,7 +212,7 @@ class Plugin(BasePlugin):
 
     def get_wizard_data(self):
         devices = [{"id": d_id, "label": d.get("name", d_id), "type": "yandex_station"} for d_id, d in self.devices.items()]
-        return {"title": "Выбор колонок", "description": "Выберите колонки для управления.", "items": devices}
+        return {"title": self.i18n("wizard_title"), "description": self.i18n("wizard_desc"), "items": devices}
 
     def handle_wizard(self, selections):
         config_path = CONFIG_FILE
@@ -236,11 +236,11 @@ class Plugin(BasePlugin):
             self._force_broadcast_until[target] = time.time() + 3.0
         elif cmd == "next_track":
             payload_data = {"command": "next"}
-            self.states[target].update({"title": "Загрузка...", "playing": True})
+            self.states[target].update({"title": self.i18n("loading"), "playing": True})
             self._force_broadcast_until[target] = time.time() + 5.0
         elif cmd == "prev_track":
             payload_data = {"command": "prev"}
-            self.states[target].update({"title": "Загрузка...", "playing": True})
+            self.states[target].update({"title": self.i18n("loading"), "playing": True})
             self._force_broadcast_until[target] = time.time() + 5.0
         elif cmd == "set_volume":
             try:

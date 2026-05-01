@@ -14,6 +14,9 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         
+        // Инициализируем менеджер языка
+        com.monithome.data.LanguageManager.init(this)
+        
         // Включаем полноэкранный режим (Immersive Mode)
         androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
         val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)

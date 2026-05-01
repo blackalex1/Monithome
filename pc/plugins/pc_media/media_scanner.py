@@ -8,7 +8,6 @@ import threading
 import ctypes
 
 # КРИТИЧНО: Форсируем MTA (Multi-Threaded Apartment) через comtypes
-# Это предотвращает "зависание" Winsdk при получении обложек.
 try:
     import comtypes
     try: comtypes.CoUninitialize()
@@ -16,14 +15,12 @@ try:
     comtypes.CoInitializeEx(0) # 0 = COINIT_MULTITHREADED
     print(json.dumps({"log": "COM initialized as MTA (Multi-Threaded)"}), flush=True)
 except Exception as e:
-    # Fallback на ctypes
     try:
         ctypes.windll.ole32.CoInitializeEx(None, 0x0)
         print(json.dumps({"log": "COM initialized as MTA via ctypes"}), flush=True)
     except:
         pass
 
-# Принудительно устанавливаем UTF-8 для вывода в Windows
 try:
     import io
     sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
@@ -40,7 +37,6 @@ except Exception as e:
     print(json.dumps({"log": f"Winsdk import failed: {repr(e)}"}), flush=True)
     sys.exit(1)
 
-# Громкость через pycaw
 try:
     from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
     from comtypes import CLSCTX_ALL
@@ -58,7 +54,6 @@ class SystemVolume:
 
     def init_audio(self):
         try:
-            # Мы уже инициализировали COM как MTA выше
             enumerator = AudioUtilities.GetDeviceEnumerator()
             device = enumerator.GetDefaultAudioEndpoint(0, 1)
             if device:
@@ -82,37 +77,22 @@ class SystemVolume:
 
 async def get_cover_base64(props):
     if not props or not props.thumbnail: return None
-    
     for attempt in range(5):
         try:
-            # print(json.dumps({"log": f"get_cover_base64: attempt {attempt+1}..."}), flush=True)
-            try:
-                # В тестовом скрипте это работало без wait_for. 
-                # Возможно, wait_for конфликтует с проксированием WinRT.
-                stream = await props.thumbnail.open_read_async()
-            except Exception as e:
-                print(json.dumps({"log": f"get_cover_base64: open_read_async failed for {props.title}: {repr(e)}"}), flush=True)
-                await asyncio.sleep(0.5)
-                continue
-
+            stream = await props.thumbnail.open_read_async()
             if stream.size == 0: 
-                print(json.dumps({"log": f"get_cover_base64: stream size is 0 for {props.title}, waiting..."}), flush=True)
                 await asyncio.sleep(0.5)
                 continue
-
             reader = DataReader(stream.get_input_stream_at(0))
             await reader.load_async(stream.size)
             raw_data = bytes(reader.read_buffer(stream.size))
-            
             return base64.b64encode(raw_data).decode('utf-8')
         except Exception as e:
-            print(json.dumps({"log": f"get_cover_base64 error for {props.title} (att {attempt+1}): {repr(e)}"}), flush=True)
             await asyncio.sleep(0.5)
-            
     return None
 
 async def main_loop():
-    last_info = {"title": "___INIT___", "artist": "", "playing": False, "volume": -1, "mute": None}
+    last_info = {"title": "___INIT___", "artist": "", "playing": False, "volume": -1, "mute": None, "progress": -1.0}
     last_print_time = 0
     last_sent_cover_title = ""
     is_first_run = True
@@ -120,10 +100,7 @@ async def main_loop():
     print(json.dumps({"log": "Entering main_loop"}), flush=True)
     vol_manager = SystemVolume()
     
-    print(json.dumps({"log": "Requesting SessionManager..."}), flush=True)
     try:
-        # В некоторых случаях request_async может висеть, если не инициализирован COM в правильном режиме
-        # Но в отдельном процессе это обычно работает
         manager = await SessionManager.request_async()
         print(json.dumps({"log": "SessionManager acquired"}), flush=True)
     except Exception as e:
@@ -135,33 +112,31 @@ async def main_loop():
             # 1. Громкость
             cur_vol, cur_mute = vol_manager.get_info()
 
-            # 2. Медиа (Логика из вашего рабочего скрипта)
+            # 2. Медиа (Логика выбора активной сессии)
             session = None
             try:
                 all_sessions = manager.get_sessions()
-                # Сначала ищем ту, которая реально играет (status 4)
+                # Приоритет 1: Реально играющая сессия
                 for s in all_sessions:
                     pb = s.get_playback_info()
-                    if pb and pb.playback_status == 4:
-                        # Дополнительная проверка: если позиция НЕ равна концу (борьба с "залипшими" вкладками)
+                    if pb and pb.playback_status == 4: # Playing
                         try:
                             tm = s.get_timeline_properties()
-                            if tm and tm.position.total_seconds() < tm.end_time.total_seconds() - 1:
+                            if tm and tm.end_time.total_seconds() > 1.0:
                                 session = s
                                 break
-                        except:
-                            pass
+                        except: pass
                 
-                # Если играющих нет или все "залипли", пробуем просто текущую
+                # Приоритет 2: Текущая системная сессия
                 if not session:
                     session = manager.get_current_session()
-                
-                # Если и текущей нет, берем первую попавшуюся из списка
-                if not session and all_sessions:
-                    session = all_sessions[0]
-            except Exception as e:
-                # print(json.dumps({"log": f"Session lookup error: {e}"}), flush=True)
-                pass
+                    if session:
+                        try:
+                            tm = session.get_timeline_properties()
+                            if not tm or tm.end_time.total_seconds() <= 1.0:
+                                session = None
+                        except: session = None
+            except: pass
 
             info = {
                 "volume": cur_vol,
@@ -177,7 +152,6 @@ async def main_loop():
 
             if session:
                 try:
-                    s_id = session.source_app_user_model_id
                     pb = session.get_playback_info()
                     props = await session.try_get_media_properties_async()
                     timeline = session.get_timeline_properties()
@@ -188,81 +162,84 @@ async def main_loop():
                         "playing": (pb.playback_status == 4) if pb else False,
                     })
 
+                    # Если трек уже доиграл до конца (статус 5 или позиция >= длительности)
+                    if pb and pb.playback_status == 5:
+                        session = None
+                        info["playing"] = False
+
                     if timeline:
-                        # В Winsdk объекты TimeSpan имеют свойство duration (в 100-нс тиках)
-                        # 1 секунда = 10,000,000 тиков
                         try:
                             d_sec = float(timeline.end_time.duration) / 10000000.0
-                            p_sec = float(timeline.position.duration) / 10000000.0
+                            base_p_sec = float(timeline.position.duration) / 10000000.0
                             
-                            # Если прогресс больше длительности (бывает на стримах), ограничиваем
-                            if p_sec > d_sec and d_sec > 0:
-                                p_sec = d_sec
+                            # КОМПЕНСАЦИЯ ВРЕМЕНИ: Firefox и другие браузеры редко обновляют позицию.
+                            # Мы добавляем время, прошедшее с момента последнего обновления сессии.
+                            lut = timeline.last_updated_time.timestamp()
+                            elapsed = time.time() - lut
+                            
+                            p_sec = base_p_sec
+                            if pb and pb.playback_status == 4: # Если играет - добавляем прошедшее время
+                                p_sec += elapsed
+                                
+                            if p_sec > d_sec and d_sec > 0: p_sec = d_sec
+                            
+                            # Фильтр: если до конца осталось меньше 0.5 сек - считаем трек законченным
+                            if d_sec > 0 and p_sec >= d_sec - 0.5:
+                                session = None
+                                info["playing"] = False
+                                info["title"] = ""
+                                info["artist"] = ""
                                 
                             info["duration"] = d_sec
                             info["progress"] = p_sec
                         except AttributeError:
                             info["duration"] = float(timeline.end_time.total_seconds())
                             info["progress"] = float(timeline.position.total_seconds())
-                except Exception as e:
-                    pass
+                except: pass
 
+            # ЛОГИКА ОТПРАВКИ
             is_media_changed = (info["title"] != last_info.get("title") or 
                                info["artist"] != last_info.get("artist") or 
                                info["playing"] != last_info.get("playing"))
             
+            if is_media_changed:
+                info["progress"] = 0.0
+                info["duration"] = 0.0
+                
             is_vol_changed = (info["volume"] != last_info.get("volume") or 
                              info["mute"] != last_info.get("mute"))
             
-            is_time_tick = info["playing"] and abs(info["progress"] - last_info.get("progress", 0)) > 5.0
+            # Порог тика времени уменьшен до 0.5с для плавности
+            is_time_tick = info["playing"] and abs(info["progress"] - last_info.get("progress", 0)) >= 0.5
             is_heartbeat = (time.time() - last_print_time) > 10.0
 
             if is_media_changed or is_vol_changed or is_time_tick or is_first_run or is_heartbeat:
                 last_print_time = time.time()
                 
-                # Отправляем обложку только если сменился трек и мы её еще не слали успешно
-                should_fetch_cover = (is_media_changed or is_first_run) and session and info["title"] != last_sent_cover_title
-                
-                if should_fetch_cover:
-                    # Запускаем получение обложки в фоне
-                    async def fetch_cover_task(s, t, delay_sec):
+                if (is_media_changed or is_first_run) and session and info["title"] != last_sent_cover_title:
+                    async def fetch_cover_task(s, t):
                         nonlocal last_sent_cover_title
                         try:
-                            if delay_sec:
-                                await asyncio.sleep(delay_sec)
-                            
-                            # Попытка получить обложку (внутри get_cover_base64 уже есть ретраи)
-                            try:
-                                props = await asyncio.wait_for(s.try_get_media_properties_async(), timeout=10.0)
-                                if not props: return
-
-                                cover = await asyncio.wait_for(get_cover_base64(props), timeout=15.0)
-                                if cover:
-                                    print(json.dumps({"cover": cover, "title": t}, ensure_ascii=False), flush=True)
-                                    last_sent_cover_title = t # Запоминаем, что для этого трека обложка ушла
-                                else:
-                                    pass
-                            except asyncio.TimeoutError:
-                                pass
-                        except Exception as e:
-                            pass
-                    
-                    asyncio.create_task(fetch_cover_task(session, info["title"], 0.5 if is_media_changed else 0.1))
+                            await asyncio.sleep(0.3)
+                            props = await asyncio.wait_for(s.try_get_media_properties_async(), timeout=5.0)
+                            if not props: return
+                            cover = await asyncio.wait_for(get_cover_base64(props), timeout=10.0)
+                            if cover:
+                                print(json.dumps({"cover": cover, "title": t}, ensure_ascii=False), flush=True)
+                                last_sent_cover_title = t
+                        except: pass
+                    asyncio.create_task(fetch_cover_task(session, info["title"]))
                 
-                # Отправляем основные статы без обложки
                 print(json.dumps(info, ensure_ascii=False), flush=True)
                 last_info = info.copy()
                 is_first_run = False
             
             await asyncio.sleep(0.5)
         except Exception as e:
-            print(json.dumps({"log": f"Scanner loop iteration error: {str(e)}"}), flush=True)
             await asyncio.sleep(1)
 
 if __name__ == "__main__":
     try:
-        # Убрали явный CoInitialize(), так как winsdk сам инициализирует COM в нужном режиме (MTA),
-        # а вызов CoInitialize() переводит поток в STA, что может мешать асинхронным операциям.
         asyncio.run(main_loop())
     except Exception as e:
         print(json.dumps({"log": f"Asyncio run failed: {e}"}), flush=True)

@@ -3,12 +3,14 @@ package com.monithome.ui
 import coil.compose.AsyncImage
 import androidx.compose.ui.res.painterResource
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
@@ -17,6 +19,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.layout.ContentScale
@@ -39,6 +42,7 @@ data class FlatSource(
     val displayName: String
 )
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun MediaWidget() {
     val allConfigs by PluginRepository.uiConfigs.collectAsState()
@@ -46,8 +50,6 @@ fun MediaWidget() {
     
     if (mediaConfigs.isEmpty()) return
 
-    // Собираем все источники в один плоский список
-    // Для этого нам нужно наблюдать за статами каждого плагина
     val sources = mutableListOf<FlatSource>()
     mediaConfigs.forEach { config ->
         val pId = config.id ?: ""
@@ -61,15 +63,14 @@ fun MediaWidget() {
                 sources.add(FlatSource(
                     pluginId = pId,
                     deviceId = dev["id"]?.toString() ?: "all",
-                    displayName = dev["name"]?.toString() ?: config.name ?: "Колонка"
+                    displayName = dev["name"]?.toString() ?: config.name ?: com.monithome.data.LanguageManager.i18n("speaker")
                 ))
             }
         } else if (devices == null) {
-            // Плоский плагин (PC Media)
             sources.add(FlatSource(
                 pluginId = pId,
                 deviceId = "all",
-                displayName = pStats["device_name"]?.toString() ?: config.name ?: "Медиа"
+                displayName = pStats["device_name"]?.toString() ?: config.name ?: com.monithome.data.LanguageManager.i18n("media")
             ))
         }
     }
@@ -90,201 +91,272 @@ fun MediaWidget() {
         allStats
     }
 
-    val title = (currentStats["title"] as? String) 
-        ?: (currentStats["track_name"] as? String) 
-        ?: (currentStats["text"] as? String) 
-        ?: ""
-    val artist = (currentStats["artist"] as? String) 
-        ?: (currentStats["subtitle"] as? String) 
-        ?: (currentStats["author"] as? String) 
-        ?: ""
+    val title = (currentStats["title"] as? String) ?: (currentStats["track_name"] as? String) ?: (currentStats["text"] as? String) ?: ""
+    val artist = (currentStats["artist"] as? String) ?: (currentStats["subtitle"] as? String) ?: (currentStats["author"] as? String) ?: ""
     val isPlaying = currentStats["playing"] as? Boolean ?: false
     val baseProgress = (currentStats["progress"] as? Number)?.toDouble() ?: 0.0
     val duration = (currentStats["duration"] as? Number)?.toDouble() ?: 300.0
     val lastUpdate = (currentStats["local_last_update"] as? Number)?.toDouble() ?: (System.currentTimeMillis() / 1000.0)
 
-    // Локальная интерполяция для идеальной плавности
     var interpolatedProgress by remember { mutableDoubleStateOf(baseProgress) }
+    
+    // Сброс прогресса при смене трека, чтобы не видеть полоску от предыдущего
+    LaunchedEffect(title) {
+        interpolatedProgress = baseProgress
+    }
     
     LaunchedEffect(baseProgress, isPlaying, lastUpdate) {
         if (!isPlaying) {
             interpolatedProgress = baseProgress
             return@LaunchedEffect
         }
-        
         while (true) {
             val now = System.currentTimeMillis() / 1000.0
             val diff = now - lastUpdate
             interpolatedProgress = (baseProgress + diff).coerceIn(0.0, duration)
-            kotlinx.coroutines.android.awaitFrame() // Обновляем каждый кадр
+            kotlinx.coroutines.android.awaitFrame()
         }
     }
     val volume = (currentStats["volume"] as? Number)?.toInt() ?: 0
     val targetId = currentSource.deviceId
     val coverBase64 = currentStats["cover"] as? String ?: ""
 
-    Card(
+    GlassCard(
         modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E293B).copy(alpha = 0.8f)),
-        shape = RoundedCornerShape(16.dp)
+        cornerRadius = 32.dp
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            // Вкладки выбора источника (теперь по списку sources)
-            if (sources.size > 1) {
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(bottom = 12.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
-                ) {
-                    sources.forEachIndexed { index, source ->
-                        val isSelected = index == selectedIndex
-                        Surface(
-                            onClick = { selectedIndex = index },
-                            shape = RoundedCornerShape(20.dp),
-                            color = if (isSelected) Color(0xFF38BDF8) else Color.White.copy(alpha = 0.05f),
-                            modifier = Modifier.height(32.dp)
-                        ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 12.dp)) {
-                                Text(
-                                    source.displayName,
-                                    color = if (isSelected) Color.Black else Color.White,
-                                    fontSize = 12.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal
-                                )
-                            }
+        // Источники
+        if (sources.size > 1) {
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                sources.forEachIndexed { index, source ->
+                    val isSelected = index == selectedIndex
+                    Surface(
+                        onClick = { selectedIndex = index },
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isSelected) MonitTheme.Primary else Color.White.copy(alpha = 0.05f),
+                        modifier = Modifier.height(36.dp)
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 12.dp)) {
+                            Text(
+                                source.displayName.uppercase(),
+                                color = if (isSelected) Color.Black else Color.White,
+                                fontSize = 10.sp,
+                                fontWeight = FontWeight.Black,
+                                letterSpacing = 1.sp
+                            )
                         }
                     }
                 }
             }
+        }
 
-            Row(verticalAlignment = Alignment.CenterVertically) {
-                // Обложка (адаптивная к пропорциям с мягкой тенью)
-                Box(
-                    modifier = Modifier
-                        .height(64.dp)
-                        .widthIn(min = 64.dp, max = 120.dp)
-                        .background(Color.White.copy(alpha = 0.03f), RoundedCornerShape(8.dp))
-                        .clip(RoundedCornerShape(8.dp)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    if (coverBase64.isNotEmpty()) {
-                        val model = remember(coverBase64) {
-                            if (coverBase64.startsWith("http")) {
-                                coverBase64 // Это URL
-                            } else if (coverBase64.startsWith("//")) {
-                                "https:$coverBase64"
-                            } else {
-                                try {
-                                    // Обязательно возвращаем результат декодирования!
-                                    android.util.Base64.decode(coverBase64, android.util.Base64.DEFAULT)
-                                } catch (e: Exception) {
-                                    null
-                                }
-                            }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            // Обложка
+            Box(
+                modifier = Modifier
+                    .height(70.dp)
+                    .widthIn(min = 70.dp, max = 110.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(Color.White.copy(alpha = 0.05f)),
+                contentAlignment = Alignment.Center
+            ) {
+                if (coverBase64.isNotEmpty()) {
+                    val model = remember(coverBase64) {
+                        if (coverBase64.startsWith("http")) coverBase64
+                        else if (coverBase64.startsWith("//")) "https:$coverBase64"
+                        else {
+                            try { android.util.Base64.decode(coverBase64, android.util.Base64.DEFAULT) }
+                            catch (e: Exception) { null }
                         }
+                    }
 
-                        if (model != null) {
-                            AsyncImage(
-                                model = model,
-                                contentDescription = null,
-                                modifier = Modifier.fillMaxHeight().wrapContentWidth(),
-                                contentScale = ContentScale.Fit, // Сохраняем пропорции без обрезки
-                                error = painterResource(id = android.R.drawable.ic_menu_report_image),
-                                fallback = painterResource(id = android.R.drawable.ic_menu_gallery)
-                            )
-                        } else {
-                            Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color.Gray)
-                        }
+                    if (model != null) {
+                        AsyncImage(
+                            model = model,
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxHeight().wrapContentWidth(),
+                            contentScale = ContentScale.Fit
+                        )
                     } else {
                         Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color.Gray)
                     }
-                }
-
-                Spacer(modifier = Modifier.width(12.dp))
-
-                Column(modifier = Modifier.weight(1f)) {
-                    Text(title.ifEmpty { "Тишина..." }, color = Color.White, fontWeight = FontWeight.Bold, maxLines = 1)
-                    Text(artist.ifEmpty { "—" }, color = Color.Gray, fontSize = 14.sp, maxLines = 1)
-                    
-                    // Индикатор громкости
-                    Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 4.dp)) {
-                        Icon(Icons.Default.VolumeUp, contentDescription = null, tint = Color(0xFF38BDF8), modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("$volume%", color = Color(0xFF38BDF8), fontSize = 11.sp)
-                    }
-                }
-
-                // Кнопки управления
-                Row {
-                    IconButton(onClick = { SocketManager.sendCommand(currentSource.pluginId, "prev_track", target = targetId) }) {
-                        Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = Color.White)
-                    }
-                    IconButton(onClick = { SocketManager.sendCommand(currentSource.pluginId, "play_pause", target = targetId) }) {
-                        Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
-                    }
-                    IconButton(onClick = { SocketManager.sendCommand(currentSource.pluginId, "next_track", target = targetId) }) {
-                        Icon(Icons.Default.SkipNext, contentDescription = null, tint = Color.White)
-                    }
+                } else {
+                    Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color.Gray)
                 }
             }
 
-            // Прогресс-бар
-            Column(modifier = Modifier.padding(vertical = 12.dp)) {
-                LinearProgressIndicator(
-                    progress = if (duration > 0) (interpolatedProgress / duration).toFloat().coerceIn(0f, 1f) else 0f,
-                    modifier = Modifier.fillMaxWidth().height(4.dp),
-                    color = Color(0xFF38BDF8),
-                    trackColor = Color.DarkGray
-                )
-                Row(
-                    modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween
-                ) {
-                    Text(formatTime(interpolatedProgress), color = Color.Gray, fontSize = 10.sp)
-                    Text(formatTime(duration), color = Color.Gray, fontSize = 10.sp)
-                }
-            }
+            Spacer(modifier = Modifier.width(16.dp))
 
-            // Ползунок громкости с защитой от "прыжков"
-            var localVolume by remember(volume) { mutableFloatStateOf(volume.toFloat()) }
-            var lastInteractionTime by remember { mutableLongStateOf(0L) }
-            val isInteracting = System.currentTimeMillis() - lastInteractionTime < 1500
-
-            Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(vertical = 8.dp)) {
-                Icon(Icons.Default.VolumeDown, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp))
-                Slider(
-                    value = if (isInteracting) localVolume else volume.toFloat(),
-                    onValueChange = { 
-                        localVolume = it
-                        lastInteractionTime = System.currentTimeMillis()
-                        val volInt = it.toInt()
-                        SocketManager.sendCommand(currentSource.pluginId, "set_volume:$volInt", target = targetId)
-                    },
-                    valueRange = 0f..100f,
-                    modifier = Modifier.weight(1f).padding(horizontal = 8.dp),
-                    colors = SliderDefaults.colors(
-                        thumbColor = Color(0xFF38BDF8),
-                        activeTrackColor = Color(0xFF38BDF8),
-                        inactiveTrackColor = Color.DarkGray
-                    )
+            // Инфо о треке
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    title.ifEmpty { com.monithome.data.LanguageManager.i18n("waiting") },
+                    color = Color.White,
+                    style = MaterialTheme.typography.titleMedium.copy(fontWeight = FontWeight.Bold),
+                    maxLines = 1
                 )
-                Icon(Icons.Default.VolumeUp, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp))
+                Text(
+                    artist.ifEmpty { "—" },
+                    color = MonitTheme.TextSecondary,
+                    fontSize = 12.sp,
+                    maxLines = 1
+                )
             }
             
-            // Кнопка открытия текста (только для Яндекса)
-            if (currentSource.pluginId.contains("yandex", ignoreCase = true)) {
-                var showLyrics by remember { mutableStateOf(false) }
-                Button(
-                    onClick = { showLyrics = true },
-                    modifier = Modifier.fillMaxWidth().padding(top = 8.dp),
-                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF38BDF8).copy(alpha = 0.1f))
-                ) {
-                    Text("ТЕКСТ ПЕСНИ", color = Color(0xFF38BDF8))
+            Spacer(modifier = Modifier.width(8.dp))
+
+            // Кнопки управления и текст песни
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                if (currentSource.pluginId.contains("yandex", ignoreCase = true)) {
+                    var showLyrics by remember { mutableStateOf(false) }
+                    
+                    Box(
+                        modifier = Modifier
+                            .padding(bottom = 8.dp)
+                            .clip(RoundedCornerShape(8.dp))
+                            .border(1.dp, MonitTheme.Primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
+                            .background(MonitTheme.Primary.copy(alpha = 0.1f))
+                            .clickable { showLyrics = true }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            com.monithome.data.LanguageManager.i18n("lyrics"),
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontWeight = FontWeight.Black,
+                                color = MonitTheme.Primary,
+                                letterSpacing = 1.sp
+                            )
+                        )
+                    }
+
+                    if (showLyrics) {
+                        LyricsDialog(targetId, currentStats) { showLyrics = false }
+                    }
                 }
 
-                if (showLyrics) {
-                    LyricsDialog(targetId, currentStats) { showLyrics = false }
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    IconButton(
+                        onClick = { SocketManager.sendCommand(currentSource.pluginId, "prev_track", target = targetId) },
+                        modifier = Modifier.size(36.dp).background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
+                    ) {
+                        Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
+                    
+                    Surface(
+                        onClick = { SocketManager.sendCommand(currentSource.pluginId, "play_pause", target = targetId) },
+                        shape = RoundedCornerShape(12.dp),
+                        color = MonitTheme.Primary,
+                        modifier = Modifier.size(44.dp),
+                        shadowElevation = 4.dp
+                    ) {
+                        Box(contentAlignment = Alignment.Center) {
+                            Icon(
+                                if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                tint = Color.White,
+                                modifier = Modifier.size(24.dp)
+                            )
+                        }
+                    }
+
+                    IconButton(
+                        onClick = { SocketManager.sendCommand(currentSource.pluginId, "next_track", target = targetId) },
+                        modifier = Modifier.size(36.dp).background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(10.dp))
+                    ) {
+                        Icon(Icons.Default.SkipNext, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
+                    }
                 }
             }
+        }
+
+        // Прогресс
+        Column(modifier = Modifier.padding(top = 16.dp)) {
+            val progress = if (duration > 0) (interpolatedProgress / duration).toFloat().coerceIn(0f, 1f) else 0f
+            
+            Box(modifier = Modifier.fillMaxWidth().height(4.dp)) {
+                Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(2.dp)))
+                Box(
+                    modifier = Modifier
+                        .fillMaxHeight()
+                        .fillMaxWidth(progress)
+                        .background(
+                            Brush.horizontalGradient(listOf(MonitTheme.Primary, MonitTheme.Secondary)),
+                            RoundedCornerShape(2.dp)
+                        )
+                )
+            }
+            
+            Row(
+                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+                Text(formatTime(interpolatedProgress), color = MonitTheme.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                Text(formatTime(duration), color = MonitTheme.TextSecondary, fontSize = 10.sp)
+            }
+        }
+
+        // Громкость
+        var localVolume by remember(volume) { mutableFloatStateOf(volume.toFloat()) }
+        var lastInteractionTime by remember { mutableLongStateOf(0L) }
+        val isInteracting = System.currentTimeMillis() - lastInteractionTime < 1500
+
+        Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
+            Icon(Icons.Default.VolumeDown, contentDescription = null, tint = MonitTheme.TextSecondary, modifier = Modifier.size(18.dp))
+            Slider(
+                value = if (isInteracting) localVolume else volume.toFloat(),
+                onValueChange = { 
+                    localVolume = it
+                    lastInteractionTime = System.currentTimeMillis()
+                    SocketManager.sendCommand(currentSource.pluginId, "set_volume:${it.toInt()}", target = targetId)
+                },
+                valueRange = 0f..100f,
+                modifier = Modifier.weight(1f).padding(horizontal = 12.dp),
+                thumb = {
+                    Box(
+                        modifier = Modifier
+                            .size(18.dp)
+                            .background(MonitTheme.Primary, CircleShape)
+                            .border(2.dp, Color.White.copy(alpha = 0.6f), CircleShape)
+                    )
+                },
+                track = { sliderState ->
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(6.dp)
+                            .drawBehind {
+                                val width = size.width
+                                val height = size.height
+                                val fraction = (sliderState.value - sliderState.valueRange.start) / 
+                                              (sliderState.valueRange.endInclusive - sliderState.valueRange.start)
+                                val activeWidth = width * fraction
+
+                                // Неактивная часть (вся полоска)
+                                drawRoundRect(
+                                    color = Color.White.copy(alpha = 0.1f),
+                                    size = size,
+                                    cornerRadius = androidx.compose.ui.geometry.CornerRadius(height / 2)
+                                )
+
+                                // Активная часть (до центра пунсона)
+                                if (activeWidth > 0) {
+                                    drawRoundRect(
+                                        color = MonitTheme.Primary,
+                                        size = androidx.compose.ui.geometry.Size(activeWidth + (height / 2), height), // Небольшой оверлап
+                                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(height / 2)
+                                    )
+                                }
+                            }
+                    )
+                }
+            )
+            Icon(Icons.Default.VolumeUp, contentDescription = null, tint = MonitTheme.TextSecondary, modifier = Modifier.size(18.dp))
         }
     }
 }

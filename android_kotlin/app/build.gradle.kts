@@ -6,12 +6,12 @@ plugins {
 
 android {
     namespace = "com.monithome"
-    compileSdk = 34
+    compileSdk = 35
 
     defaultConfig {
         applicationId = "com.monithome"
         minSdk = 24
-        targetSdk = 34
+        targetSdk = 35
         versionCode = 1
         versionName = "1.0"
 
@@ -45,10 +45,10 @@ android {
 }
 
 dependencies {
-    implementation("androidx.core:core-ktx:1.12.0")
-    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.7.0")
-    implementation("androidx.activity:activity-compose:1.8.2")
-    implementation(platform("androidx.compose:compose-bom:2023.08.00"))
+    implementation("androidx.core:core-ktx:1.15.0")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.7")
+    implementation("androidx.activity:activity-compose:1.9.3")
+    implementation(platform("androidx.compose:compose-bom:2024.12.01"))
     implementation("androidx.compose.ui:ui")
     implementation("androidx.compose.ui:ui-graphics")
     implementation("androidx.compose.ui:ui-tooling-preview")
@@ -56,21 +56,21 @@ dependencies {
     implementation("androidx.compose.material:material-icons-extended")
     
     // Обычная библиотека Material для XML тем
-    implementation("com.google.android.material:material:1.11.0")
+    implementation("com.google.android.material:material:1.12.0")
     
     // Библиотека для сокетов
-    implementation("io.socket:socket.io-client:2.1.0")
+    implementation("io.socket:socket.io-client:2.1.2")
     // Библиотека для JSON (GSON)
-    implementation("com.google.code.gson:gson:2.10.1")
+    implementation("com.google.code.gson:gson:2.11.0")
     // Библиотека для бинарного MessagePack
-    implementation("org.msgpack:msgpack-core:0.9.3")
+    implementation("org.msgpack:msgpack-core:0.9.9")
     // Coil для загрузки изображений (Base64 обложки)
-    implementation("io.coil-kt:coil-compose:2.5.0")
+    implementation("io.coil-kt:coil-compose:2.7.0")
 
     testImplementation("junit:junit:4.13.2")
-    androidTestImplementation("androidx.test.ext:junit:1.1.5")
-    androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")
-    androidTestImplementation(platform("androidx.compose:compose-bom:2023.08.00"))
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestImplementation("androidx.test.espresso:espresso-core:3.6.1")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2024.12.01"))
     androidTestImplementation("androidx.compose.ui:ui-test-junit4")
     debugImplementation("androidx.compose.ui:ui-tooling")
     debugImplementation("androidx.compose.ui:ui-test-manifest")

@@ -1,5 +1,7 @@
 package com.monithome.ui
-
+ 
+import androidx.compose.animation.*
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -21,15 +23,15 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.graphics.*
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.draw.blur
+import androidx.compose.ui.draw.BlurredEdgeTreatment
 import coil.compose.AsyncImage
-import coil.request.ImageRequest
-import androidx.compose.ui.platform.LocalContext
 import android.util.Base64
 import com.monithome.data.PluginRepository
 import com.monithome.models.LyricTiming
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlin.math.abs
 
 @Composable
 fun LyricsDialog(deviceId: String, stats: Map<String, Any>, onDismiss: () -> Unit) {
@@ -56,7 +58,6 @@ fun LyricsDialog(deviceId: String, stats: Map<String, Any>, onDismiss: () -> Uni
     }
     
     val listState = rememberLazyListState()
-    val scope = rememberCoroutineScope()
     
     Dialog(
         onDismissRequest = onDismiss,
@@ -65,61 +66,71 @@ fun LyricsDialog(deviceId: String, stats: Map<String, Any>, onDismiss: () -> Uni
         BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
             val viewHeight = constraints.maxHeight
 
-            // Вычисляем индекс текущей строки
-            val currentIndex by remember(interpolatedProgress, lyricsData) {
+            val currentIndex by remember(lyricsData) {
                 derivedStateOf {
                     lyricsData?.timings?.indexOfLast { (it.time ?: 0L) <= interpolatedProgress * 1000 } ?: -1
                 }
             }
 
-            // Авто-скролл: прокручиваем так, чтобы активная строка была в центре
+            val trackTitle = (stats["title"] as? String) ?: "Неизвестно"
+            
+            LaunchedEffect(trackTitle) {
+                listState.scrollToItem(0)
+            }
+
             LaunchedEffect(currentIndex) {
                 if (currentIndex >= 0) {
-                    // Мы прокручиваем к самому currentIndex (который идет после Spacer-а)
-                    // с нулевым смещением. Но так как у нас есть Spacer сверху,
-                    // нам нужно прокрутить к элементу так, чтобы он был по центру.
-                    // Самый простой способ: прокрутить к currentIndex и дать смещение - (viewHeight/2)
-                    listState.animateScrollToItem(currentIndex + 1, scrollOffset = -(viewHeight / 2) + 40)
+                    listState.animateScrollToItem(
+                        index = currentIndex + 1, 
+                        scrollOffset = -(viewHeight / 2) + 40
+                    )
                 }
             }
 
             val coverData = stats["cover"] as? String
-            val hasNoLyrics = lyricsData != null && 
-                             (lyricsData.lyrics.isNullOrEmpty() || lyricsData.lyrics == "null") && 
+            val lyricsText = lyricsData?.lyrics ?: ""
+            val isLoading = lyricsText == "loading" || lyricsText == "Загрузка..." || lyricsText == "Loading..."
+            
+            val hasNoLyrics = lyricsData != null && !isLoading && 
+                             (lyricsText.isEmpty() || lyricsText == "null") && 
                              lyricsData.timings.isNullOrEmpty()
             
             Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-                // Фоновая обложка
                 if (!coverData.isNullOrEmpty()) {
-                    val model: Any = if (coverData.startsWith("http")) coverData else {
-                        try { Base64.decode(coverData, Base64.DEFAULT) } catch (e: Exception) { coverData }
+                    val model: Any = remember(coverData) {
+                        if (coverData.startsWith("http")) coverData else {
+                            try { Base64.decode(coverData, Base64.DEFAULT) } catch (e: Exception) { coverData }
+                        }
                     }
 
                     AsyncImage(
                         model = model,
                         contentDescription = null,
-                        modifier = Modifier.fillMaxSize().blur(if (hasNoLyrics) 0.dp else 60.dp, edgeTreatment = androidx.compose.ui.draw.BlurredEdgeTreatment.Unbounded),
+                        modifier = Modifier.fillMaxSize().blur(if (hasNoLyrics) 0.dp else 6.dp),
                         contentScale = ContentScale.Crop,
-                        alpha = if (hasNoLyrics) 0.8f else 0.4f
+                        alpha = if (hasNoLyrics) 1.0f else 0.4f
                     )
                 }
 
-                // Слой затемнения (прозрачный, если текста нет)
-                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = if (hasNoLyrics) 0.1f else 0.8f)))
+                val overlayAlpha = remember(hasNoLyrics, isLoading) {
+                    when {
+                        hasNoLyrics -> 0.0f
+                        isLoading -> 0.3f
+                        else -> 0.8f
+                    }
+                }
+                Box(modifier = Modifier.fillMaxSize().background(Color.Black.copy(alpha = overlayAlpha)))
 
-                // Список на весь экран (под шапкой)
-                if (lyricsData == null) {
-                    // Состояние первичной загрузки (оставляем индикатор)
+                if (lyricsData == null || isLoading) {
                     Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(color = Color(0xFF38BDF8))
                     }
                 } else if (hasNoLyrics) {
-                    // Просто пустой экран с обложкой (надпись удалена по просьбе)
+                    // Текст недоступен - просто обложка
                 } else if (lyricsData.timings.isNullOrEmpty()) {
-                    // Только статический текст
                     LazyColumn(modifier = Modifier.fillMaxSize().padding(top = 100.dp, start = 24.dp, end = 24.dp)) {
                         item {
-                            Text(lyricsData.lyrics ?: "Текст отсутствует", color = Color.White, fontSize = 18.sp, lineHeight = 28.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                            Text(lyricsData.lyrics ?: "", color = Color.White, fontSize = 18.sp, lineHeight = 28.sp, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                         }
                     }
                 } else {
@@ -128,30 +139,37 @@ fun LyricsDialog(deviceId: String, stats: Map<String, Any>, onDismiss: () -> Uni
 
                     LazyColumn(
                         state = listState,
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier.fillMaxSize().drawWithContent {
+                            drawContent()
+                            drawRect(
+                                brush = Brush.verticalGradient(
+                                    0f to Color.Transparent,
+                                    0.1f to Color.Black,
+                                    0.9f to Color.Black,
+                                    1f to Color.Transparent
+                                ),
+                                blendMode = BlendMode.DstIn
+                            )
+                        },
                     ) {
-                        // Распорка сверху
                         item { Spacer(modifier = Modifier.height(halfHeightDp)) }
-
                         itemsIndexed(lyricsData.timings ?: emptyList()) { index, timing ->
-                            val isCurrent = (timing.time ?: 0L) <= interpolatedProgress * 1000 &&
-                                    (index == (lyricsData?.timings?.size ?: 0) - 1 || 
-                                     (lyricsData?.timings?.get(index + 1)?.time ?: 0L) > interpolatedProgress * 1000)
-                            
-                            LyricLine(timing.text ?: "", isCurrent)
+                            val distance = abs(index - currentIndex)
+                            LyricLine(
+                                text = timing.text ?: "", 
+                                isCurrent = index == currentIndex, 
+                                distance = distance
+                            )
                         }
-
-                        // Распорка снизу
                         item { Spacer(modifier = Modifier.height(halfHeightDp)) }
                     }
                 }
 
-                // Шапка ПОВЕРХ списка
-                val trackTitle = (stats["title"] as? String) ?: "Неизвестно"
+                // Шапка
                 val trackArtist = (stats["artist"] as? String) ?: (stats["subtitle"] as? String) ?: "Неизвестный исполнитель"
 
                 Surface(
-                    color = Color.Transparent, // Прозрачная плашка
+                    color = Color.Transparent,
                     modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
                 ) {
                     Row(
@@ -164,10 +182,19 @@ fun LyricsDialog(deviceId: String, stats: Map<String, Any>, onDismiss: () -> Uni
                             if (trackArtist.isNotEmpty()) {
                                 Text(trackArtist, color = Color.White.copy(alpha = 0.6f), fontSize = 14.sp, maxLines = 1)
                             }
+                            if (hasNoLyrics) {
+                                Text(
+                                    text = if (com.monithome.data.LanguageManager.currentLanguage.value.code == "ru") "Текст недоступен" else "Lyrics not available",
+                                    color = Color(0xFF38BDF8),
+                                    fontSize = 12.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    modifier = Modifier.padding(top = 2.dp)
+                                )
+                            }
                         }
                         IconButton(
                             onClick = onDismiss,
-                            modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape) // Крестик в кружке
+                            modifier = Modifier.background(Color.Black.copy(alpha = 0.4f), CircleShape)
                         ) {
                             Icon(Icons.Default.Close, contentDescription = null, tint = Color.White)
                         }
@@ -179,14 +206,33 @@ fun LyricsDialog(deviceId: String, stats: Map<String, Any>, onDismiss: () -> Uni
 }
 
 @Composable
-fun LyricLine(text: String, isCurrent: Boolean) {
+fun LyricLine(text: String, isCurrent: Boolean, distance: Int) {
+    val targetAlpha = when {
+        isCurrent -> 1f
+        distance == 1 -> 0.5f
+        distance == 2 -> 0.2f
+        else -> 0.1f
+    }
+
+    val color by animateColorAsState(
+        targetValue = Color.White.copy(alpha = targetAlpha),
+        animationSpec = tween(800, easing = FastOutSlowInEasing),
+        label = "color"
+    )
+    
+    val fontSize by animateFloatAsState(
+        targetValue = if (isCurrent) 32f else 22f, 
+        animationSpec = tween(800, easing = LinearOutSlowInEasing),
+        label = "size"
+    )
+
     Text(
         text = text,
-        color = if (isCurrent) Color.White else Color.Gray.copy(alpha = 0.5f),
-        fontSize = if (isCurrent) 28.sp else 22.sp,
-        fontWeight = if (isCurrent) FontWeight.Bold else FontWeight.Normal,
-        lineHeight = 34.sp,
-        modifier = Modifier.padding(vertical = 12.dp).fillMaxWidth(),
+        color = color,
+        fontSize = fontSize.sp,
+        fontWeight = if (isCurrent) FontWeight.Black else FontWeight.Medium,
+        lineHeight = 40.sp,
+        modifier = Modifier.padding(vertical = 16.dp, horizontal = 32.dp).fillMaxWidth(),
         textAlign = TextAlign.Center
     )
 }

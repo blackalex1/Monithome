@@ -1,0 +1,7 @@
+{
+  "plugin_name": "PC Media Player",
+  "plugin_description": "Control and monitor media playback on your Windows PC (YouTube, Spotify, Browsers, etc.).",
+  "nothing_playing": "Nothing playing",
+  "unknown_artist": "Unknown Artist",
+  "media_control": "Media Control"
+}

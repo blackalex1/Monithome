@@ -10,27 +10,27 @@ class Plugin(BasePlugin):
     def get_wizard_data(self):
         """Метаданные для настройки кнопок системы"""
         return {
-            "title": "Системные команды",
-            "description": "Выберите команды для управления ПК.",
+            "title": self.i18n("wizard_title"),
+            "description": self.i18n("wizard_desc"),
             "items": [
-                {"id": "lock", "label": "Блокировка", "icon": "Lock"},
-                {"id": "sleep", "label": "Режим сна", "icon": "Moon"},
-                {"id": "restart", "label": "Перезагрузка", "icon": "RefreshCw"},
-                {"id": "shutdown", "label": "Выключение", "icon": "Power"}
+                {"id": "lock", "label": self.i18n("lock"), "icon": "Lock"},
+                {"id": "sleep", "label": self.i18n("sleep"), "icon": "Moon"},
+                {"id": "restart", "label": self.i18n("restart"), "icon": "RefreshCw"},
+                {"id": "shutdown", "label": self.i18n("shutdown"), "icon": "Power"}
             ]
         }
 
     def handle_wizard(self, selections):
         """Сохранение выбранных кнопок"""
         all_buttons = {
-            "lock": { "label": "Блок.", "action": "lock", "icon": "Lock" },
-            "sleep": { "label": "Сон", "action": "sleep", "icon": "Moon", "need_confirm": True },
-            "restart": { "label": "Рестарт", "action": "restart", "icon": "RefreshCw", "color": "text-yellow-500", "need_confirm": True },
-            "shutdown": { "label": "Выкл.", "action": "shutdown", "icon": "Power", "color": "text-red-500", "need_confirm": True }
+            "lock": { "label": self.i18n("lock_short"), "action": "lock", "icon": "Lock" },
+            "sleep": { "label": self.i18n("sleep_short"), "action": "sleep", "icon": "Moon", "need_confirm": True },
+            "restart": { "label": self.i18n("restart_short"), "action": "restart", "icon": "RefreshCw", "color": "text-yellow-500", "need_confirm": True },
+            "shutdown": { "label": self.i18n("shutdown_short"), "action": "shutdown", "icon": "Power", "color": "text-red-500", "need_confirm": True }
         }
         selected_buttons = [all_buttons[b_id] for b_id in selections if b_id in all_buttons]
         self.config.update({
-            "actions": [{"id": "system_buttons", "type": "button_group", "label": "Питание и сессия", "buttons": selected_buttons}]
+            "actions": [{"id": "system_buttons", "type": "button_group", "label": self.i18n("power_group"), "buttons": selected_buttons}]
         })
         
         config_path = os.path.join(os.path.dirname(__file__), "config.json")
@@ -59,12 +59,15 @@ class Plugin(BasePlugin):
             self.handle_wizard(selections)
             return
 
+        self.log(f"Executing system command: {action}")
+        
         if action == 'lock':
             ctypes.windll.user32.LockWorkStation()
         elif action == 'sleep':
-            os.system("rundll32.exe powrprof.dll,SetSuspendState 0,1,0")
+            # Более надежный метод сна через PowerShell (не блокируется гибернацией)
+            os.system("powershell -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)\"")
         elif action == 'restart':
-            os.system("shutdown /r /t 5")
+            os.system("shutdown /r /t 5 /f") # /f - принудительно закрыть зависшие программы
         elif action == 'shutdown':
-            os.system("shutdown /s /t 5")
+            os.system("shutdown /s /t 5 /f")
 

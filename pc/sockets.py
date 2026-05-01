@@ -6,7 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from flask import request
 from flask_socketio import emit, join_room
 from config import get_master_config, save_master_config
-from manager import plugins, get_all_plugins_info
+from manager import plugins
 
 logger = logging.getLogger("CORE")
 executor = ThreadPoolExecutor(max_workers=10)
@@ -22,32 +22,23 @@ def register_socket_events(socketio, p_manager):
         
         master = get_master_config()
         is_localhost = request.remote_addr == '127.0.0.1' or request.remote_addr == 'localhost'
-        
-        if is_localhost:
-            logger.info(f"Local Manager UI connected (sid: {sid})")
-            join_room('authorized')
-            
-            # Отправляем всё через единый метод с небольшой задержкой для стабильности
-            threading.Timer(0.3, send_ui_config, args=(socketio, p_manager, sid)).start()
-            
-            send_stats_to_sid(socketio, sid, p_manager)
-            # Задержка: клиент должен успеть зарегистрировать plugin_event-листенеры
-            threading.Timer(2.0, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
-            threading.Timer(3.0, send_lyrics_to_sid, args=(socketio, sid, p_manager)).start()
-            return True
-
         trusted = master.get("trusted_tokens", [])
-        if token in trusted and token is not None:
+        
+        if is_localhost or (token in trusted and token is not None):
             logger.info(f"Authorized device connected (sid: {sid})")
             join_room('authorized')
             
-            # Отправляем всё через единый метод с небольшой задержкой для стабильности
-            threading.Timer(0.3, send_ui_config, args=(socketio, p_manager, sid)).start()
+            # Отправляем начальный конфиг сразу и через задержку для надежности
+            send_ui_config(socketio, p_manager, sid)
+            threading.Timer(0.5, send_ui_config, args=(socketio, p_manager, sid)).start()
+            threading.Timer(2.0, send_ui_config, args=(socketio, p_manager, sid)).start()
             
+            p_manager.emit_event("client_connected", sid)
             send_stats_to_sid(socketio, sid, p_manager)
-            # Задержка: клиент должен успеть зарегистрировать plugin_event-листенеры
-            threading.Timer(2.0, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
-            threading.Timer(3.0, send_lyrics_to_sid, args=(socketio, sid, p_manager)).start()
+            
+            # Задержка для обложек и текстов
+            threading.Timer(1.5, send_covers_to_sid, args=(socketio, sid, p_manager)).start()
+            threading.Timer(2.5, send_lyrics_to_sid, args=(socketio, sid, p_manager)).start()
             return True
         
         code = "".join([str(random.randint(0, 9)) for _ in range(6)])
@@ -62,7 +53,7 @@ def register_socket_events(socketio, p_manager):
         master = get_master_config()
         emit('manager_data', {
             'master_config': master,
-            'all_plugins': get_all_plugins_info()
+            'all_plugins': p_manager.get_all_plugins_info()
         })
         emit('status', {
             'status': 'online', 
@@ -128,7 +119,7 @@ def register_socket_events(socketio, p_manager):
             socketio.emit('pairing_complete', {'sid': sid})
             emit('manager_data', {
                 'master_config': master,
-                'all_plugins': get_all_plugins_info()
+                'all_plugins': p_manager.get_all_plugins_info()
             })
             emit('status', {
                 'status': 'online', 
@@ -139,6 +130,23 @@ def register_socket_events(socketio, p_manager):
             send_stats_to_sid(socketio, sid, p_manager)
         else:
             emit('auth_failed', {'message': 'Invalid code'})
+
+    @socketio.on('set_language')
+    def handle_set_language(data):
+        from i18n import i18n_engine
+        lang = data.get('language', 'ru')
+        master = get_master_config()
+        master["language"] = lang
+        save_master_config(master)
+        
+        # Обновляем глобальный язык в движке перевода
+        i18n_engine.set_language(lang)
+        
+        # Принудительно обновляем состояние всех плагинов (чтобы пересчитались локализованные строки внутри)
+        p_manager.force_refresh_all()
+        
+        logger.info(f"System language changed to: {lang}")
+        send_ui_config(socketio, p_manager)
 
     @socketio.on('media_command')
     def handle_media_command(data):

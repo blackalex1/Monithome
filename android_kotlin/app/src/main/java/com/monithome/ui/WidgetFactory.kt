@@ -30,47 +30,55 @@ fun WidgetRenderer(pluginId: String, widget: Widget) {
 
 @Composable
 fun PluginCard(plugin: PluginInfo) {
-    Card(
-        modifier = Modifier.fillMaxWidth(),
-        colors = CardDefaults.cardColors(
-            containerColor = Color(0xFF1E293B).copy(alpha = 0.6f)
-        ),
-        shape = RoundedCornerShape(16.dp)
+    GlassCard(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+        cornerRadius = 28.dp
     ) {
-        Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = plugin.name ?: "Плагин",
-                color = Color(0xFF38BDF8),
-                fontSize = 18.sp,
-                fontWeight = FontWeight.Bold
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            
-            plugin.widgets?.forEach { widget ->
-                WidgetRenderer(plugin.id ?: "", widget)
-            }
-            plugin.actions?.forEach { action ->
-                WidgetRenderer(plugin.id ?: "", action)
-            }
+        Text(
+            text = (plugin.name ?: "PLUGIN").uppercase(),
+            color = MonitTheme.Primary,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Black,
+            letterSpacing = 2.sp,
+            modifier = Modifier.padding(bottom = 12.dp)
+        )
+        
+        // Рендерим виджеты (пропуская unified_media, так как он вынесен наверх)
+        plugin.widgets?.filter { it.type != "unified_media" }?.forEach { widget ->
+            WidgetRenderer(plugin.id ?: "", widget)
+        }
+        
+        // Рендерим экшены (кнопки и т.д.)
+        plugin.actions?.forEach { action ->
+            WidgetRenderer(plugin.id ?: "", action)
         }
     }
 }
 
 @Composable
 fun StatWidget(widget: Widget, stats: Map<String, Any>) {
-    val valueStr = stats[widget.dataKey ?: ""]?.toString() ?: "0"
-    val valueFloat = (stats["${widget.dataKey}_percent"] as? Number)?.toFloat() 
-        ?: (stats[widget.dataKey ?: ""] as? Number)?.toFloat() 
+    val key = widget.dataKey ?: ""
+    val displayKey = "display_$key"
+    
+    // Приоритет отдаем форматированной строке от сервера (например, "8 / 16 GB")
+    val valueStr = (stats[displayKey] ?: stats[key])?.toString() ?: "0"
+    
+    val valueFloat = (stats["${key}_percent"] as? Number)?.toFloat() 
+        ?: (stats[key] as? Number)?.toFloat() 
         ?: 0f
+    
+    val secondaryValue = stats["secondary_$key"]?.toString()
     
     WidgetContainer {
         ValueBlock(
             label = widget.label ?: "",
             value = valueStr,
-            unit = widget.unit ?: ""
+            unit = if (stats.containsKey(displayKey)) "" else (widget.unit ?: ""),
+            icon = if (!widget.icon.isNullOrEmpty()) mapIcon(widget.icon) else null
         )
         AnimatedProgressBar(
             value = valueFloat,
+            label = secondaryValue,
             colorRanges = widget.colorRanges
         )
     }

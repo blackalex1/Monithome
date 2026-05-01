@@ -4,15 +4,18 @@
 
     <application
         android:allowBackup="true"
-        android:label="MonitHome Native"
+        android:icon="@drawable/ic_launcher"
+        android:roundIcon="@drawable/ic_launcher"
+        android:label="MonitHome"
         android:supportsRtl="true"
-        android:theme="@style/Theme.Material3.Dark"
+        android:theme="@style/Theme.MonitHomeNative"
         android:usesCleartextTraffic="true">
         
         <activity
             android:name=".MainActivity"
             android:exported="true"
-            android:theme="@style/Theme.Material3.Dark">
+            android:configChanges="orientation|screenSize|screenLayout|keyboardHidden"
+            android:theme="@style/Theme.MonitHomeNative">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />

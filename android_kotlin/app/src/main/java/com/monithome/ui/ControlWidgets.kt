@@ -27,43 +27,92 @@ fun ButtonGroupWidget(pluginId: String, widget: Widget) {
     val serverButtons = widget.children ?: emptyList()
     
     WidgetContainer {
-        Text(widget.label ?: "Действия", color = Color.Gray, fontSize = 12.sp)
-        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            widget.getLocalizedLabel().uppercase(), 
+            color = MonitTheme.TextSecondary, 
+            fontSize = 10.sp, 
+            fontWeight = androidx.compose.ui.text.font.FontWeight.Black,
+            letterSpacing = 1.sp
+        )
+        Spacer(modifier = Modifier.height(16.dp))
         
         Row(
             modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
         ) {
             val buttons = if (serverButtons.isNotEmpty()) {
                 serverButtons.map { 
                     ButtonInfo(
-                        it.label ?: it.id ?: "", 
-                        it.dataKey ?: it.id ?: "",
+                        it.getLocalizedLabel(), 
+                        it.action ?: it.dataKey ?: it.id ?: "",
                         mapIcon(it.icon)
                     )
                 }
             } else {
-                // Дефолтные кнопки на случай отсутствия конфига
                 listOf(
-                    ButtonInfo("Сон", "sleep", Icons.Default.Bedtime),
-                    ButtonInfo("Выкл", "shutdown", Icons.Default.PowerSettingsNew),
-                    ButtonInfo("Блок", "lock", Icons.Default.Lock),
-                    ButtonInfo("Рестарт", "restart", Icons.Default.Refresh)
+                    ButtonInfo("SLEEP", "sleep", Icons.Default.Bedtime),
+                    ButtonInfo("OFF", "shutdown", Icons.Default.PowerSettingsNew),
+                    ButtonInfo("LOCK", "lock", Icons.Default.Lock),
+                    ButtonInfo("REBOOT", "restart", Icons.Default.Refresh)
+                )
+            }
+
+            var showConfirmDialog by remember { mutableStateOf<ButtonInfo?>(null) }
+            val strings = com.monithome.data.Strings
+            
+            if (showConfirmDialog != null) {
+                AlertDialog(
+                    onDismissRequest = { showConfirmDialog = null },
+                    title = { Text(strings.confirmAction) },
+                    text = { Text("${strings.sureExecute} \"${showConfirmDialog?.label}\"?") },
+                    confirmButton = {
+                        TextButton(onClick = {
+                            SocketManager.sendCommand(pluginId, showConfirmDialog!!.action)
+                            showConfirmDialog = null
+                        }) {
+                            Text(strings.yes, color = MonitTheme.Primary)
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showConfirmDialog = null }) {
+                            Text(strings.cancel)
+                        }
+                    }
                 )
             }
 
             buttons.forEach { btn ->
+                val needsConfirm = serverButtons.find { (it.action ?: it.id) == btn.action }?.needConfirm ?: false
+                
                 Column(
                     modifier = Modifier
                         .weight(1f)
-                        .clip(RoundedCornerShape(8.dp))
+                        .clip(RoundedCornerShape(16.dp))
                         .background(Color.White.copy(alpha = 0.05f))
-                        .clickable { SocketManager.sendCommand(pluginId, btn.action) }
-                        .padding(8.dp),
+                        .clickable { 
+                            if (needsConfirm) {
+                                showConfirmDialog = btn
+                            } else {
+                                SocketManager.sendCommand(pluginId, btn.action)
+                            }
+                        }
+                        .padding(vertical = 12.dp, horizontal = 4.dp),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
-                    Icon(btn.icon, contentDescription = null, tint = Color.White, modifier = Modifier.size(20.dp))
-                    Text(btn.label, color = Color.White, fontSize = 10.sp, maxLines = 1)
+                    Icon(
+                        btn.icon, 
+                        contentDescription = null, 
+                        tint = MonitTheme.Primary, 
+                        modifier = Modifier.size(24.dp)
+                    )
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        btn.label.uppercase(), 
+                        color = Color.White, 
+                        fontSize = 9.sp, 
+                        fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
+                        maxLines = 1
+                    )
                 }
             }
         }

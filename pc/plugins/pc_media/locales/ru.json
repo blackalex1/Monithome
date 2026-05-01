@@ -1,0 +1,7 @@
+{
+  "plugin_name": "Медиаплеер ПК",
+  "plugin_description": "Управление и мониторинг воспроизведения медиа на Windows ПК (YouTube, Spotify, браузеры и др.).",
+  "nothing_playing": "Ничего не воспроизводится",
+  "unknown_artist": "Неизвестный исполнитель",
+  "media_control": "Управление медиа"
+}

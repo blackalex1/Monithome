@@ -14,7 +14,7 @@ import { LayoutItem } from './components/LayoutItem';
 import { PluginCard } from './components/PluginCard';
 import { WizardModal } from './components/WizardModal';
 import { InfoModal } from './components/InfoModal';
-import { translations } from './i18n';
+import { defaultTranslations } from './i18n';
 import type { Language } from './i18n';
 
 function App() {
@@ -31,8 +31,14 @@ function App() {
   const [masterConfig, setMasterConfig] = useState<MasterConfig | null>(null);
   
   const [lang, setLang] = useState<Language>('ru');
+  const [t, setT] = useState(defaultTranslations);
 
-  const t = translations[lang];
+  useEffect(() => {
+    fetch(`/locales/${lang}.json`)
+      .then(r => r.json())
+      .then(data => setT(data))
+      .catch(err => console.error("Failed to load translations:", err));
+  }, [lang]);
 
   useEffect(() => {
     if (masterConfig?.language) {

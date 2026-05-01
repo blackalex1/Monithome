@@ -14,9 +14,15 @@ class Plugin(BasePlugin):
         
     def start(self):
         """Запуск фонового опроса дисков"""
+        self.manager.subscribe("client_connected", self._on_client_connected)
         # Первый опрос сразу
         self._update_disks_state()
         threading.Thread(target=self._stats_loop, daemon=True).start()
+
+    def _on_client_connected(self, sid):
+        """Мгновенное обновление при подключении нового клиента"""
+        self.log(f"New client {sid} connected, refreshing disks immediately")
+        self._update_disks_state()
 
     def stop(self):
         self._stop_event.set()
@@ -51,11 +57,14 @@ class Plugin(BasePlugin):
 
                     disks.append({
                         "device": device,
-                        "label": label or "Локальный диск",
+                        "label": label or self.i18n("local_disk"),
                         "total": round(usage.total / (1024**3), 1),
                         "used": round(usage.used / (1024**3), 1),
                         "free": round(usage.free / (1024**3), 1),
-                        "free_text": f"Свободно: {round(usage.free / (1024**3), 1)} ГБ из {round(usage.total / (1024**3), 1)} ГБ",
+                        "free_text": self.i18n("free_of").format(
+                            free=round(usage.free / (1024**3), 1),
+                            total=round(usage.total / (1024**3), 1)
+                        ),
                         "percent": usage.percent
                     })
                 except: pass
@@ -63,7 +72,23 @@ class Plugin(BasePlugin):
         return disks
 
     def _update_disks_state(self):
-        self._state["disks"] = self._get_disks()
+        # Пробуем получить диски несколько раз, если список пуст
+        # (иногда системные вызовы возвращают пустой список при нагрузке)
+        new_disks = []
+        for attempt in range(3):
+            new_disks = self._get_disks()
+            if new_disks:
+                break
+            time.sleep(1)
+            
+        # Если диски пропали внезапно, но раньше были, 
+        # даем системе еще один шанс в следующем цикле (не затираем сразу)
+        if not new_disks and self._state.get("disks"):
+            # Помечаем, что это временная потеря (можно логгировать)
+            self.log("Warning: Disks temporarily missing, keeping previous state", level="warning")
+            return
+
+        self._state["disks"] = new_disks
         self.update_state(self._state)
 
     def _stats_loop(self):
@@ -73,8 +98,8 @@ class Plugin(BasePlugin):
             except Exception as e:
                 self.log(f"Loop error: {e}", level="error")
             
-            # Диски меняются редко, спим долго, но проверяем stop_event
-            for _ in range(120):
+            # Диски меняются не очень часто, но 120с было слишком много. Ставим 30с.
+            for _ in range(30):
                 if self._stop_event.is_set(): break
                 time.sleep(1)
 
@@ -83,10 +108,10 @@ class Plugin(BasePlugin):
 
     def get_wizard_data(self):
         all_disks = self._get_disks(filter_selected=False)
-        items = [{"id": d["device"], "label": f"Диск {d['device']} ({d['label']})", "type": "checkbox"} for d in all_disks]
+        items = [{"id": d["device"], "label": f"{self.i18n('disk')} {d['device']} ({d['label']})", "type": "checkbox"} for d in all_disks]
         return {
-            "title": "Настройка дисков",
-            "description": "Выберите локальные диски для мониторинга.",
+            "title": self.i18n("wizard_title"),
+            "description": self.i18n("wizard_desc"),
             "items": items
         }
 

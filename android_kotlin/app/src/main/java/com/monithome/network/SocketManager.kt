@@ -3,6 +3,7 @@ package com.monithome.network
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
 import com.monithome.data.PluginRepository
+import com.monithome.data.LanguageManager
 import com.monithome.models.PluginInfo
 import io.socket.client.IO
 import io.socket.client.Socket
@@ -20,6 +21,9 @@ object SocketManager {
 
     private val _isConnecting = MutableStateFlow(false)
     val isConnecting = _isConnecting.asStateFlow()
+
+    private val _isConnected = MutableStateFlow(false)
+    val isConnected = _isConnected.asStateFlow()
 
     fun clearError() { _error.value = null }
 
@@ -40,12 +44,14 @@ object SocketManager {
             socket?.on(Socket.EVENT_CONNECT) {
                 android.util.Log.d("SocketManager", "Connected to $serverIp")
                 _isConnecting.value = false
+                _isConnected.value = true
                 _error.value = null
             }
             
             socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
                 android.util.Log.e("SocketManager", "Connect error: ${args[0]}")
                 _isConnecting.value = false
+                _isConnected.value = false
                 _error.value = "Сервер не найден или не в сети"
             }
 
@@ -53,6 +59,18 @@ object SocketManager {
             socket?.on("manager_data") { args ->
                 try {
                     val data = if (args[0] is JSONObject) args[0] as JSONObject else JSONObject(args[0].toString())
+                    android.util.Log.d("SocketManager", "Received manager_data, checking language...")
+                    
+                    // Проверяем язык в master_config (если есть) или в корне
+                    val masterConfig = data.optJSONObject("master_config")
+                    val langCode = masterConfig?.optString("language") ?: data.optString("language")
+                    
+                    if (!langCode.isNullOrEmpty()) {
+                        android.util.Log.i("SocketManager", "Language from manager_data: $langCode")
+                        val lang = if (langCode == "en") com.monithome.data.AppLanguage.ENGLISH else com.monithome.data.AppLanguage.RUSSIAN
+                        com.monithome.data.LanguageManager.setLanguage(lang)
+                    }
+
                     if (data.has("all_plugins")) {
                         val pluginsObj = data.get("all_plugins")
                         val listType = object : TypeToken<List<PluginInfo>>() {}.type
@@ -68,6 +86,16 @@ object SocketManager {
             socket?.on("ui_config") { args ->
                 try {
                     val data = if (args[0] is JSONObject) args[0] as JSONObject else JSONObject(args[0].toString())
+                    val langCode = data.optString("language")
+                    
+                    android.util.Log.d("SocketManager", "Received ui_config, lang: $langCode")
+                    
+                    if (!langCode.isNullOrEmpty()) {
+                        android.util.Log.i("SocketManager", "Setting language to $langCode from ui_config")
+                        val lang = if (langCode == "en") com.monithome.data.AppLanguage.ENGLISH else com.monithome.data.AppLanguage.RUSSIAN
+                        com.monithome.data.LanguageManager.setLanguage(lang)
+                    }
+
                     if (data.has("config")) {
                         val pluginsObj = data.get("config")
                         val listType = object : TypeToken<List<PluginInfo>>() {}.type
@@ -173,5 +201,7 @@ object SocketManager {
     fun disconnect() {
         socket?.disconnect()
         socket = null
+        _isConnected.value = false
+        _isConnecting.value = false
     }
 }
