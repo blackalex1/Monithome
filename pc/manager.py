@@ -6,6 +6,7 @@ import copy
 import psutil
 import platform
 import os
+from typing import Dict, List, Any, Optional, Set, Callable
 
 from plugin_manager import load_plugins
 from config import get_master_config
@@ -27,22 +28,27 @@ class PluginManager:
         
         # Централизованное состояние
         self._state = {}
-        self._dirty_plugins = set()
         self._lock = threading.Lock()
         
-        # Мониторинг здоровья плагинов
-        self._health = {} # p_id -> last_update_time
+        # Очередь на рассылку изменений (батчинг)
+        self._dirty_plugins = set()
         
-        # Запуск системных циклов
-        threading.Thread(target=self._broadcast_loop, daemon=True).start()
-        threading.Thread(target=self._hal_loop, daemon=True).start()
-        threading.Thread(target=self._health_check_loop, daemon=True).start()
+        # Флаг для остановки фоновых потоков
+        self._running = True
+        
+        # Запуск фоновых циклов
+        self._broadcast_thread = threading.Thread(target=self._broadcast_loop, daemon=True)
+        self._broadcast_thread.start()
+        
+        self._hal_thread = threading.Thread(target=self._hal_loop, daemon=True)
+        self._hal_thread.start()
 
-    def is_plugin_active(self, p_id):
-        """Проверка, запущен ли плагин"""
-        return p_id in self.plugins
+    def log(self, plugin_name: str, message: str, level: str = "info"):
+        """Централизованное логирование"""
+        lvl = getattr(logging, level.upper(), logging.INFO)
+        logger.log(lvl, f"[{plugin_name.upper()}] {message}")
 
-    def update_plugin_state(self, p_id, data):
+    def update_plugin_state(self, p_id: str, data: Any) -> None:
         """Обновление состояния плагина и пометка на рассылку"""
         with self._lock:
             if p_id not in self._state:
@@ -54,43 +60,93 @@ class PluginManager:
             else:
                 self._state[p_id] = data
             
-            self._health[p_id] = time.time()
             self._dirty_plugins.add(p_id)
 
-    def _broadcast_loop(self):
-        """Фоновый цикл для батчинга обновлений (раз в 100мс)"""
-        # Собираем пути к плагинам для перевода
-        plugin_dirs = {}
-        for p_id, p_data in self.discovered.items():
-            plugin_dirs[p_id] = p_data.get("path")
+    def get_plugin_state(self, p_id: str) -> Any:
+        """Получение текущего состояния плагина"""
+        with self._lock:
+            return copy.deepcopy(self._state.get(p_id, {}))
 
-        while True:
-            time.sleep(0.1)
-            if self._dirty_plugins:
-                master = get_master_config()
-                lang = master.get("language", "ru")
-                
-                with self._lock:
-                    updates = {}
-                    for p_id in list(self._dirty_plugins):
-                        data = self._state[p_id]
-                        p_dir = plugin_dirs.get(p_id)
-                        if p_dir:
-                            # Переводим данные перед отправкой
-                            translated = self._translate_recursive(data, p_id, p_dir, lang)
-                            updates[p_id] = translated
+    def get_all_stats(self) -> Dict[str, Any]:
+        """Сбор статистики со всех активных плагинов для начальной загрузки"""
+        all_stats = {}
+        # 1. Собираем HAL данные (системные)
+        if "sys" in self._state:
+            all_stats["sys"] = self._state["sys"]
+        
+        # 2. Опрашиваем каждый плагин
+        for p_id, p_instance in self.plugins.items():
+            try:
+                if hasattr(p_instance, 'get_stats'):
+                    all_stats[p_id] = p_instance.get_stats()
+                elif p_id in self._state:
+                    all_stats[p_id] = self._state[p_id]
+            except Exception as e:
+                self.log("CORE", f"Error getting stats from {p_id}: {e}", level="error")
+        
+        return all_stats
+
+    def subscribe(self, event_name: str, callback: Callable):
+        """Подписка на внутренние события ядра"""
+        if event_name not in self._subscribers:
+            self._subscribers[event_name] = []
+        if callback not in self._subscribers[event_name]:
+            self._subscribers[event_name].append(callback)
+
+    def unsubscribe(self, event_name: str, callback: Callable):
+        """Отписка от внутренних событий ядра"""
+        if event_name in self._subscribers:
+            if callback in self._subscribers[event_name]:
+                self._subscribers[event_name].remove(callback)
+
+    def emit_event(self, event_name: str, data: Any):
+        """Рассылка внутреннего события всем подписчикам"""
+        if event_name in self._subscribers:
+            for callback in self._subscribers[event_name]:
+                try:
+                    callback(data)
+                except Exception as e:
+                    self.log("CORE", f"Error in subscriber {callback}: {e}", level="error")
+
+    def _broadcast_loop(self):
+        """Фоновый цикл рассылки изменений клиентам (батчинг)"""
+        while self._running:
+            time.sleep(0.1) # 100ms батчинг
+            
+            updates = {}
+            with self._lock:
+                if self._dirty_plugins:
+                    for p_id in self._dirty_plugins:
+                        # Если плагин умеет отдавать расширенную статистику - берем её
+                        if p_id in self.plugins and hasattr(self.plugins[p_id], 'get_stats'):
+                            updates[p_id] = self.plugins[p_id].get_stats()
                         else:
-                            updates[p_id] = data
+                            updates[p_id] = self._state.get(p_id, {})
+                    
+                    # Локализация и перевод (если нужно)
+                    # lang = get_master_config().get("language", "ru")
+                    # updates = self._translate_recursive(updates, p_id, ...)
                     
                     payload = {
                         "stats": updates,
                         "_server_time": time.time()
                     }
                     self._dirty_plugins.clear()
-                
-                # Упаковываем в MessagePack (бинарный формат)
-                binary_payload = msgpack.packb(payload, use_bin_type=True)
-                self.socketio.emit('stats', binary_payload, to='authorized')
+                if updates:
+
+                    try:
+                        # Упаковываем в MessagePack (бинарный формат)
+                        binary_payload = msgpack.packb(payload, use_bin_type=True)
+                        self.socketio.emit('stats', binary_payload, room='authorized', namespace='/')
+                        
+                        # ДЛЯ ОТЛАДКИ: Шлем также JSON
+                        self.socketio.emit('stats_json', payload, room='authorized', namespace='/')
+                    except Exception as e:
+                        self.log("CORE", f"Broadcast error (MessagePack): {e}", level="error")
+                        # Fallback на обычный JSON если MessagePack сбоит
+                        try:
+                            self.socketio.emit('stats_json', payload, room='authorized', namespace='/')
+                        except: pass
 
     def _hal_loop(self):
         """HAL по требованию: опрашиваем только если есть подписчики"""
@@ -119,216 +175,191 @@ class PluginManager:
         """Проверка «зависших» плагинов"""
         while True:
             time.sleep(10)
-            now = time.time()
-            with self._lock:
-                for p_id, last_seen in list(self._health.items()):
-                    if now - last_seen > 30: # Если плагин молчит больше 30 секунд
-                        # Помечаем в стейте как Offline (опционально)
-                        if p_id in self._state and isinstance(self._state[p_id], dict):
-                            if self._state[p_id].get("status") != "stale":
-                                self._state[p_id]["status"] = "stale"
-                                self._dirty_plugins.add(p_id)
+
+    def broadcast_ui(self, target_sid=None):
+        """Рассылка актуальной конфигурации UI"""
+        master = get_master_config()
+        active_ids = master.get("active_plugins", [])
+        order = master.get("plugin_order", [])
+        
+        # Если порядок не задан, используем порядок из active_plugins
+        if not order:
+            order = active_ids
+            
+        ui_plugins = []
+        for p_id in order:
+            if p_id in active_ids and p_id in self.discovered:
+                p_info = self.discovered[p_id].copy()
+                p_dir = p_info.get("path")
+                
+                # Применяем рекурсивный перевод всех строковых констант
+                p_info = self._translate_recursive(p_info, p_id, p_dir)
+                
+                # Раскрываем внутренний config для совместимости с моделями на планшете
+                # (делаем update БЕЗ pop, чтобы сохранить объект config для редактора)
+                if "config" in p_info:
+                    p_info.update(p_info["config"])
+                
+                # Совместимость полей автора
+                if "author_url" in p_info and not p_info.get("author"):
+                    p_info["author"] = p_info["author_url"]
+                    
+                p_info["id"] = p_id
+                # Удаляем несериализуемые объекты
+                if "class" in p_info: del p_info["class"]
+                ui_plugins.append(p_info)
+                
+        config = {
+            "plugins": ui_plugins,
+            "master": master
+        }
+        
+        if target_sid:
+            self.socketio.emit('ui_config', config, room=target_sid, namespace='/')
+        else:
+            self.socketio.emit('ui_config', config, room='authorized', namespace='/')
+
+    def start_plugin(self, p_id: str):
+        """Динамический запуск плагина"""
+        if p_id in self.discovered and p_id not in self.plugins:
+            from plugin_manager import instantiate_plugin
+            try:
+                p_instance = instantiate_plugin(p_id, self)
+                if p_instance:
+                    self.plugins[p_id] = p_instance
+                    if hasattr(p_instance, 'start'):
+                        p_instance.start()
+                    self.log("CORE", f"Plugin started dynamically: {p_id}")
+                    self.broadcast_ui()
+            except Exception as e:
+                self.log("CORE", f"Failed to start plugin {p_id}: {e}", level="error")
+
+    def stop_plugin(self, p_id: str):
+        """Остановка плагина"""
+        if p_id in self.plugins:
+            p_instance = self.plugins.pop(p_id)
+            if hasattr(p_instance, 'stop'):
+                p_instance.stop()
+            self.log("CORE", f"Plugin stopped: {p_id}")
+
+    def reload_plugin(self, p_id: str):
+        """Перезагрузка плагина (остановка + запуск)"""
+        if p_id in self.plugins:
+            self.log("CORE", f"Reloading plugin: {p_id}")
+            self.stop_plugin(p_id)
+            
+            from plugin_manager import instantiate_plugin
+            p_instance = instantiate_plugin(p_id, self)
+            if p_instance:
+                self.plugins[p_id] = p_instance
+                if hasattr(p_instance, 'start'):
+                    p_instance.start()
+                self.log("CORE", f"Plugin {p_id} reloaded successfully")
+                self.broadcast_ui()
+
+    def update_plugin_config_cache(self, p_id: str, new_config: Dict[str, Any]):
+        """Обновление кэша конфига в discovered_plugins"""
+        if p_id in self.discovered:
+            self.discovered[p_id]["config"] = new_config
+
+    def get_all_plugins_info(self) -> List[Dict[str, Any]]:
+        """Для админ-панели"""
+        master = get_master_config()
+        active = master.get("active_plugins", [])
+        
+        info = []
+        for p_id, p_data in self.discovered.items():
+            item = p_data.copy()
+            item = self._translate_recursive(item, p_id, item.get("path"))
+            # Раскрываем config для отображения в UI (имя, автор и т.д.)
+            if "config" in item:
+                item.update(item["config"])
+            
+            # Совместимость полей автора
+            if "author_url" in item and not item.get("author"):
+                item["author"] = item["author_url"]
+                
+            item["id"] = p_id
+            item["active"] = p_id in active
+            # Удаляем несериализуемые объекты
+            if "class" in item: del item["class"]
+            info.append(item)
+        return info
 
     def force_refresh_all(self):
-        """Принудительное обновление состояния всех плагинов (напр. при смене языка)"""
-        self.log("CORE", "Forcing refresh of all plugins state...")
-        for p_id, instance in self.plugins.items():
-            # 1. Пробуем вызвать специфические методы обновления
-            updated = False
-            for method_name in ['_update_disks_state', '_update_stats', 'refresh', 'update']:
-                if hasattr(instance, method_name):
-                    try:
-                        method = getattr(instance, method_name)
-                        if callable(method):
-                            method()
-                            updated = True
-                            break 
-                    except: pass
-            
-            # 2. Если специфических методов нет, или просто для надежности - дергаем get_stats
-            if not updated and hasattr(instance, 'get_stats'):
-                try:
-                    stats = instance.get_stats()
-                    if stats:
-                        self.update_plugin_state(p_id, stats)
-                except: pass
+        """Принудительное обновление всех плагинов (например, при смене языка)"""
+        for p_id, p_instance in self.plugins.items():
+            if hasattr(p_instance, 'get_stats'):
+                self.update_plugin_state(p_id, p_instance.get_stats())
 
-    def reload_plugin(self, p_id):
-        """Динамическая перезагрузка плагина"""
-        self.log("CORE", f"Reloading plugin: {p_id}...")
-        self.stop_plugin(p_id)
-        return self.start_plugin(p_id)
+    def update_state(self, p_id, data):
+        """Метод для плагинов: обновление состояния"""
+        self.update_plugin_state(p_id, data)
 
-    def subscribe(self, event_name, callback):
-        if event_name not in self._subscribers:
-            self._subscribers[event_name] = []
-        self._subscribers[event_name].append(callback)
-
-    def emit_event(self, event_name, data=None):
-        if event_name in self._subscribers:
-            for callback in self._subscribers[event_name]:
-                try:
-                    callback(data)
-                except Exception as e:
-                    self.log("CORE", f"Error in event handler {event_name}: {e}", level="error")
-
-    def get_all_stats(self):
-        """Сбор текущего состояния для начального рукопожатия"""
-        with self._lock:
-            return copy.deepcopy(self._state)
-
-    def broadcast_stats(self, stats_fragment):
-        """Совместимость с Модульностью 3.0: прокси на новое ядро"""
-        p_id = None
-        if isinstance(stats_fragment, dict):
-            p_id = stats_fragment.get("plugin_id")
-            # Если это старый формат {plugin_id: ..., data: ...}
-            data = stats_fragment.get("stats") or stats_fragment
-            if p_id and "plugin_id" in data:
-                # Очищаем от метаданных если они внутри
-                data = {k:v for k,v in data.items() if k != "plugin_id"}
+    def broadcast_event(self, p_id, event, data):
+        """Рассылка специфичного события плагина (например, track_changed)"""
+        # Шлем только авторизованным
+        self.socketio.emit(f'plugin_event:{p_id}', {'event': event, 'data': data}, room='authorized', namespace='/')
         
-        if p_id:
-            self.update_plugin_state(p_id, stats_fragment)
-        else:
-            # Если ID не найден, кидаем как есть ( fallback ) в бинарном виде
-            master = get_master_config()
-            lang = master.get("language", "ru")
-            # Мы не знаем p_id здесь, поэтому переводим по глобальному конфигу (если получится)
+        # Специальная обработка для обложек и текстов - шлем в stats если это нужно
+        # (обычно они шлются отдельно чтобы не раздувать msgpack)
+        if event == "track_changed":
+            # При смене трека помечаем плагин грязным, чтобы обновить stats
+            if p_id in self.plugins and hasattr(self.plugins[p_id], 'get_stats'):
+                stats_fragment = self.plugins[p_id].get_stats()
+            else:
+                stats_fragment = self._state.get(p_id, {})
+                
             # Но обычно p_id всегда есть.
             payload = {"stats": stats_fragment, "_server_time": time.time()}
             binary_payload = msgpack.packb(payload, use_bin_type=True)
-            self.socketio.emit('stats', binary_payload, to='authorized')
+            self.socketio.emit('stats', binary_payload, room='authorized', namespace='/')
 
-    def _translate_recursive(self, data, p_id, plugin_dir, lang):
+    def emit_to_plugin_ui(self, p_id, event, data, sid=None):
+        """Метод для плагинов: отправка события в UI (может быть адресной)"""
+        room = sid if sid else 'authorized'
+        self.socketio.emit(f'plugin_event:{p_id}', {'event': event, 'data': data}, room=room, namespace='/')
+
+    def _translate_recursive(self, data, p_id, plugin_dir):
         """Рекурсивный перевод всех строковых значений в словаре/списке"""
         from i18n import i18n_engine
         if isinstance(data, dict):
             new_dict = {}
             for k, v in data.items():
-                if isinstance(v, (dict, list)):
-                    new_dict[k] = self._translate_recursive(v, p_id, plugin_dir, lang)
-                elif isinstance(v, str) and (k.endswith("label") or k.endswith("text") or k == "title" or k == "description" or k == "name" or k == "lyrics"):
-                    # Пытаемся перевести, если это похоже на ключ или содержит текст
-                    translated = i18n_engine.get_string(p_id, v, plugin_dir, v, lang=lang)
-                    new_dict[k] = translated
+                # Переводим только определенные поля, которые могут быть ключами
+                if k in ["name", "description", "label", "text"] and isinstance(v, str):
+                    new_dict[k] = i18n_engine.get_string(p_id, v, plugin_dir, v)
+                elif isinstance(v, (dict, list)):
+                    new_dict[k] = self._translate_recursive(v, p_id, plugin_dir)
                 else:
                     new_dict[k] = v
             return new_dict
         elif isinstance(data, list):
-            return [self._translate_recursive(item, p_id, plugin_dir, lang) for item in data]
+            return [self._translate_recursive(item, p_id, plugin_dir) for item in data]
         return data
 
-    def broadcast_ui(self, target_sid=None):
-        """Рассылка конфигурации интерфейса всем авторизованным клиентам"""
-        try:
-            master = get_master_config()
-            active_order = master.get("active_plugins", [])
-            
-            # Получаем актуальную информацию обо всех плагинах
-            all_plugins_info = self.get_all_plugins_info()
-            
-            target = target_sid if target_sid else 'authorized'
-            self.socketio.emit('manager_data', {
-                'master_config': master,
-                'all_plugins': all_plugins_info
-            }, to=target)
-            
-            self.log("CORE", f"UI Config sent to {target}. Order: {active_order}")
-        except Exception as e:
-            self.log("CORE", f"Failed to broadcast UI config: {e}", level="error")
-
-    def get_all_plugins_info(self):
-        """Сбор информации обо всех обнаруженных плагинах для UI менеджера"""
-        from i18n import i18n_engine
-        from plugin_manager import load_plugins
-        discovered = load_plugins()
-        master = get_master_config()
-        active_list = master.get("active_plugins", [])
-        lang = master.get("language", "ru")
-        
-        info_map = {}
-        # 1. Сначала собираем данные о всех плагинах в мапу
-        for p_id, p_data in discovered.items():
-            config = p_data.get("config", {})
-            plugin_dir = p_data.get("path")
-            
-            p_info = {
-                "id": p_id,
-                "name": config.get("name"),
-                "description": config.get("description"),
-                "name_en": config.get("name"),
-                "description_en": config.get("description"),
-                "version": config.get("version", "1.0.0"),
-                "author": config.get("author_name", "Unknown"),
-                "author_url": config.get("author_url"),
-                "active": p_id in self.plugins,
-                "needs_hal": p_id in self._subscribers.get("hal_update", [])
-            }
-            
-            # Если плагин запущен, берем его живой конфиг (может перетереть поля выше)
-            if p_id in self.plugins:
-                p_instance = self.plugins[p_id]
-                if hasattr(p_instance, 'config'):
-                    if isinstance(p_instance.config, dict):
-                        p_info.update(p_instance.config)
-            
-            # ТЕПЕРЬ РЕКУРСИВНО ПЕРЕВОДИМ ВЕСЬ КОНФИГ
-            translated_info = self._translate_recursive(p_info, p_id, plugin_dir, lang)
-            # Отдельно для английского названия (для менеджера)
-            translated_info["name_en"] = i18n_engine.get_string(p_id, p_info.get("name"), plugin_dir, p_info.get("name"), lang="en")
-            
-            info_map[p_id] = translated_info
-
-        # 2. Формируем финальный список согласно порядку в active_list
-        result = []
-        # Сначала активные в нужном порядке
-        for p_id in active_list:
-            if p_id in info_map:
-                result.append(info_map[p_id])
-        
-        # Затем все остальные, которых нет в active_list
-        for p_id in info_map:
-            if p_id not in active_list:
-                result.append(info_map[p_id])
-                
-        return result
-
-    def start(self):
-        self.log("Manager", "Starting all plugins...")
-        for plugin in self.plugins.values():
-            if hasattr(plugin, 'start'):
-                threading.Thread(target=plugin.start, daemon=True).start()
-
-    def log(self, plugin_name, message, level="info"):
-        p_logger = logging.getLogger(plugin_name.upper())
-        if level == "info": p_logger.info(message)
-        elif level == "warning": p_logger.warning(message)
-        elif level == "error": p_logger.error(message)
-        elif level == "debug": p_logger.debug(message)
-
-    def emit_to_plugin_ui(self, plugin_id, event, data):
-        self.socketio.emit(f"plugin_event:{plugin_id}", {"event": event, "data": data}, to='authorized')
-
-def initialize_plugins(socketio, p_manager):
-    global plugins
+def initialize_plugins(socketio, manager):
+    """Первичная загрузка активных плагинов"""
+    from plugin_manager import instantiate_plugin
     master = get_master_config()
-    active_list = master.get("active_plugins", [])
+    active_ids = master.get("active_plugins", [])
     
-    logger.info(f"Initializing ACTIVE plugins only: {active_list}")
-    for p_id in active_list:
-        if p_id in discovered_plugins:
+    manager.log("CORE", f"Initializing ACTIVE plugins only: {active_ids}")
+    
+    for p_id in active_ids:
+        if p_id in manager.discovered:
             try:
-                p_data = discovered_plugins[p_id]
-                instance = p_data["class"](socketio, p_data["config"], p_manager)
-                plugins[p_id] = instance
-                
-                if hasattr(instance, 'get_stats'):
-                    p_manager.update_plugin_state(p_id, instance.get_stats())
-                    
-                logger.info(f"Successfully loaded active plugin: {p_id}")
+                p_instance = instantiate_plugin(p_id, manager)
+                if p_instance:
+                    manager.plugins[p_id] = p_instance
+                    manager.log("CORE", f"Successfully loaded active plugin: {p_id}")
             except Exception as e:
-                logger.error(f"Failed to initialize plugin {p_id}: {e}")
+                manager.log("CORE", f"Failed to load plugin {p_id}: {e}", level="error")
     
-    logger.info(f"Total active plugins running: {len(plugins)}")
-    p_manager.start()
+    manager.log("CORE", f"Total active plugins running: {len(manager.plugins)}")
+    
+    # Запуск всех загруженных плагинов
+    manager.log("MANAGER", "Starting all plugins...")
+    for p_id, p_instance in manager.plugins.items():
+        if hasattr(p_instance, 'start'):
+            p_instance.start()

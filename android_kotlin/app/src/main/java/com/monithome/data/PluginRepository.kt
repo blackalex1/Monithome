@@ -1,6 +1,7 @@
 package com.monithome.data
 
 import com.monithome.models.*
+import com.monithome.network.StationConfig
 import com.google.gson.Gson
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -22,9 +23,26 @@ object PluginRepository {
     private val _lyrics = MutableStateFlow<Map<String, LyricsData>>(emptyMap())
     val lyrics: StateFlow<Map<String, LyricsData>> = _lyrics.asStateFlow()
 
+    private val _activeLyrics = MutableStateFlow<LyricsViewState?>(null)
+    val activeLyrics: StateFlow<LyricsViewState?> = _activeLyrics.asStateFlow()
+
+    private var yandexDeviceFilter: Set<String>? = null
+
+    fun showLyrics(pluginId: String, deviceId: String) {
+        _activeLyrics.value = LyricsViewState(pluginId, deviceId)
+    }
+
+    fun hideLyrics() {
+        _activeLyrics.value = null
+    }
+
     // 2. Методы управления конфигурацией
     fun updateUiConfigs(configs: List<PluginInfo>) {
         _uiConfigs.value = configs
+    }
+
+    fun setYandexFilter(deviceIds: Set<String>?) {
+        yandexDeviceFilter = deviceIds
     }
 
     fun getPluginStats(pluginId: String): StateFlow<Map<String, Any>> {
@@ -52,6 +70,7 @@ object PluginRepository {
         }
     }
 
+
     fun updateStats(pluginId: String, data: Map<String, Any>) {
         val flow = pluginStats.getOrPut(pluginId) {
             MutableStateFlow(emptyMap())
@@ -59,33 +78,53 @@ object PluginRepository {
         
         var finalData = data
         
-        // Яндекс Станция: слияние обложек
+        // Яндекс Станция: слияние данных для предотвращения мерцания в direct-режиме
         if (pluginId == "yandex_station" && data.containsKey("devices")) {
+            val oldData = flow.value
             @Suppress("UNCHECKED_CAST")
-            val newDevices = (data["devices"] as? List<Map<String, Any>>)?.toMutableList()
+            val oldDevices = oldData["devices"] as? List<Map<String, Any>>
             @Suppress("UNCHECKED_CAST")
-            val oldDevices = (flow.value["devices"] as? List<Map<String, Any>>)
+            var newDevices = (data["devices"] as? List<Map<String, Any>>)?.toMutableList()
             
-            newDevices?.forEachIndexed { idx, newDev ->
-                val dId = newDev["id"]?.toString() ?: ""
-                val pendingKey = "$pluginId:$dId"
-                
-                if (pendingCovers.containsKey(pendingKey)) {
-                    val updated = newDev.toMutableMap()
-                    updated["cover"] = pendingCovers.remove(pendingKey)!!
-                    newDevices[idx] = updated
-                } else {
+            // Фильтрация устройств: оставляем только выбранные
+            yandexDeviceFilter?.let { filter ->
+                newDevices = newDevices?.filter { filter.contains(it["id"]?.toString()) }?.toMutableList()
+            }
+            
+            if (newDevices != null) {
+                newDevices!!.forEachIndexed { idx, newDev ->
+                    val dId = newDev["id"]?.toString() ?: ""
                     val oldDev = oldDevices?.find { it["id"] == dId }
-                    val oldCover = oldDev?.get("cover") as? String
-                    if (!oldCover.isNullOrEmpty()) {
-                        val updated = newDev.toMutableMap()
-                        updated["cover"] = oldCover
-                        newDevices[idx] = updated
+                    
+                    if (newDev["status"] == "direct") {
+                        // Это обновление от самого планшета (прямое управление)
+                        // Принимаем его целиком
+                        newDevices[idx] = newDev
+                    } else if (oldDev != null && oldDev["status"] == "direct" && yandexDeviceFilter != null) {
+                        // Это обновление от сервера, но у нас есть приоритетные данные планшета
+                        android.util.Log.d("PluginRepo", "Ignoring server update for $dId (status is direct)")
+                        newDevices[idx] = oldDev + mapOf("status" to "direct")
+                    } else {
+                        if (pluginId == "yandex_station") {
+                            android.util.Log.d("PluginRepo", "Yandex Update [$dId]: title=${newDev["title"]}, playing=${newDev["playing"]}")
+                        }
+                        // Обычный режим или обновление обложек
+                        val pendingKey = "$pluginId:$dId"
+                        if (pendingCovers.containsKey(pendingKey)) {
+                            val updated = newDev.toMutableMap()
+                            updated["cover"] = pendingCovers.remove(pendingKey)!!
+                            newDevices[idx] = updated
+                        } else if (oldDev != null) {
+                            val oldCover = oldDev["cover"] as? String
+                            if (!oldCover.isNullOrEmpty() && newDev["cover"] == null) {
+                                val updated = newDev.toMutableMap()
+                                updated["cover"] = oldCover
+                                newDevices[idx] = updated
+                            }
+                        }
                     }
                 }
-            }
-            if (newDevices != null) {
-                finalData = data.toMutableMap().apply { put("devices", newDevices) }
+                finalData = data + mapOf("devices" to newDevices)
             }
         }
 
@@ -124,6 +163,22 @@ object PluginRepository {
         }
         flow.value = flow.value + finalDataWithTime
         updateHistory(pluginId, finalData)
+    }
+
+    fun clearDirectStatus(pluginId: String) {
+        if (pluginId == "yandex_station") {
+            yandexDeviceFilter = null
+        }
+        val flow = pluginStats[pluginId] ?: return
+        val oldData = flow.value
+        @Suppress("UNCHECKED_CAST")
+        val devices = oldData["devices"] as? List<Map<String, Any>> ?: return
+        
+        val newDevices = devices.map { dev ->
+            dev.toMutableMap().apply { remove("status") }
+        }
+        flow.value = oldData + mapOf("devices" to newDevices)
+        android.util.Log.i("PluginRepo", "Cleared direct status and filter for $pluginId")
     }
 
     /**
@@ -196,9 +251,13 @@ object PluginRepository {
             }
             "cover" -> {
                 try {
-                    val json = org.json.JSONObject(data.toString())
-                    val cover = if (json.has("cover") && !json.isNull("cover")) json.getString("cover") else null
-                    val deviceId = if (json.has("device_id") && !json.isNull("device_id")) json.getString("device_id") else null
+                    val jsonStr = data.toString()
+                    val json = org.json.JSONObject(jsonStr)
+                    val innerData = if (json.has("data")) json.getJSONObject("data") else json
+                    
+                    val cover = if (innerData.has("cover") && !innerData.isNull("cover")) innerData.getString("cover") else null
+                    val deviceId = if (innerData.has("device_id") && !innerData.isNull("device_id")) innerData.getString("device_id") else null
+                    val title = if (innerData.has("title") && !innerData.isNull("title")) innerData.getString("title") else ""
 
                     if (cover != null) {
                         if (deviceId != null) {
@@ -223,6 +282,58 @@ object PluginRepository {
                     android.util.Log.e("PluginRepo", "Cover parse error: ${e.message}")
                 }
             }
+            "yandex_config" -> {
+                try {
+                    val json = if (data is org.json.JSONObject) data else org.json.JSONObject(data.toString())
+                    if (json.has("devices")) {
+                        val devicesArray = json.getJSONArray("devices")
+                        val configs = mutableListOf<StationConfig>()
+                        for (i in 0 until devicesArray.length()) {
+                            val obj = devicesArray.getJSONObject(i)
+                            configs.add(StationConfig(
+                                deviceId = obj.getString("id"),
+                                token = obj.getString("glagol_token"),
+                                name = obj.getString("name"),
+                                ip = if (obj.has("ip")) obj.getString("ip") else null
+                            ))
+                        }
+                        com.monithome.network.YandexStationManager.updateConfigs(configs)
+                        android.util.Log.d("PluginRepo", "Yandex direct config received: ${configs.size} devices")
+                    }
+                } catch (e: Exception) {
+                    android.util.Log.e("PluginRepo", "Yandex config parse error: ${e.message}")
+                }
+            }
         }
+    }
+
+    fun jsonToMap(json: org.json.JSONObject): Map<String, Any> {
+        val map = mutableMapOf<String, Any>()
+        val keys = json.keys()
+        while (keys.hasNext()) {
+            val key = keys.next()
+            var value = json.get(key)
+            if (value is org.json.JSONArray) {
+                value = jsonArrayToList(value)
+            } else if (value is org.json.JSONObject) {
+                value = jsonToMap(value)
+            }
+            map[key] = value
+        }
+        return map
+    }
+
+    private fun jsonArrayToList(array: org.json.JSONArray): List<Any> {
+        val list = mutableListOf<Any>()
+        for (i in 0 until array.length()) {
+            var value = array.get(i)
+            if (value is org.json.JSONArray) {
+                value = jsonArrayToList(value)
+            } else if (value is org.json.JSONObject) {
+                value = jsonToMap(value)
+            }
+            list.add(value)
+        }
+        return list
     }
 }

@@ -29,28 +29,102 @@ class Plugin(BasePlugin):
         
         self._load_tokens()
 
-    def start(self):
-        """Запуск воркеров для каждой колонки"""
+    def _load_tokens(self):
+        """Загрузка токенов и инициализация структур данных"""
+        if not TOKENS_FILE.exists():
+            self.log("Tokens file not found. Please run discovery first.", level="warning")
+            return
+
+        with open(TOKENS_FILE, "r", encoding="utf-8") as f:
+            self.devices = json.load(f)
+        
+        # Инициализируем стейты
+        for d_id, d in self.devices.items():
+            self.states[d_id] = {
+                "name": d.get("name", "Колонка"), "platform": d.get("platform"),
+                "online": False, "volume": 0, "playing": False,
+                "title": "", "artist": "", "cover": "",
+                "track_id": "", "alice_state": "IDLE"
+            }
+
+        # Если управление на планшете, нам не нужны локальные очереди и циклы
+        if self.config.get("tablet_control", False):
+            return
+
         for d_id in self.devices:
+            self.cmd_queues[d_id] = asyncio.Queue()
+            self._force_broadcast_until[d_id] = 0
+
+    def start(self):
+        """Запуск воркеров для каждой колонки или передача конфига планшету"""
+        self.manager.subscribe("client_connected", self.on_ui_connected)
+        
+        if self.config.get("tablet_control", False):
+            self.log("==================================================")
+            self.log(">>> CONTROL MODE: [ TABLET / STANDALONE ]      <<<")
+            self.log(">>> PC local workers are SUSPENDED             <<<")
+            self.log("==================================================")
+            self._broadcast_config_to_tablet()
+            return
+
+        self.log("==================================================")
+        self.log(">>> CONTROL MODE: [ PC / LOCAL ]               <<<")
+        self.log(f">>> Starting local workers for {len(self.devices)} devices <<<")
+        self.log("==================================================")
+        for d_id in self.devices:
+            name = self.devices[d_id].get("name", d_id)
+            self.log(f"Spawning worker for: {name} ({d_id})")
             threading.Thread(target=self._device_worker, args=(d_id,), daemon=True).start()
 
-    def stop(self):
-        self._stop_event.set()
+    def _broadcast_config_to_tablet(self, sid=None):
+        """Передача токенов или сигнала об отключении прямого управления"""
+        # Извлекаем YANDEX_TOKEN (для музыки/текстов)
+        y_token = None
+        if AUTH_FILE.exists():
+            with open(AUTH_FILE, "r") as f:
+                for line in f:
+                    if line.startswith("YANDEX_TOKEN="):
+                        y_token = line.split("=")[1].strip()
 
-    def _load_tokens(self):
-        if TOKENS_FILE.exists():
-            try:
-                with open(TOKENS_FILE, "r", encoding="utf-8") as f:
-                    self.devices = json.load(f)
-                    for d_id, d in self.devices.items():
-                        self.states[d_id] = {
-                            "name": d["name"], "platform": d["platform"],
-                            "online": False, "volume": 0, "playing": False,
-                            "title": "", "artist": "", "cover": "",
-                            "track_id": "", "alice_state": "IDLE"
-                        }
-            except Exception as e:
-                self.log(f"Error loading tokens: {e}", level="error")
+        configs = []
+        # Если управление на планшете - шлем конфиги, иначе шлем пустой список
+        if self.config.get("tablet_control", False):
+            allowed_ids = self.config.get("selected_device_ids", [])
+            for d_id, d in self.devices.items():
+                if allowed_ids and d_id not in allowed_ids:
+                    continue
+                    
+                ip = d.get("ip")
+                token = d.get("glagol_token")
+                name = d.get("name", "Яндекс Станция")
+                
+                if ip and token:
+                    configs.append({
+                        "id": d_id,
+                        "glagol_token": token,
+                        "name": name,
+                        "ip": ip
+                    })
+                else:
+                    self.log(f"Skipping device {d_id} in broadcast: missing IP or token", level="warning")
+        
+        payload = {
+            "devices": configs,
+            "yandex_token": y_token,
+            "enabled": self.config.get("tablet_control", False)
+        }
+        
+        self.manager.emit_to_plugin_ui(self.p_id, "yandex_config", payload, sid=sid)
+        self.log(f"Broadcasted standalone state (enabled={payload['enabled']}) with {len(configs)} devices to {sid if sid else 'all'}.")
+
+    def stop(self):
+        self.log("Stopping Yandex Station plugin...")
+        self._stop_event.set()
+        self.manager.unsubscribe("client_connected", self.on_ui_connected)
+        for d_id in self.loops:
+            self.log(f"Requesting loop stop for device: {d_id}")
+            self.loops[d_id].call_soon_threadsafe(self.loops[d_id].stop)
+        self.log("Plugin stop sequence initiated.")
 
     def _refresh_tokens_sync(self):
         now = time.time()
@@ -120,7 +194,13 @@ class Plugin(BasePlugin):
                             await asyncio.sleep(2)
                             continue
                     await asyncio.sleep(5)
-        loop.run_until_complete(run())
+        self.log(f"Worker for {device_id} is starting its loop...")
+        try:
+            loop.run_until_complete(run())
+        except (RuntimeError, asyncio.CancelledError):
+            pass 
+        finally:
+            self.log(f"Worker for {device_id} has stopped.")
 
     async def _monitor_loop(self, device_id):
         ip = self.devices[device_id].get("ip")
@@ -128,7 +208,8 @@ class Plugin(BasePlugin):
         async with websockets.connect(f"wss://{ip}:1961", ssl=ssl_ctx, ping_interval=10) as ws:
             self.connections[device_id] = ws
             self.states[device_id]["online"] = True
-            self._push_state()
+            self.log(f"Connected to speaker {device_id} at {ip}")
+            self._push_state() # Принудительно шлем статус "Online"
             async def heartbeat():
                 while True:
                     try:
@@ -177,6 +258,9 @@ class Plugin(BasePlugin):
             if self.states[device_id].get(k) != new_vals.get(k):
                 core_changed = True
                 break
+        
+        // if core_changed:
+        //    self.log(f"DEBUG: State changed for {device_id}: playing={new_vals.get('playing')}, title={new_vals.get('title')}")
 
         old_track = self.states[device_id].get("track_id")
         is_new_track = bool(new_vals.get("track_id")) and new_vals.get("track_id") != old_track
@@ -207,25 +291,88 @@ class Plugin(BasePlugin):
 
     def _push_state(self):
         """Отправка текущего состояния в ядро"""
+        if self.config.get("tablet_control", False):
+            # В режиме прямого управления не шлем динамику (громкость, прогресс)
+            # Чтобы не затирать данные на планшете старыми значениями с ПК
+            minimal_devices = []
+            for d_id, d in self.devices.items():
+                if d_id in self.config.get("selected_device_ids", []):
+                    minimal_devices.append({
+                        "id": d_id,
+                        "name": d.get("name"),
+                        "status": "direct" # Флаг для планшета
+                    })
+            self.update_state({"devices": minimal_devices})
+            return
+
         stats = self.get_stats()
+        # self.log(f"Pushing state to core: {len(stats['devices'])} devices")
         self.update_state({"devices": stats["devices"]})
+
+    def on_ui_connected(self, sid=None):
+        """Вызывается когда планшет подключается к серверу"""
+        self.log(f"on_ui_connected triggered for sid: {sid}")
+        self._broadcast_config_to_tablet(sid=sid)
 
     def get_wizard_data(self):
         devices = [{"id": d_id, "label": d.get("name", d_id), "type": "yandex_station"} for d_id, d in self.devices.items()]
-        return {"title": self.i18n("wizard_title"), "description": self.i18n("wizard_desc"), "items": devices}
+        # Добавляем настройку управления с планшета как элемент списка
+        settings = [
+            {"id": "setting:tablet_control", "label": self.i18n("tablet_control_label"), "type": "setting"}
+        ]
+        return {
+            "title": self.i18n("wizard_title"), 
+            "description": self.i18n("wizard_desc"), 
+            "items": settings + devices,
+            "actions": [
+                {"id": "refresh_discovery", "label": self.i18n("refresh_discovery"), "icon": "RefreshCw"}
+            ]
+        }
 
     def handle_wizard(self, selections):
         config_path = CONFIG_FILE
-        self.config.update({"selected_device_ids": selections, "dependencies": ["yandex_lyrics"]})
-        with open(config_path, "w", encoding="utf-8") as f:
-            json.dump(self.config, f, indent=2, ensure_ascii=False)
-        self.manager.broadcast_ui()
+        self.log(f"WIZARD DEBUG: Received selections: {selections}")
+        
+        # Извлекаем настройки из общего списка выделений
+        tablet_control = "setting:tablet_control" in selections
+        selected_devices = [s for s in selections if not s.startswith("setting:")]
+        
+        old_mode = self.config.get("tablet_control", False)
+        self.log(f"WIZARD DEBUG: old_mode={old_mode}, new_mode={tablet_control}")
+        
+        # Сохраняем конфиг через базовый метод (он сам запишет на диск и обновит кэш)
+        self.save_config({
+            "selected_device_ids": selected_devices,
+            "tablet_control": tablet_control,
+            "dependencies": ["yandex_lyrics"]
+        })
+        
+        mode_str = "TABLET" if tablet_control else "PC"
+        if old_mode != tablet_control:
+            self.log(f"!!! MODE TOGGLED: {mode_str} !!!")
+        else:
+            self.log(f"WIZARD: Config updated (mode remains {mode_str})")
+
+        # Перезагружаем плагин, чтобы изменения вступили в силу (остановка/запуск воркеров)
+        self.manager.reload_plugin(self.p_id)
+        if "yandex_lyrics" in self.manager.plugins:
+            self.manager.reload_plugin("yandex_lyrics")
 
     def get_active_items(self):
-        return self.config.get("selected_device_ids", [])
+        active = list(self.config.get("selected_device_ids", []))
+        if self.config.get("tablet_control", False):
+            active.append("setting:tablet_control")
+        return active
 
     def handle_command(self, target, action, data=None):
-        if target not in self.loops: return
+        if action == "handle_wizard":
+            self.handle_wizard(data)
+            return
+
+        if action == "get_yandex_config":
+            from flask import request
+            self._broadcast_config_to_tablet(sid=request.sid)
+            return
         cmd = action.split(":", 1)[0]
         val = action.split(":", 1)[1] if ":" in action else None
         payload_data = None
@@ -249,6 +396,21 @@ class Plugin(BasePlugin):
                 self.states[target]["volume"] = int(float(val))
                 self._force_broadcast_until[target] = time.time() + 3.0
             except: pass
+        elif cmd == "refresh_discovery":
+            # Принудительный поиск колонок
+            self.log("Manual discovery refresh requested")
+            self._refresh_tokens_sync()
+            self.manager.broadcast_ui()
+            return
+        elif cmd == "sync_track":
+            # Планшет сообщает нам, что трек изменился (при прямом управлении)
+            if data and isinstance(data, dict):
+                track_id = data.get("track_id")
+                if track_id:
+                    self.log(f"Synced track from tablet for {target}: {track_id}")
+                    self.states[target]["track_id"] = track_id
+                    self.manager.emit_event("track_changed", {"device_id": target, "track_id": track_id})
+            return # Не отправляем ничего на колонку, это просто синхронизация стейта
         self._push_state()
         full_payload = {
             "conversationToken": self.devices[target]["glagol_token"],

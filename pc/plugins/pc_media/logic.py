@@ -69,26 +69,17 @@ class Plugin(BasePlugin):
                             # self.log(f"Received data from scanner: {info.get('title')} - {info.get('artist')}")
                                 
                             with self._data_lock:
-                                # Если в сообщении есть обложка, но нет артиста — это отдельный пакет с картинкой
-                                is_cover_packet = "cover" in info and "artist" not in info
-                                
-                                if is_cover_packet:
-                                    cover = info["cover"]
-                                    title = info.get("title", "")
-                                    self._media_info["cover"] = cover
-                                    self.manager.emit_to_plugin_ui(self.p_id, "cover", {"cover": cover, "title": title})
+                                # Если сканер прислал сигнал об обновлении обложки в файле
+                                if "cover_event" in info:
+                                    self._send_cover_from_file(info.get("title", ""))
                                     continue
 
                                 # Иначе это обычное обновление статов
                                 is_new_track = (info.get("title") != self._media_info.get("title") or 
                                                (info.get("artist") is not None and info.get("artist") != self._media_info.get("artist")))
                                 
-                                cover = info.pop("cover", None)
-                                
                                 # Обновляем все данные
                                 self._media_info.update(info)
-                                if cover:
-                                    self._media_info["cover"] = cover
                                 
                                 # Рассылаем обновление
                                 if is_new_track:
@@ -96,10 +87,6 @@ class Plugin(BasePlugin):
                                     self.update_state(self.get_stats())
                                 else:
                                     self.update_state(self.get_stats())
-
-                                if cover:
-                                    self.log(f"Sending cover with stats for: {info.get('title')} ({len(cover)} bytes)")
-                                    self.manager.emit_to_plugin_ui(self.p_id, "cover", {"cover": cover, "title": info.get("title", "")})
                                     
                         except Exception as e:
                             self.log(f"Failed to parse scanner line: {line[:100]}... Error: {e}")
@@ -124,6 +111,24 @@ class Plugin(BasePlugin):
             stats["progress"] = float(stats.get("progress", 0.0))
             stats["volume"] = int(stats.get("volume", 0))
             return stats
+
+    def _send_cover_from_file(self, title):
+        """Читает обложку из файла и отправляет в UI"""
+        try:
+            import base64
+            cover_path = os.path.join(os.path.dirname(__file__), "cover.jpg")
+            if os.path.exists(cover_path):
+                with open(cover_path, "rb") as f:
+                    raw_data = f.read()
+                    cover_base64 = base64.b64encode(raw_data).decode('utf-8')
+                    
+                with self._data_lock:
+                    self._media_info["cover"] = cover_base64
+                    
+                self.log(f"Sending cover from file for: {title} ({len(cover_base64)} bytes)")
+                self.manager.emit_to_plugin_ui(self.p_id, "cover", {"cover": cover_base64, "title": title})
+        except Exception as e:
+            self.log(f"Failed to read/send cover file: {e}", level="error")
 
     def handle_command(self, target, action, data=None):
         if action.startswith("set_volume:"):

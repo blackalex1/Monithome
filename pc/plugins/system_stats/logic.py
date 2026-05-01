@@ -8,11 +8,12 @@ import os
 import subprocess
 import wmi
 import json
+from typing import Dict, List, Any, Optional
 from .afterburner_reader import get_afterburner_stats
 from base import BasePlugin
 
 class Plugin(BasePlugin):
-    def __init__(self, socketio, config, manager):
+    def __init__(self, socketio: Any, config: Dict[str, Any], manager: Any):
         super().__init__(socketio, config, manager)
         self._stop_event = threading.Event()
         
@@ -44,95 +45,106 @@ class Plugin(BasePlugin):
             
             self._state.update({
                 "cpu": hal_data["cpu_load"],
-                "cpu_percent": hal_data["cpu_load"], 
                 "display_cpu": f"{hal_data['cpu_load']}%",
-                
                 "ram_percent": ram_percent,
                 "display_ram_percent": f"{ram_percent}%",
-                
                 "ram_used": ram_used,
-                "ram_used_percent": ram_percent, # Чтобы полоска работала в ГБ-виджете
                 "display_ram_used": f"{ram_used} GB",
-                
                 "ram_total": ram_total,
                 "ram_combined": ram_percent, 
-                "display_ram_combined": f"{ram_used} / {ram_total} GB",
-                "secondary_ram_combined": f"{ram_percent}%"
+                "display_ram_combined": f"{ram_used} / {ram_total} GB"
             })
-            self.update_state(self._state)
-
-    def stop(self):
-        self._stop_event.set()
+            # Мы НЕ вызываем update_state здесь, так как _stats_loop 
+            # отправит общий пакет данных с температурами каждые 2 секунды.
 
     def _stats_loop(self):
+        # Кэшируем имена устройств, чтобы не опрашивать WMI/Registry постоянно
+        cpu_name = None
+        gpu_name = None
+        
         while not self._stop_event.is_set():
             try:
-                # Теперь берем только "тяжелые" или специфичные данные, 
-                # которые Ядро не опрашивает (температуры, GPU)
-                ab_stats = get_afterburner_stats() or {}
+                # 1. Сначала пробуем Afterburner (самый быстрый способ через Shared Memory)
+                ab_stats = get_afterburner_stats()
                 
-                driver_stats = {}
-                try:
-                    ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
-                    if os.path.exists(ps_script):
-                        process = subprocess.run(
-                            ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps_script],
-                            capture_output=True, text=True, encoding='utf-8', errors='ignore'
-                        )
-                        if process.returncode == 0:
-                            out_str = process.stdout
-                            json_start = out_str.find('{')
-                            if json_start != -1:
-                                driver_stats = json.loads(out_str[json_start:])
-                except: pass
+                cpu_t = 0
+                gpu_l = 0
+                gpu_t = 0
+                has_gpu = False
+                
+                if ab_stats:
+                    cpu_t = ab_stats.get('cpu_temp', 0)
+                    gpu_l = ab_stats.get('gpu_load', 0)
+                    gpu_t = ab_stats.get('gpu_temp', 0)
+                    has_gpu = gpu_l > 0 or gpu_t > 0
+                
+                # 2. Если Afterburner не запущен или не дает данных, используем PowerShell/WMI
+                if not ab_stats or cpu_t == 0:
+                    driver_stats = {}
+                    try:
+                        ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
+                        if os.path.exists(ps_script):
+                            process = subprocess.run(
+                                ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps_script],
+                                capture_output=True, text=True, encoding='utf-8', errors='ignore'
+                            )
+                            if process.returncode == 0:
+                                json_start = process.stdout.find('{')
+                                if json_start != -1:
+                                    driver_stats = json.loads(process.stdout[json_start:])
+                    except Exception as e:
+                        self.log(f"PowerShell stats collection failed: {e}", level="debug")
 
-                cpu_t = ab_stats.get('cpu_temp', 0) or driver_stats.get('cpu_temp', 0)
+                    if not cpu_t: cpu_t = driver_stats.get('cpu_temp', 0)
+                    if not gpu_l: gpu_l = driver_stats.get('gpu_load', 0)
+                    if not gpu_t: gpu_t = driver_stats.get('gpu_temp', 0)
+                    if not cpu_name: cpu_name = driver_stats.get('cpu_name')
+                    if not gpu_name: gpu_name = driver_stats.get('gpu_name')
+
+                # 3. Фолбэк для температур (WMI), если все остальное не сработало
                 if cpu_t == 0:
                     try:
                         w = wmi.WMI(namespace="root\\wmi")
                         temperature_infos = w.MSAcpi_ThermalZoneTemperature()
                         if temperature_infos:
                             cpu_t = (temperature_infos[0].CurrentTemperature - 2732) / 10.0
-                    except:
-                        try:
-                            temps = psutil.sensors_temperatures()
-                            if 'coretemp' in temps: cpu_t = temps['coretemp'][0].current
-                        except: pass
+                    except Exception as e:
+                        self.log(f"WMI temperature fetch failed: {e}", level="debug")
 
-                gpu_l = ab_stats.get('gpu_load', 0) or driver_stats.get('gpu_load', 0)
-                gpu_t = ab_stats.get('gpu_temp', 0) or driver_stats.get('gpu_temp', 0)
-                has_gpu = gpu_l > 0 or gpu_t > 0
-                gpu_name = ab_stats.get('gpu_name', driver_stats.get('gpu_name', ''))
-                
+                # 4. Фолбэк для GPU (GPUtil)
                 if not has_gpu:
                     try:
                         gpus = GPUtil.getGPUs()
                         if gpus:
                             gpu = gpus[0]
-                            gpu_l, gpu_t, gpu_name = round(gpu.load * 100, 1), gpu.temperature, gpu.name
+                            gpu_l, gpu_t = round(gpu.load * 100, 1), gpu.temperature
+                            if not gpu_name: gpu_name = gpu.name
                             has_gpu = True
-                    except: pass
+                    except Exception as e:
+                        self.log(f"GPUtil fetch failed: {e}", level="debug")
                 
-                cpu_name = driver_stats.get('cpu_name', platform.processor())
-                if "Family" in cpu_name:
-                    try:
-                        w_inst = wmi.WMI()
-                        processors = w_inst.Win32_Processor()
-                        if processors: cpu_name = processors[0].Name
-                    except: pass
+                # 5. Фолбэк для CPU Name
+                if not cpu_name:
+                    cpu_name = platform.processor()
+                    if "Family" in cpu_name:
+                        try:
+                            w_inst = wmi.WMI()
+                            processors = w_inst.Win32_Processor()
+                            if processors: cpu_name = processors[0].Name
+                        except Exception as e:
+                            self.log(f"WMI CPU name fetch failed: {e}", level="debug")
 
                 with self._lock:
                     self._state.update({
                         "cpu_temp": cpu_t,
-                        "display_cpu_temp": f"{cpu_t}°C",
+                        "display_cpu_temp": f"{int(cpu_t)}°C" if cpu_t else "N/A",
                         "gpu_load": gpu_l,
                         "display_gpu_load": f"{gpu_l}%",
                         "gpu_temp": gpu_t,
-                        "display_gpu_temp": f"{gpu_t}°C",
-                        "display_cpu": f"{self._state.get('cpu', 0)}%",
+                        "display_gpu_temp": f"{int(gpu_t)}°C" if gpu_t else "N/A",
                         "has_gpu": has_gpu,
-                        "cpu_name": cpu_name,
-                        "gpu_name": gpu_name
+                        "cpu_name": cpu_name or "CPU",
+                        "gpu_name": gpu_name or "GPU"
                     })
                     self.update_state(self._state)
             except Exception as e:
@@ -247,20 +259,8 @@ class Plugin(BasePlugin):
                 "icon": "Layers"
             })
 
-        # Обновляем конфиг в памяти
-        self.config["widgets"] = widgets
-        
-        # Сохраняем на диск
-        config_path = os.path.join(os.path.dirname(__file__), "config.json")
-        try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(self.config, f, indent=2, ensure_ascii=False)
-            self.log("Settings saved successfully")
-        except Exception as e:
-            self.log(f"Failed to save config: {e}", level="error")
-            
-        # Уведомляем менеджер об изменении UI
-        self.manager.broadcast_ui()
+        # Сохраняем обновленные виджеты через базовый метод
+        self.save_config({"widgets": widgets})
 
     def get_active_items(self):
         """Возвращает список ID активных датчиков из текущего конфига"""

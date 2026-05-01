@@ -79,3 +79,8 @@ data class LyricTiming(
     val time: Long? = 0L,
     val text: String? = ""
 )
+
+data class LyricsViewState(
+    val pluginId: String,
+    val deviceId: String
+)

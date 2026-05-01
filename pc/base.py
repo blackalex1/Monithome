@@ -1,9 +1,10 @@
 import logging
 import threading
+from typing import Dict, List, Any, Optional
 
 class BasePlugin:
     """Базовый класс для всех плагинов"""
-    def __init__(self, socketio, config, manager):
+    def __init__(self, socketio: Any, config: Dict[str, Any], manager: Any):
         self.socketio = socketio
         self.config = config
         self.manager = manager
@@ -64,3 +65,45 @@ class BasePlugin:
             "dependencies": self.config.get("dependencies", []),
             "config": self.config
         }
+
+    def save_config(self, new_config):
+        """Универсальный метод сохранения конфига плагина"""
+        with self._lock:
+            # Обновляем конфиг в памяти
+            if isinstance(new_config, dict):
+                self.config.update(new_config)
+            
+            # Сохраняем на диск
+            import os
+            import json
+            import sys
+            try:
+                module = sys.modules[self.__class__.__module__]
+                plugin_dir = os.path.dirname(os.path.abspath(module.__file__))
+                config_path = os.path.join(plugin_dir, "config.json")
+                
+                # Сначала сериализуем в строку, чтобы не обнулить файл при ошибке
+                # Фильтруем конфиг, оставляя только JSON-сериализуемые типы
+                def json_safe(d):
+                    if isinstance(d, dict):
+                        return {k: json_safe(v) for k, v in d.items() if not k.startswith('_') and k != 'class'}
+                    elif isinstance(d, list):
+                        return [json_safe(i) for i in d]
+                    elif isinstance(d, (str, int, float, bool, type(None))):
+                        return d
+                    return str(d)
+
+                safe_config = json_safe(self.config)
+                config_str = json.dumps(safe_config, indent=2, ensure_ascii=False)
+                
+                with open(config_path, "w", encoding="utf-8") as f:
+                    f.write(config_str)
+                
+                self.log(f"Config saved to {config_path}")
+                
+                # Уведомляем менеджер об обновлении кэша и UI
+                self.manager.update_plugin_config_cache(self.p_id, self.config)
+                self.manager.broadcast_ui()
+                
+            except Exception as e:
+                self.log(f"Failed to save config: {e}", level="error")

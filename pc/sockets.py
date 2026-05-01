@@ -28,11 +28,11 @@ def register_socket_events(socketio, p_manager):
             logger.info(f"Authorized device connected (sid: {sid})")
             join_room('authorized')
             
-            # Отправляем начальный конфиг сразу и через задержку для надежности
-            send_ui_config(socketio, p_manager, sid)
-            threading.Timer(0.5, send_ui_config, args=(socketio, p_manager, sid)).start()
-            threading.Timer(2.0, send_ui_config, args=(socketio, p_manager, sid)).start()
+            # Подтверждаем успех авторизации для планшета
+            emit('auth_success', {'token': token})
             
+            # Отправляем начальный конфиг
+            send_ui_config(socketio, p_manager, sid)
             p_manager.emit_event("client_connected", sid)
             send_stats_to_sid(socketio, sid, p_manager)
             
@@ -48,6 +48,23 @@ def register_socket_events(socketio, p_manager):
         emit('auth_required', {'sid': sid})
         return True
 
+    @socketio.on('authorize')
+    def handle_authorize(data):
+        sid = request.sid
+        token = data.get('token')
+        master = get_master_config()
+        trusted = master.get("trusted_tokens", [])
+        
+        if token in trusted and token is not None:
+            logger.info(f"Device {sid} authorized via 'authorize' event")
+            join_room('authorized', namespace='/')
+            emit('auth_success', {'token': token})
+            p_manager.emit_event("client_connected", sid)
+            send_stats_to_sid(socketio, sid, p_manager)
+        else:
+            logger.warning(f"Device {sid} failed 'authorize' event")
+            emit('auth_failed', {'reason': 'invalid_token'})
+
     @socketio.on('get_manager_data')
     def handle_manager_data():
         master = get_master_config()
@@ -60,6 +77,16 @@ def register_socket_events(socketio, p_manager):
             'hostname': master.get('hostname'), 
             'os': master.get('os')
         })
+
+    @socketio.on('get_yandex_config')
+    def handle_get_yandex_config(data=None):
+        from manager import plugins
+        logger.info(f"Tablet requested Yandex config (sid: {request.sid})")
+        plugin = plugins.get("yandex_station")
+        if plugin and hasattr(plugin, "_broadcast_config_to_tablet"):
+            plugin._broadcast_config_to_tablet(sid=request.sid)
+        else:
+            logger.warning("Yandex plugin not found or doesn't support broadcast")
 
     @socketio.on('save_master_config')
     def handle_save_master_config(data):
@@ -161,8 +188,15 @@ def register_socket_events(socketio, p_manager):
     def handle_plugin_command(data):
         p_id = data.get('plugin_id')
         action = data.get('action')
-        if p_id in plugins:
-            p_instance = plugins[p_id]
+        p_instance = plugins.get(p_id)
+        
+        # Если инстанс не найден (например, плагин не активен или в процессе релоада)
+        if not p_instance and action == 'get_wizard':
+            if p_id in p_manager.discovered:
+                from plugin_manager import instantiate_plugin
+                p_instance = instantiate_plugin(p_id, p_manager)
+        
+        if p_instance:
             if action == 'get_wizard' and hasattr(p_instance, 'get_wizard_data'):
                 wizard = p_instance.get_wizard_data()
                 active_items = []
@@ -205,8 +239,14 @@ def send_stats_to_sid(socketio, sid, p_manager):
         "stats": p_manager.get_all_stats(),
         "_server_time": time.time()
     }
-    binary_payload = msgpack.packb(payload, use_bin_type=True)
-    socketio.emit('stats', binary_payload, room=sid)
+    try:
+        binary_payload = msgpack.packb(payload, use_bin_type=True)
+        socketio.emit('stats', binary_payload, room=sid)
+    except Exception as e:
+        logger.error(f"Failed to send binary stats to {sid}: {e}")
+        try:
+            socketio.emit('stats_json', payload, room=sid)
+        except: pass
 
 def send_covers_to_sid(socketio, sid, p_manager):
     """Повторная отправка всех обложек при подключении — через JSON, минуя msgpack"""

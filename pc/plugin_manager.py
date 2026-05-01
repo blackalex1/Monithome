@@ -46,3 +46,15 @@ def load_plugins():
                     print(f"[CORE] Failed to discover plugin {item.name}: {e}")
                     
     return discovered
+
+def instantiate_plugin(p_id, manager):
+    """Создает экземпляр плагина"""
+    from manager import discovered_plugins
+    if p_id in discovered_plugins:
+        p_data = discovered_plugins[p_id]
+        p_class = p_data["class"]
+        p_config = p_data["config"]
+        # Согласно logic.py: __init__(self, socketio, config, manager)
+        p_instance = p_class(manager.socketio, p_config, manager)
+        return p_instance
+    return None

@@ -66,6 +66,9 @@ dependencies {
     implementation("org.msgpack:msgpack-core:0.9.9")
     // Coil для загрузки изображений (Base64 обложки)
     implementation("io.coil-kt:coil-compose:2.7.0")
+    
+    // OkHttp для WebSockets (прямая связь со Станцией)
+    implementation("com.squareup.okhttp3:okhttp:4.12.0")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.2.1")

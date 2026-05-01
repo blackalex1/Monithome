@@ -6,6 +6,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.platform.LocalContext
+import coil.request.ImageRequest
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -95,14 +97,18 @@ fun MediaWidget() {
     val artist = (currentStats["artist"] as? String) ?: (currentStats["subtitle"] as? String) ?: (currentStats["author"] as? String) ?: ""
     val isPlaying = currentStats["playing"] as? Boolean ?: false
     val baseProgress = (currentStats["progress"] as? Number)?.toDouble() ?: 0.0
-    val duration = (currentStats["duration"] as? Number)?.toDouble() ?: 300.0
+    val duration = (currentStats["duration"] as? Number)?.toDouble() ?: 0.0
     val lastUpdate = (currentStats["local_last_update"] as? Number)?.toDouble() ?: (System.currentTimeMillis() / 1000.0)
 
     var interpolatedProgress by remember { mutableDoubleStateOf(baseProgress) }
     
-    // Сброс прогресса при смене трека, чтобы не видеть полоску от предыдущего
-    LaunchedEffect(title) {
-        interpolatedProgress = baseProgress
+    // Сброс прогресса при смене трека или резком скачке (более 5 сек)
+    LaunchedEffect(title, baseProgress) {
+        if (title.isEmpty()) {
+            interpolatedProgress = 0.0
+        } else {
+            interpolatedProgress = baseProgress
+        }
     }
     
     LaunchedEffect(baseProgress, isPlaying, lastUpdate) {
@@ -168,17 +174,30 @@ fun MediaWidget() {
                         if (coverBase64.startsWith("http")) coverBase64
                         else if (coverBase64.startsWith("//")) "https:$coverBase64"
                         else {
-                            try { android.util.Base64.decode(coverBase64, android.util.Base64.DEFAULT) }
-                            catch (e: Exception) { null }
+                            try {
+                                val cleanBase64 = if (coverBase64.contains(",")) {
+                                    coverBase64.substringAfter(",")
+                                } else coverBase64
+                                android.util.Base64.decode(cleanBase64, android.util.Base64.DEFAULT)
+                            } catch (e: Exception) {
+                                null
+                            }
                         }
                     }
 
                     if (model != null) {
+                        android.util.Log.d("MediaWidget", "Loading cover from: $model")
                         AsyncImage(
-                            model = model,
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(model)
+                                .crossfade(true)
+                                .allowHardware(false)
+                                .build(),
                             contentDescription = null,
                             modifier = Modifier.fillMaxHeight().wrapContentWidth(),
-                            contentScale = ContentScale.Fit
+                            contentScale = ContentScale.Fit,
+                            error = painterResource(android.R.drawable.ic_menu_report_image),
+                            placeholder = painterResource(android.R.drawable.ic_menu_gallery)
                         )
                     } else {
                         Icon(Icons.Default.MusicNote, contentDescription = null, tint = Color.Gray)
@@ -211,15 +230,13 @@ fun MediaWidget() {
             // Кнопки управления и текст песни
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 if (currentSource.pluginId.contains("yandex", ignoreCase = true)) {
-                    var showLyrics by remember { mutableStateOf(false) }
-                    
                     Box(
                         modifier = Modifier
                             .padding(bottom = 8.dp)
                             .clip(RoundedCornerShape(8.dp))
                             .border(1.dp, MonitTheme.Primary.copy(alpha = 0.3f), RoundedCornerShape(8.dp))
                             .background(MonitTheme.Primary.copy(alpha = 0.1f))
-                            .clickable { showLyrics = true }
+                            .clickable { PluginRepository.showLyrics(currentSource.pluginId, targetId) }
                             .padding(horizontal = 12.dp, vertical = 6.dp)
                     ) {
                         Text(
@@ -230,10 +247,6 @@ fun MediaWidget() {
                                 letterSpacing = 1.sp
                             )
                         )
-                    }
-
-                    if (showLyrics) {
-                        LyricsDialog(targetId, currentStats) { showLyrics = false }
                     }
                 }
 
@@ -277,7 +290,7 @@ fun MediaWidget() {
 
         // Прогресс
         Column(modifier = Modifier.padding(top = 16.dp)) {
-            val progress = if (duration > 0) (interpolatedProgress / duration).toFloat().coerceIn(0f, 1f) else 0f
+            val progress = if (duration > 0.0) (interpolatedProgress / duration).toFloat().coerceIn(0f, 1f) else 0f
             
             Box(modifier = Modifier.fillMaxWidth().height(4.dp)) {
                 Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(2.dp)))
@@ -302,18 +315,27 @@ fun MediaWidget() {
         }
 
         // Громкость
-        var localVolume by remember(volume) { mutableFloatStateOf(volume.toFloat()) }
+        var localVolume by remember { mutableFloatStateOf(volume.toFloat()) }
         var lastInteractionTime by remember { mutableLongStateOf(0L) }
-        val isInteracting = System.currentTimeMillis() - lastInteractionTime < 1500
+        val isInteracting = System.currentTimeMillis() - lastInteractionTime < 2000
+
+        // Синхронизация с сетью, только если пользователь не трогает ползунок
+        LaunchedEffect(volume) {
+            if (!isInteracting) {
+                localVolume = volume.toFloat()
+            }
+        }
 
         Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 16.dp)) {
             Icon(Icons.Default.VolumeDown, contentDescription = null, tint = MonitTheme.TextSecondary, modifier = Modifier.size(18.dp))
             Slider(
-                value = if (isInteracting) localVolume else volume.toFloat(),
+                value = localVolume,
                 onValueChange = { 
                     localVolume = it
                     lastInteractionTime = System.currentTimeMillis()
-                    SocketManager.sendCommand(currentSource.pluginId, "set_volume:${it.toInt()}", target = targetId)
+                },
+                onValueChangeFinished = {
+                    SocketManager.sendCommand(currentSource.pluginId, "set_volume:${localVolume.toInt()}", target = targetId)
                 },
                 valueRange = 0f..100f,
                 modifier = Modifier.weight(1f).padding(horizontal = 12.dp),

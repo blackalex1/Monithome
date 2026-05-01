@@ -31,11 +31,27 @@ class Plugin(BasePlugin):
         
         # Подписываемся на смену трека
         self.manager.subscribe("track_changed", self._on_track_changed)
-        # Проверяем текущее состояние станций при запуске
+        # Проверяем текущее состояние станций при запускe
         threading.Thread(target=self._check_initial_state, daemon=True).start()
+
+    def _is_tablet_control(self):
+        """Проверяем настройку управления с планшета в плагине станций"""
+        station_plugin = self.manager.plugins.get("yandex_station")
+        if station_plugin:
+            return station_plugin.config.get("tablet_control", False)
+        return self.config.get("tablet_control", False)
+
+    def start(self):
+        """Запуск плагина: проверяем, не перехвачено ли управление планшетом"""
+        if self._is_tablet_control():
+            self.log("MODE CHANGE: Tablet handles lyrics. PC fetching suspended.")
+            return
+        
+        # Обычный запуск...
 
     def _check_initial_state(self):
         """Проверка, не играет ли уже что-то на станциях"""
+        if self._is_tablet_control(): return
         time.sleep(2) # Даем время другим плагинам загрузиться
         all_stats = self.manager.get_all_stats()
         station_stats = all_stats.get("yandex_station")
@@ -44,10 +60,12 @@ class Plugin(BasePlugin):
                 d_id = device.get("id")
                 t_id = device.get("track_id")
                 if d_id and t_id:
-                    self.log(f"Initial check: found active track {t_id} on {d_id}")
+                    # self.log(f"Initial check: found active track {t_id} on {d_id}")
                     self._on_track_changed({"device_id": d_id, "track_id": t_id})
 
     def _on_track_changed(self, data):
+        if self._stop_event.is_set(): return
+        if self._is_tablet_control(): return
         device_id = data.get("device_id")
         track_id = data.get("track_id")
         
@@ -70,6 +88,7 @@ class Plugin(BasePlugin):
         # Debounce
         def delayed_fetch(d_id, t_id):
             time.sleep(0.3)
+            if self._stop_event.is_set(): return
             if self._active_fetches.get(d_id) == t_id:
                 self._fetch_and_broadcast(d_id, t_id)
                 
@@ -77,7 +96,7 @@ class Plugin(BasePlugin):
 
     def _fetch_and_broadcast(self, device_id, track_id):
         # Логируем ключами или просто текстом, лог в консоли сервера не обязательно переводить
-        self.manager.log("Lyrics", "Fetching lyrics...")
+        # self.manager.log("Lyrics", "Fetching lyrics...")
         lyrics_data = self._fetch_lyrics_parallel(track_id)
         
         if self._active_fetches.get(device_id) != track_id:
@@ -159,6 +178,7 @@ class Plugin(BasePlugin):
         return None
 
     def _fetch_lyrics_parallel(self, track_id):
+        if self._stop_event.is_set(): return None
         x_token = None
         if AUTH_FILE.exists():
             with open(AUTH_FILE, "r") as f:
@@ -204,4 +224,5 @@ class Plugin(BasePlugin):
 
     def stop(self):
         self._stop_event.set()
+        self.manager.unsubscribe("track_changed", self._on_track_changed)
         self.executor.shutdown(wait=False)

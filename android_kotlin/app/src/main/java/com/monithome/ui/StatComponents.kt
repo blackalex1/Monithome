@@ -91,29 +91,45 @@ fun ChartWidget(pluginId: String, widget: Widget) {
             
             Spacer(modifier = Modifier.height(12.dp))
             
-            Canvas(modifier = Modifier.fillMaxWidth().height(50.dp)) {
+            Canvas(modifier = Modifier.fillMaxWidth().height(55.dp)) {
                 if (history.isEmpty()) return@Canvas
                 
                 val path = Path()
                 val fillPath = Path()
                 val width = size.width
                 val height = size.height
-                val maxVal = 100f 
                 
-                val points = history.takeLast(30)
-                val stepX = width / (30 - 1)
+                val points = history.takeLast(40) // Берем чуть больше точек для плавности
+                val stepX = width / (points.size - 1).coerceAtLeast(1)
+                
+                // Динамическое масштабирование: ищем максимум в истории
+                val historyMax = points.maxOrNull() ?: 100f
+                // Если это проценты - до 100, если нет (напр. ГБ) - берем с запасом 10%
+                val maxVal = if (historyMax <= 100f && widget.unit == "%") 100f else historyMax * 1.1f
                 
                 points.forEachIndexed { i, valItem ->
                     val x = i * stepX
-                    val y = height - (valItem / maxVal * height).coerceIn(0f, height)
+                    val y = (height - (valItem / maxVal * height)).coerceIn(0f, height)
                     
                     if (i == 0) {
                         path.moveTo(x, y)
                         fillPath.moveTo(x, height)
                         fillPath.lineTo(x, y)
                     } else {
-                        path.lineTo(x, y)
-                        fillPath.lineTo(x, y)
+                        val prevX = (i - 1) * stepX
+                        val prevY = (height - (points[i - 1] / maxVal * height)).coerceIn(0f, height)
+                        
+                        // Cubic Bezier для сглаживания
+                        path.cubicTo(
+                            prevX + (x - prevX) / 2f, prevY,
+                            prevX + (x - prevX) / 2f, y,
+                            x, y
+                        )
+                        fillPath.cubicTo(
+                            prevX + (x - prevX) / 2f, prevY,
+                            prevX + (x - prevX) / 2f, y,
+                            x, y
+                        )
                     }
                     
                     if (i == points.size - 1) {
@@ -122,19 +138,27 @@ fun ChartWidget(pluginId: String, widget: Widget) {
                     }
                 }
                 
-                // Draw gradient fill
+                // Draw gradient fill with more depth
                 drawPath(
                     path = fillPath,
                     brush = Brush.verticalGradient(
-                        colors = listOf(color.copy(alpha = 0.3f), Color.Transparent)
+                        colors = listOf(
+                            color.copy(alpha = 0.4f),
+                            color.copy(alpha = 0.1f),
+                            Color.Transparent
+                        )
                     )
                 )
                 
-                // Draw line
+                // Draw smooth line
                 drawPath(
                     path = path,
                     color = color,
-                    style = Stroke(width = 2.dp.toPx(), cap = StrokeCap.Round)
+                    style = Stroke(
+                        width = 2.5.dp.toPx(), 
+                        cap = StrokeCap.Round,
+                        join = androidx.compose.ui.graphics.StrokeJoin.Round
+                    )
                 )
             }
         }

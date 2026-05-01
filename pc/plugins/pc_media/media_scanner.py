@@ -75,8 +75,8 @@ class SystemVolume:
                 self._volume = None
         return 0, False
 
-async def get_cover_base64(props):
-    if not props or not props.thumbnail: return None
+async def save_cover_to_file(props, file_path):
+    if not props or not props.thumbnail: return False
     for attempt in range(5):
         try:
             stream = await props.thumbnail.open_read_async()
@@ -86,10 +86,14 @@ async def get_cover_base64(props):
             reader = DataReader(stream.get_input_stream_at(0))
             await reader.load_async(stream.size)
             raw_data = bytes(reader.read_buffer(stream.size))
-            return base64.b64encode(raw_data).decode('utf-8')
+            
+            # Сохраняем во временный файл
+            with open(file_path, "wb") as f:
+                f.write(raw_data)
+            return True
         except Exception as e:
             await asyncio.sleep(0.5)
-    return None
+    return False
 
 async def main_loop():
     last_info = {"title": "___INIT___", "artist": "", "playing": False, "volume": -1, "mute": None, "progress": -1.0}
@@ -223,11 +227,16 @@ async def main_loop():
                             await asyncio.sleep(0.3)
                             props = await asyncio.wait_for(s.try_get_media_properties_async(), timeout=5.0)
                             if not props: return
-                            cover = await asyncio.wait_for(get_cover_base64(props), timeout=10.0)
-                            if cover:
-                                print(json.dumps({"cover": cover, "title": t}, ensure_ascii=False), flush=True)
+                            
+                            cover_file = os.path.join(os.path.dirname(__file__), "cover.jpg")
+                            success = await asyncio.wait_for(save_cover_to_file(props, cover_file), timeout=10.0)
+                            
+                            if success:
+                                # Вместо Base64 отправляем только сигнал о готовности файла
+                                print(json.dumps({"cover_event": "updated", "title": t}, ensure_ascii=False), flush=True)
                                 last_sent_cover_title = t
-                        except: pass
+                        except Exception as e:
+                            print(json.dumps({"log": f"Cover fetch error: {e}"}), flush=True)
                     asyncio.create_task(fetch_cover_task(session, info["title"]))
                 
                 print(json.dumps(info, ensure_ascii=False), flush=True)

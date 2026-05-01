@@ -155,11 +155,14 @@ function App() {
       }
     }
 
-    const newActive = active 
-      ? masterConfig.active_plugins.filter(p => p !== id)
-      : [...masterConfig.active_plugins, id];
+    const newActive = !active;
+    socket?.emit('toggle_plugin', { id: id, enabled: newActive });
     
-    saveMaster({ ...masterConfig, active_plugins: newActive });
+    // Оптимистично обновляем локальный стейт, чтобы UI не дергался
+    const updatedActiveList = newActive 
+      ? [...masterConfig.active_plugins, id]
+      : masterConfig.active_plugins.filter(p => p !== id);
+    setMasterConfig({ ...masterConfig, active_plugins: updatedActiveList });
   };
 
   const movePlugin = (idx: number, direction: 'up' | 'down') => {
@@ -193,10 +196,12 @@ function App() {
     
     setTimeout(() => {
       setIsWizardLoading(prev => {
-        if (prev) console.log("Wizard timeout - falling back to JSON");
+        if (prev) {
+          console.warn(`Wizard timeout for ${plugin.id} - falling back to JSON editor`);
+        }
         return false;
       });
-    }, 3000);
+    }, 5000);
   };
 
   const applyWizard = () => {

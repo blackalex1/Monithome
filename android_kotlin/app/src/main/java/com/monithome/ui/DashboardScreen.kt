@@ -16,6 +16,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.zIndex
 import com.monithome.data.PluginRepository
 import com.monithome.models.PluginInfo
 import com.monithome.network.SocketManager
@@ -24,78 +25,24 @@ import com.monithome.network.SocketManager
 @Composable
 fun DashboardScreen() {
     val uiConfigs by PluginRepository.uiConfigs.collectAsState()
+    LaunchedEffect(uiConfigs.size) {
+        android.util.Log.i("DashboardScreen", "uiConfigs changed! size: ${uiConfigs.size}")
+    }
     val currentLanguage by com.monithome.data.LanguageManager.currentLanguage.collectAsState()
     val translations by com.monithome.data.LanguageManager.translations.collectAsState()
+    val activeLyrics by PluginRepository.activeLyrics.collectAsState()
     val strings = com.monithome.data.Strings
 
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedBackground()
 
+        val systemStats by PluginRepository.getPluginStats("system_stats").collectAsState()
+        val isConnected by SocketManager.isConnected.collectAsState()
+        val hostname = systemStats["hostname"]?.toString() ?: "PC"
+        val osName = systemStats["os"]?.toString() ?: "Windows"
+
         Scaffold(
-            containerColor = Color.Transparent,
-            topBar = {
-                val systemStats by PluginRepository.getPluginStats("system_stats").collectAsState()
-                val isConnected by SocketManager.isConnected.collectAsState()
-                
-                val hostname = systemStats["hostname"]?.toString() ?: "PC"
-                val osName = systemStats["os"]?.toString() ?: "Windows"
-
-                Surface(
-                    color = Color.Transparent,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .height(56.dp)
-                            .padding(horizontal = 16.dp)
-                    ) {
-                        // Центр: Логотип
-                        Text(
-                            "MONITHOME",
-                            modifier = Modifier.align(Alignment.Center),
-                            style = MaterialTheme.typography.titleMedium.copy(
-                                fontWeight = FontWeight.Black,
-                                letterSpacing = 2.sp,
-                                color = Color.White
-                            )
-                        )
-
-                        // Право: Системная инфо и Статус
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.align(Alignment.CenterEnd)
-                        ) {
-                            Column(horizontalAlignment = Alignment.End) {
-                                Text(
-                                    hostname.uppercase(),
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontWeight = FontWeight.Bold,
-                                        color = MonitTheme.Primary,
-                                        letterSpacing = 1.sp
-                                    )
-                                )
-                                Text(
-                                    osName,
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontSize = 9.sp,
-                                        color = MonitTheme.TextSecondary
-                                    )
-                                )
-                            }
-                            
-                            // Индикатор статуса
-                            Box(
-                                modifier = Modifier
-                                    .size(8.dp)
-                                    .padding(start = 12.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isConnected) Color.Green else Color.Red)
-                            )
-                        }
-                    }
-                }
-            }
+            containerColor = Color.Transparent
         ) { padding ->
             if (uiConfigs.isEmpty()) {
                 Box(
@@ -113,7 +60,7 @@ fun DashboardScreen() {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 72.dp), // Увеличили верхний отступ для шапки
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(uiConfigs, key = { it.id ?: it.hashCode().toString() }) { plugin ->
@@ -122,12 +69,10 @@ fun DashboardScreen() {
                         val hasOtherUi = otherWidgets.isNotEmpty() || !plugin.actions.isNullOrEmpty()
                         
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            // Если есть медиа-виджет, рисуем его как отдельную карточку
                             if (hasMedia) {
                                 MediaWidget()
                             }
                             
-                            // Если есть другие виджеты в этом же плагине, рисуем их в обычной карточке
                             if (hasOtherUi) {
                                 AnimatedVisibility(
                                     visible = true,
@@ -143,6 +88,78 @@ fun DashboardScreen() {
                         Spacer(modifier = Modifier.height(100.dp))
                     }
                 }
+            }
+        }
+
+        // ШАПКА (полностью прозрачная, чтобы не создавать "плашку")
+        Surface(
+            color = Color.Transparent,
+            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(64.dp)
+                    .padding(horizontal = 16.dp)
+            ) {
+                // Центр: Логотип
+                Text(
+                    "MONITHOME",
+                    modifier = Modifier.align(Alignment.Center),
+                    style = MaterialTheme.typography.titleMedium.copy(
+                        fontWeight = FontWeight.Black,
+                        letterSpacing = 2.sp,
+                        color = Color.White
+                    )
+                )
+
+                // Право: Системная инфо и Статус
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.align(Alignment.CenterEnd)
+                ) {
+                    Column(horizontalAlignment = Alignment.End) {
+                        Text(
+                            hostname.uppercase(),
+                            style = MaterialTheme.typography.labelMedium.copy(
+                                fontWeight = FontWeight.Bold,
+                                color = MonitTheme.Primary,
+                                letterSpacing = 1.sp
+                            )
+                        )
+                        Text(
+                            osName,
+                            style = MaterialTheme.typography.labelSmall.copy(
+                                fontSize = 9.sp,
+                                color = MonitTheme.TextSecondary
+                            )
+                        )
+                    }
+                    
+                    Box(
+                        modifier = Modifier
+                            .padding(start = 12.dp)
+                            .size(8.dp)
+                            .clip(CircleShape)
+                            .background(if (isConnected) Color.Green else Color.Red)
+                    )
+                }
+            }
+        }
+
+        // ПОЛНОЭКРАННЫЙ ТЕКСТ ПЕСНИ (Поверх всего, с явным zIndex)
+        activeLyrics?.let { lyricsState ->
+            AnimatedVisibility(
+                visible = true,
+                enter = fadeIn(animationSpec = tween(500)),
+                exit = fadeOut(animationSpec = tween(500)),
+                modifier = Modifier.zIndex(10f)
+            ) {
+                LyricsFullscreenView(
+                    pluginId = lyricsState.pluginId,
+                    deviceId = lyricsState.deviceId,
+                    onDismiss = { PluginRepository.hideLyrics() }
+                )
             }
         }
     }

@@ -24,7 +24,7 @@ def parse_state(s):
 
     return {
         "volume": round(s.get("volume", 0) * 100),
-        "playing": s.get("playing", False),
+        "playing": s.get("playing", False) or p.get("status") == "playing",
         "title": title,
         "artist": artist,
         "cover": cover,
