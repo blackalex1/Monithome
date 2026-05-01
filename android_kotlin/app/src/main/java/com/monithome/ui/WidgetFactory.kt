@@ -31,8 +31,8 @@ fun WidgetRenderer(pluginId: String, widget: Widget) {
 
 @Composable
 fun PluginCard(plugin: PluginInfo) {
-    GlassCard(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
+    RGBCard(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
         cornerRadius = 28.dp
     ) {
         Text(
