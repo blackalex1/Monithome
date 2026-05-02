@@ -63,6 +63,7 @@ object SocketManager {
 
         try {
             _isConnecting.value = true
+            SocketDataHandler.reset() // Сбрасываем список зарегистрированных слушателей для нового сокета
             Log.i("SocketManager", "Connecting to: $finalUrl")
             
             val opts = IO.Options().apply {
@@ -82,6 +83,7 @@ object SocketManager {
             
             socket = IO.socket(finalUrl, opts)
             
+            socket?.off(Socket.EVENT_CONNECT)
             socket?.on(Socket.EVENT_CONNECT) {
                 _isConnected.value = true
                 _isConnecting.value = false
@@ -93,18 +95,21 @@ object SocketManager {
                 socket?.emit("authorize", authObj)
             }
 
+            socket?.off("authorized")
             socket?.on("authorized") {
                 socket?.emit("get_yandex_config")
                 // Запрашиваем полный конфиг сразу после авторизации
                 socket?.emit("get_manager_data")
             }
 
+            socket?.off(Socket.EVENT_DISCONNECT)
             socket?.on(Socket.EVENT_DISCONNECT) {
                 _isConnected.value = false
                 _isConnecting.value = false
                 Log.w("SocketManager", "Disconnected from server")
             }
 
+            socket?.off(Socket.EVENT_CONNECT_ERROR)
             socket?.on(Socket.EVENT_CONNECT_ERROR) { args ->
                 _isConnecting.value = false
                 val err = if (args != null && args.isNotEmpty()) args[0]?.toString() ?: "Unknown error" else "Unknown connection error"
@@ -180,7 +185,7 @@ object SocketManager {
             socket?.off("stats")
             socket?.on("stats") { args ->
                 val rawData = if (args.size > 1 && args[0] == "stats") args[1] else args[0]
-                android.util.Log.v("SocketManager", "Binary stats received, size: ${(rawData as? ByteArray)?.size ?: 0}")
+                // android.util.Log.v("SocketManager", "Binary stats received, size: ${(rawData as? ByteArray)?.size ?: 0}")
                 try {
                     val binaryData = rawData as? ByteArray ?: return@on
                     val statsMap = MessagePackDecoder.decode(binaryData)
@@ -188,7 +193,7 @@ object SocketManager {
                         @Suppress("UNCHECKED_CAST")
                         val actualStats = statsMap["stats"] as? Map<String, Any>
                         if (actualStats != null) {
-                            android.util.Log.v("SocketManager", "Stats keys: ${actualStats.keys}")
+                            // android.util.Log.v("SocketManager", "Stats keys: ${actualStats.keys}")
                             PluginRepository.bulkUpdate(actualStats)
                         }
                     }

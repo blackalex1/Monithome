@@ -15,10 +15,14 @@ object JsonParser {
             
             if (raw is JSONObject || raw is JSONArray) return raw
             
-            val str = raw.toString().trim()
-            return if (str.startsWith("{")) JSONObject(str)
-            else if (str.startsWith("[")) JSONArray(str)
-            else null
+            val str = raw.toString()
+            if (str.isEmpty()) return null
+            
+            return try {
+                if (str.startsWith("{")) JSONObject(str)
+                else if (str.startsWith("[")) JSONArray(str)
+                else null
+            } catch (e: Exception) { null }
         } catch (e: Exception) {
             return null
         }

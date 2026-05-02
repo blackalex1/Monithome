@@ -1,0 +1,17 @@
+psutil
+flask
+flask-socketio
+pyautogui
+flask-cors
+requests
+python-dotenv
+GPUtil
+zeroconf
+pycaw
+comtypes
+setuptools
+pywin32
+winsdk
+Pillow
+websockets
+eventlet

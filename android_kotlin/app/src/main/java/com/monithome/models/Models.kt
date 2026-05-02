@@ -66,3 +66,17 @@ data class LyricsViewState(
     val pluginId: String,
     val deviceId: String
 )
+
+data class MediaDevice(
+    val id: String? = null,
+    val name: String? = null,
+    val status: String? = null,
+    val title: String? = null,
+    val artist: String? = null,
+    val cover: String? = null,
+    val playing: Boolean? = false,
+    val progress: Double? = 0.0,
+    val duration: Double? = 0.0,
+    val volume: Int? = 0,
+    @SerializedName("local_last_update") val localLastUpdate: Double? = 0.0
+)

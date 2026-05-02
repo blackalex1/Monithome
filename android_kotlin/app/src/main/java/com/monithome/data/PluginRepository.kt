@@ -14,6 +14,12 @@ import kotlinx.coroutines.*
  */
 object PluginRepository {
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+    private val gson = com.google.gson.Gson()
+    
+    // Троттлинг обновлений для экономии ресурсов
+    private val lastUpdateTimes = ConcurrentHashMap<String, Long>()
+    private const val MIN_UPDATE_INTERVAL_MS = 100 // Максимум 10 обновлений в секунду на плагин
+    
     // 1. Поля и свойства (всегда наверху)
     private val _uiConfigs = MutableStateFlow<List<PluginInfo>>(emptyList())
     val uiConfigs: StateFlow<List<PluginInfo>> = _uiConfigs.asStateFlow()
@@ -64,6 +70,7 @@ object PluginRepository {
     // 3. Методы обновления данных
     fun bulkUpdate(updates: Map<String, Any>) {
         repositoryScope.launch {
+            // ОПТИМИЗАЦИЯ: Обрабатываем весь пакет в одной корутине
             updates.forEach { (pId, data) ->
                 if (pId == "_server_time") return@forEach
                 if (data is Map<*, *>) {
@@ -158,22 +165,37 @@ object PluginRepository {
             }
         }
 
-        // СЛИЯНИЕ ДАННЫХ: Объединяем новые данные со старыми, чтобы частичные обновления не затирали обложку и метаданные
+        // ТРОТТЛИНГ: Пропускаем слишком частые обновления (кроме критических событий)
+        val now = System.currentTimeMillis()
+        val lastTime = lastUpdateTimes[pluginId] ?: 0L
+        if (now - lastTime < MIN_UPDATE_INTERVAL_MS && !finalData.containsKey("devices")) {
+            return
+        }
+        lastUpdateTimes[pluginId] = now
+
+        // СЛИЯНИЕ ДАННЫХ: Объединяем новые данные со старыми
         val oldData = flow.value
-        val mergedData = oldData.toMutableMap().apply {
-            putAll(finalData)
-            put("local_last_update", System.currentTimeMillis() / 1000.0)
+        
+        // ОПТИМИЗАЦИЯ ОБЛОЖЕК: Если обложка та же самая - не обновляем её
+        val filteredData = if (finalData.containsKey("cover") && oldData.containsKey("cover")) {
+            if (finalData["cover"] == oldData["cover"]) {
+                finalData.filterKeys { it != "cover" }
+            } else finalData
+        } else finalData
+
+        if (filteredData.isEmpty()) return
+
+        // Проверяем, изменилось ли что-то в новых данных относительно старых
+        val hasChanges = filteredData.any { (k, v) -> 
+            k != "local_last_update" && oldData[k] != v 
         }
         
-        // Обновляем только если данные реально изменились (не считая времени)
-        // Для сравнения создаем версию без времени, чтобы не триггерить Flow каждую секунду только из-за метки
-        val oldDataNoTime = oldData.filterKeys { it != "local_last_update" }
-        val newDataNoTime = mergedData.filterKeys { it != "local_last_update" }
-
-        if (oldDataNoTime != newDataNoTime) {
+        if (hasChanges) {
+            val mergedData = HashMap<String, Any>(oldData).apply { putAll(filteredData) }
+            mergedData["local_last_update"] = now / 1000.0
             flow.value = mergedData
+            updateHistory(pluginId, filteredData)
         }
-        updateHistory(pluginId, finalData)
     }
 
     fun updateDirectStatus(pluginId: String, deviceId: String, status: Map<String, Any>) {
@@ -295,7 +317,7 @@ object PluginRepository {
                     
                     val deviceId = if (lyricsObj.has("device_id")) lyricsObj.getString("device_id") else "all"
                     val actualData = if (lyricsObj.has("data")) lyricsObj.get("data").toString() else lyricsObj.toString()
-                    val lyricsData = Gson().fromJson(actualData, LyricsData::class.java)
+                    val lyricsData = gson.fromJson(actualData, LyricsData::class.java)
                     
                     val processed = processLyricsInternal(lyricsData)
                     val currentMap = _lyrics.value.toMutableMap()
@@ -324,7 +346,10 @@ object PluginRepository {
                                 devices[idx] = updated
                                 flow.value = flow.value.toMutableMap().apply { put("devices", devices) }
                             } else {
-                                pendingCovers["$pluginId:$deviceId"] = cover
+                                // ОПТИМИЗАЦИЯ: Ограничиваем размер очереди обложек, чтобы не забить память если device_id не найден
+                                if (pendingCovers.size < 20) {
+                                    pendingCovers["$pluginId:$deviceId"] = cover
+                                }
                             }
                         } else {
                             updateStats(pluginId, mapOf("cover" to cover))

@@ -281,7 +281,7 @@ class PluginManager:
         for p_id in sorted_ids:
             p_data = self.discovered[p_id]
             plugin = self.plugins.get(p_id)
-            p_dir = os.path.dirname(p_data.get('path', ''))
+            p_dir = p_data.get('path', '')
             
             if plugin:
                 # 1. Если плагин запущен, берем его актуальные (локализованные) данные
@@ -294,15 +294,21 @@ class PluginManager:
                 # 2. Если плагин не запущен, берем из обнаруженных и переводим вручную
                 item = p_data.copy()
                 cfg = item.get("config", {})
-                item["name"] = i18n_engine.get_string(p_id, "plugin_name", p_dir, item.get("name"))
-                item["description"] = i18n_engine.get_string(p_id, "plugin_description", p_dir, item.get("description"))
+                
+                # Подготавливаем базовые поля из конфига
+                item["name"] = cfg.get("name") or item.get("name")
+                item["description"] = cfg.get("description") or item.get("description")
                 item["version"] = cfg.get("version", "1.0.0")
                 item["author_name"] = cfg.get("author_name")
                 item["author"] = cfg.get("author") or cfg.get("author_url")
                 item["dependencies"] = cfg.get("dependencies", [])
                 item["config"] = cfg
             
-            # Применяем рекурсивный перевод для всех вложенных структур (если есть)
+            # Применяем рекурсивный перевод (он сам найдет "name" и "description" и заменит на ключи из locales)
+            # ВАЖНО: Мы сначала пробуем перевести через спец-ключи plugin_name/plugin_description
+            item["name"] = i18n_engine.get_string(p_id, "plugin_name", p_dir, item.get("name"))
+            item["description"] = i18n_engine.get_string(p_id, "plugin_description", p_dir, item.get("description"))
+            
             item = self._translate_recursive(item, p_id, p_dir)
             
             # Развертываем UI-критичные поля из конфига в корень (для совместимости с Android и браузером)

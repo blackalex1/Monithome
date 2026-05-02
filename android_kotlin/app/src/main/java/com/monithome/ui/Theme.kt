@@ -222,7 +222,7 @@ fun AnimatedBackground() {
                 val w = size.width
                 val h = size.height
                 
-                // Spot 1: Cyan
+                // Spot 1: Cyan (ОПТИМИЗАЦИЯ: Оставили 2 пятна вместо 3 для разгрузки GPU)
                 drawCircle(
                     brush = Brush.radialGradient(
                         colors = cyanColors,
@@ -246,19 +246,6 @@ fun AnimatedBackground() {
                         radius = w * 0.9f
                     ),
                     radius = w * 0.9f
-                )
-
-                // Spot 3: Blue
-                drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = blueColors,
-                        center = Offset(
-                            w * (0.5f + 0.4f * kotlin.math.sin(time * 2 * Math.PI.toFloat() * 0.5f)),
-                            h * (0.5f + 0.4f * kotlin.math.cos(time * 2 * Math.PI.toFloat() * 0.5f))
-                        ),
-                        radius = w * 1.1f
-                    ),
-                    radius = w * 1.1f
                 )
             }
     )

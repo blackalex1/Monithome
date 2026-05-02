@@ -8,6 +8,7 @@
         android:roundIcon="@mipmap/ic_launcher"
         android:label="MonitHome"
         android:supportsRtl="true"
+        android:largeHeap="true"
         android:theme="@style/Theme.MonitHomeNative"
         android:usesCleartextTraffic="true">
         

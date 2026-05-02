@@ -125,8 +125,7 @@ class Plugin(BasePlugin):
         
         self.save_config({
             "selected_device_ids": selected_devices,
-            "tablet_control": tablet_control,
-            "dependencies": ["yandex_lyrics"]
+            "tablet_control": tablet_control
         })
         
         self.manager.reload_plugin(self.p_id)

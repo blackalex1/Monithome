@@ -61,8 +61,11 @@ fun DashboardScreen() {
                     }
 
                     items(uiConfigs, key = { it.id ?: it.hashCode().toString() }) { plugin ->
-                        val otherWidgets = plugin.widgets?.filter { it.type != "unified_media" } ?: emptyList()
-                        val hasOtherUi = otherWidgets.isNotEmpty() || !plugin.actions.isNullOrEmpty()
+                        // ОПТИМИЗАЦИЯ: Фильтруем виджеты один раз для каждого плагина
+                        val hasOtherUi = remember(plugin) {
+                            val otherWidgets = plugin.widgets?.filter { it.type != "unified_media" } ?: emptyList()
+                            otherWidgets.isNotEmpty() || !plugin.actions.isNullOrEmpty()
+                        }
                         
                         if (hasOtherUi) {
                             AnimatedVisibility(

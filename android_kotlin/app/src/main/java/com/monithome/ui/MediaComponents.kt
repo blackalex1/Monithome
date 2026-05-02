@@ -44,30 +44,34 @@ fun MediaWidget() {
     
     if (mediaConfigs.isEmpty()) return
 
-    // 1. Источники (Оптимизировано: пересчет только при реальном изменении списка)
-    val sources by produceState<List<FlatSource>>(initialValue = emptyList(), allConfigs) {
-        val flows = mediaConfigs.map { config -> PluginRepository.getPluginStats(config.id ?: "") }
+    // 1. Источники (Оптимизировано: пересчет только при изменении списка устройств)
+    val sources by produceState<List<FlatSource>>(initialValue = emptyList(), mediaConfigs) {
+        // Подписываемся ТОЛЬКО на список устройств каждого медиа-плагина
+        val flows = mediaConfigs.map { config -> 
+            PluginRepository.getPluginStats(config.id ?: "").map { stats ->
+                stats["devices"] to (stats["device_name"] ?: config.name)
+            }.distinctUntilChanged()
+        }
+        
         kotlinx.coroutines.flow.combine(flows) { statsArray ->
             val list = mutableListOf<FlatSource>()
-            statsArray.forEachIndexed { index, stats ->
+            statsArray.forEachIndexed { index, (devicesRaw, deviceName) ->
                 val config = mediaConfigs[index]
                 val pId = config.id ?: ""
                 @Suppress("UNCHECKED_CAST")
-                val devices = stats["devices"] as? List<Map<String, Any>>
+                val devices = devicesRaw as? List<Map<String, Any>>
                 
                 if (!devices.isNullOrEmpty()) {
                     devices.forEach { dev ->
-                        val dName = dev["name"]?.toString() ?: config.name ?: (if (pId == "pc_media") "PC Media" else "Device")
+                        val dName = dev["name"]?.toString() ?: deviceName?.toString() ?: (if (pId == "pc_media") "PC Media" else "Device")
                         list.add(FlatSource(pId, dev["id"]?.toString() ?: "all", dName))
                     }
                 } else {
-                    // Всегда добавляем плагин, даже если stats пустые, чтобы он не пропадал из списка
-                    val dName = stats["device_name"]?.toString() ?: config.name ?: (if (pId == "pc_media") "PC Media" else "Media")
+                    val dName = deviceName?.toString() ?: (if (pId == "pc_media") "PC Media" else "Media")
                     list.add(FlatSource(pId, "all", dName))
                 }
             }
             list.sortByDescending { it.pluginId == "pc_media" }
-            android.util.Log.i("MediaWidget", "Discovered sources: ${list.joinToString { "${it.pluginId}:${it.deviceId}" }}")
             list
         }.distinctUntilChanged { old, new -> 
             old.size == new.size && old.zip(new).all { (o, n) -> 
@@ -95,42 +99,69 @@ fun MediaWidget() {
     
     if (currentSource == null) return
 
-    // 2. Изолируем поток данных для текущего источника
-    val sourceStatsFlow = remember(currentSource) { PluginRepository.getPluginStats(currentSource.pluginId) }
-    val allStats by sourceStatsFlow.collectAsState()
-
-    val currentStats = remember(allStats, currentSource) {
-        if (currentSource.deviceId != "all") {
-            @Suppress("UNCHECKED_CAST")
-            (allStats["devices"] as? List<Map<String, Any>>)
-                ?.find { it["id"] == currentSource.deviceId } ?: emptyMap()
-        } else {
-            allStats
-        }
+    // 2. Изолируем поток данных для текущего источника (устройства)
+    val deviceStatsFlow = remember(currentSource) {
+        PluginRepository.getPluginStats(currentSource.pluginId).map { stats ->
+            if (currentSource.deviceId != "all") {
+                @Suppress("UNCHECKED_CAST")
+                (stats["devices"] as? List<Map<String, Any>>)
+                    ?.find { it["id"] == currentSource.deviceId } ?: emptyMap()
+            } else {
+                stats
+            }
+        }.distinctUntilChanged()
     }
+
+    // 3. Точечные подписки для минимизации рекомпозиций всего виджета
+    val trackTitle by remember(deviceStatsFlow) {
+        deviceStatsFlow.map { (it["title"] as? String) ?: (it["track_name"] as? String) ?: "" }.distinctUntilChanged()
+    }.collectAsState(initial = "")
+
+    val trackArtist by remember(deviceStatsFlow) {
+        deviceStatsFlow.map { (it["artist"] as? String) ?: (it["subtitle"] as? String) ?: "" }.distinctUntilChanged()
+    }.collectAsState(initial = "")
+
+    val isPlaying by remember(deviceStatsFlow) {
+        deviceStatsFlow.map { it["playing"] as? Boolean ?: false }.distinctUntilChanged()
+    }.collectAsState(initial = false)
+
+    val coverBase64 by remember(deviceStatsFlow) {
+        deviceStatsFlow.map { it["cover"] as? String ?: "" }.distinctUntilChanged()
+    }.collectAsState(initial = "")
+
+    val playbackData by remember(deviceStatsFlow) {
+        deviceStatsFlow.map { stats ->
+            Triple(
+                (stats["progress"] as? Number)?.toDouble() ?: 0.0,
+                (stats["duration"] as? Number)?.toDouble() ?: 0.0,
+                (stats["local_last_update"] as? Number)?.toDouble() ?: (System.currentTimeMillis() / 1000.0)
+            )
+        }.distinctUntilChanged()
+    }.collectAsState(initial = Triple(0.0, 0.0, 0.0))
+
+    val volume by remember(deviceStatsFlow) {
+        deviceStatsFlow.map { (it["volume"] as? Number)?.toInt() ?: 0 }.distinctUntilChanged()
+    }.collectAsState(initial = 0)
 
     GlassCard(modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp), cornerRadius = 32.dp) {
         if (sources.size > 1) {
             MediaSourceSelector(sources, selectedSourceKey) { selectedSourceKey = it }
         }
 
-        MediaTrackInfo(currentSource, currentStats)
+        MediaTrackInfo(currentSource, trackTitle, trackArtist, isPlaying, coverBase64)
 
         // Прогресс (Изолированная зона с 10Hz обновлением)
-        PlaybackSection(currentStats)
+        PlaybackSection(playbackData, isPlaying)
 
         // Громкость (Изолированная зона)
-        MediaVolumeControl(currentSource, currentStats)
+        MediaVolumeControl(currentSource, volume)
     }
 }
 
 @Composable
-fun MediaTrackInfo(currentSource: FlatSource, stats: Map<String, Any>) {
-    val title = remember(stats["title"], stats["track_name"]) { (stats["title"] as? String) ?: (stats["track_name"] as? String) ?: "" }
-    val artist = remember(stats["artist"], stats["subtitle"]) { (stats["artist"] as? String) ?: (stats["subtitle"] as? String) ?: "" }
-    val isPlaying = stats["playing"] as? Boolean ?: false
-    val coverBase64 = stats["cover"] as? String ?: ""
-    val isLyricsActive by remember { derivedStateOf { PluginRepository.uiConfigs.value.any { it.id == "yandex_lyrics" && it.active == true } } }
+fun MediaTrackInfo(currentSource: FlatSource, title: String, artist: String, isPlaying: Boolean, coverBase64: String) {
+    val allConfigs by PluginRepository.uiConfigs.collectAsState()
+    val isLyricsActive by remember { derivedStateOf { allConfigs.any { it.id == "yandex_lyrics" && it.active == true } } }
 
     Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.padding(top = 8.dp)) {
         MediaCover(coverBase64)
@@ -152,16 +183,18 @@ fun MediaCover(cover: String) {
     ) {
         if (cover.isNotEmpty()) {
             val context = LocalContext.current
-            val model = remember(cover) {
-                if (cover.startsWith("http")) cover
-                else if (cover.startsWith("//")) "https:$cover"
-                else {
-                    try {
-                        val clean = if (cover.contains(",")) cover.substringAfter(",") else cover
-                        android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
-                    } catch (e: Exception) {
-                        android.util.Log.e("MediaCover", "Failed to decode base64 cover")
-                        null
+            val model by produceState<Any?>(initialValue = null, cover) {
+                value = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                    if (cover.startsWith("http")) cover
+                    else if (cover.startsWith("//")) "https:$cover"
+                    else {
+                        try {
+                            val clean = if (cover.contains(",")) cover.substringAfter(",") else cover
+                            android.util.Base64.decode(clean, android.util.Base64.DEFAULT)
+                        } catch (e: Exception) {
+                            android.util.Log.e("MediaCover", "Failed to decode base64 cover")
+                            null
+                        }
                     }
                 }
             }
@@ -187,11 +220,8 @@ fun MediaCover(cover: String) {
 }
 
 @Composable
-fun PlaybackSection(stats: Map<String, Any>) {
-    val isPlaying = stats["playing"] as? Boolean ?: false
-    val baseProgress = (stats["progress"] as? Number)?.toDouble() ?: 0.0
-    val duration = (stats["duration"] as? Number)?.toDouble() ?: 0.0
-    val lastUpdate = (stats["local_last_update"] as? Number)?.toDouble() ?: (System.currentTimeMillis() / 1000.0)
+fun PlaybackSection(playbackData: Triple<Double, Double, Double>, isPlaying: Boolean) {
+    val (baseProgress, duration, lastUpdate) = playbackData
     
     var interpolatedProgress by remember { mutableDoubleStateOf(baseProgress) }
     
@@ -313,8 +343,7 @@ fun MediaControls(currentSource: FlatSource, isPlaying: Boolean, isLyricsActive:
 }
 
 @Composable
-fun MediaVolumeControl(currentSource: FlatSource, stats: Map<String, Any>) {
-    val volume = (stats["volume"] as? Number)?.toInt() ?: 0
+fun MediaVolumeControl(currentSource: FlatSource, volume: Int) {
     val targetId = currentSource.deviceId
     var localVolume by remember { mutableFloatStateOf(volume.toFloat()) }
     var lastInteractionTime by remember { mutableLongStateOf(0L) }

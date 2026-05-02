@@ -1,0 +1,18 @@
+{
+  "expo": {
+    "name": "Monithome",
+    "slug": "monithome-native",
+    "version": "1.0.0",
+    "orientation": "landscape",
+    "userInterfaceStyle": "dark",
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "softwareKeyboardLayoutMode": "pan"
+    }
+  }
+}

@@ -111,6 +111,11 @@ object SocketDataHandler {
 
     private val registeredPlugins = mutableSetOf<String>()
 
+    fun reset() {
+        registeredPlugins.clear()
+        android.util.Log.i("SocketDataHandler", "Registered plugins cleared for new connection")
+    }
+
     fun registerPluginListeners(plugins: List<PluginInfo>) {
         val socket = SocketManager.getSocket()
         if (socket == null) {

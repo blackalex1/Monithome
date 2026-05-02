@@ -176,20 +176,14 @@ fun ChartWidget(pluginId: String, widget: Widget) {
                 // 3. Draw Gradient Fill
                 drawPath(path = fillPath, brush = fillBrush)
 
-                // 4. Draw Neon Outer Glow (Using cached androidPath)
+                // 4. Draw Neon Outer Glow (Optimized: use native Compose drawPath instead of native canvas)
                 val glowStrokeWidth = 5.dp.toPx()
-                drawIntoCanvas { canvas ->
-                    nativePaint.strokeWidth = glowStrokeWidth
-                    nativePaint.color = baseColor.toArgb()
-                    nativePaint.alpha = 80
-                    
-                    // Синхронизируем нативный путь без создания нового объекта
-                    androidPath.rewind()
-                    androidPath.addPath(chartPath.asAndroidPath()) 
-                    // К сожалению, asAndroidPath() в Compose всё равно возвращает обертку, 
-                    // но это всё же лучше чем создавать вручную каждый раз.
-                    canvas.nativeCanvas.drawPath(androidPath, nativePaint)
-                }
+                drawPath(
+                    path = chartPath,
+                    color = baseColor,
+                    alpha = 0.3f,
+                    style = Stroke(width = glowStrokeWidth, cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
 
                 // 5. Draw Main Neon Line
                 drawPath(
