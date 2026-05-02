@@ -7,10 +7,25 @@ from flask import request
 from flask_socketio import emit, join_room
 from config import get_master_config, save_master_config
 from manager import plugins
+from crypto_utils import CryptoUtils
 
 logger = logging.getLogger("CORE")
 executor = ThreadPoolExecutor(max_workers=10)
 pending_pairings = {}
+
+def _decrypt_if_needed(data):
+    """Расшифровывает данные, если они пришли в поле 'encrypted'"""
+    if isinstance(data, dict) and "encrypted" in data:
+        try:
+            from config import get_master_config
+            key = get_master_config().get("encryption_key")
+            if key:
+                import json
+                decrypted_str = CryptoUtils.decrypt(data["encrypted"], key)
+                return json.loads(decrypted_str)
+        except Exception as e:
+            logger.error(f"Failed to decrypt incoming data: {e}")
+    return data
 
 def register_socket_events(socketio, p_manager):
     @socketio.on('connect')
@@ -23,20 +38,40 @@ def register_socket_events(socketio, p_manager):
         master = get_master_config()
         is_localhost = request.remote_addr in ['127.0.0.1', 'localhost', '::1']
         trusted = master.get("trusted_tokens", [])
+        supports_encryption = False
+        if auth and isinstance(auth, dict):
+            se_raw = auth.get('supports_encryption', False)
+            supports_encryption = str(se_raw).lower() == 'true'
         
         if is_localhost or (token in trusted and token is not None):
-            logger.info(f"Authorized device connected (sid: {sid})")
             join_room('authorized')
+            if supports_encryption:
+                join_room('secure_clients')
+                logger.info(f"Secure client connected (sid: {sid})")
+            else:
+                join_room('plain_clients')
+                logger.info(f"Plain client connected (sid: {sid})")
+
+            key = master.get("encryption_key")
+            if not key:
+                from crypto_utils import CryptoUtils
+                key = CryptoUtils.generate_key()
+                master["encryption_key"] = key
+                save_master_config(master)
             
-            # Подтверждаем успех авторизации для планшета
-            emit('auth_success', {'token': token})
+            # Подтверждаем успех авторизации
+            emit('auth_success', {
+                'token': token,
+                'encryption_key': key
+            })
+            logger.info(f"Auth success sent to {sid} (Key sent: {key is not None})")
             
             # Отправляем начальный конфиг
             send_ui_config(socketio, p_manager, sid)
             p_manager.emit_event("client_connected", sid)
             send_stats_to_sid(socketio, sid, p_manager)
             
-            # Отправляем все "тяжелые" начальные данные (обложки, тексты и т.д.)
+            # Отправляем все "тяжелые" начальные данные
             threading.Timer(1.5, send_initial_plugin_data, args=(socketio, sid, p_manager)).start()
             return True
         
@@ -51,13 +86,27 @@ def register_socket_events(socketio, p_manager):
     def handle_authorize(data):
         sid = request.sid
         token = data.get('token')
+        se_raw = data.get('supports_encryption', False)
+        supports_encryption = str(se_raw).lower() == 'true'
+        
         master = get_master_config()
         trusted = master.get("trusted_tokens", [])
         
         if token in trusted and token is not None:
-            logger.info(f"Device {sid} authorized via 'authorize' event")
-            join_room('authorized', namespace='/')
-            emit('auth_success', {'token': token})
+            join_room('authorized')
+            if supports_encryption:
+                join_room('secure_clients')
+                logger.info(f"Secure client authorized (sid: {sid})")
+            else:
+                join_room('plain_clients')
+                logger.info(f"Plain client authorized (sid: {sid})")
+            
+            key = master.get("encryption_key")
+            emit('auth_success', {
+                'token': token,
+                'encryption_key': key
+            })
+            logger.info(f"Auth success sent via 'authorize' (Key sent: {key is not None})")
             p_manager.emit_event("client_connected", sid)
             send_stats_to_sid(socketio, sid, p_manager)
         else:
@@ -149,7 +198,12 @@ def register_socket_events(socketio, p_manager):
             save_master_config(master)
             join_room('authorized')
             del pending_pairings[sid]
-            emit('auth_success', {'token': new_token})
+            key = master.get("encryption_key")
+            emit('auth_success', {
+                'token': new_token,
+                'encryption_key': key
+            })
+            logger.info(f"Auth success sent via 'auth_attempt' (Key sent: {key is not None})")
             logger.info(f"Device {sid} authorized successfully")
             socketio.emit('pairing_complete', {'sid': sid})
             emit('manager_data', {
@@ -185,15 +239,18 @@ def register_socket_events(socketio, p_manager):
 
     @socketio.on('media_command')
     def handle_media_command(data):
+        sid = request.sid
         p_id = data.get('plugin_id')
         action = data.get('action')
         target = data.get('target', 'all')
+        cmd_data = _decrypt_if_needed(data.get('data'))
         if p_id in plugins:
             p_instance = plugins[p_id]
-            executor.submit(p_instance.handle_command, target, action)
+            executor.submit(p_instance.handle_command, sid, target, action, cmd_data)
 
     @socketio.on('plugin_command')
     def handle_plugin_command(data):
+        sid = request.sid
         p_id = data.get('plugin_id')
         action = data.get('action')
         p_instance = plugins.get(p_id)
@@ -206,17 +263,18 @@ def register_socket_events(socketio, p_manager):
         
         if p_instance:
             target = data.get('target', 'all')
-            cmd_data = data.get('data')
-            executor.submit(p_instance.handle_command, target, action, cmd_data)
+            cmd_data = _decrypt_if_needed(data.get('data'))
+            executor.submit(p_instance.handle_command, sid, target, action, cmd_data)
 
     @socketio.on('apply_plugin_wizard')
     def handle_apply_wizard(data):
+        sid = request.sid
         p_id = data.get('plugin_id')
         selections = data.get('selections', [])
         if p_id in plugins:
             p_instance = plugins[p_id]
             # Передаем в плагин как команду сохранения
-            executor.submit(p_instance.handle_command, 'pc', 'handle_wizard', selections)
+            executor.submit(p_instance.handle_command, sid, 'pc', 'handle_wizard', selections)
 
     @socketio.on('disconnect')
     def handle_disconnect():
@@ -253,4 +311,5 @@ def send_initial_plugin_data(socketio, sid, p_manager):
         event_name = e.get("event")
         data = e.get("data")
         if p_id and event_name:
-            socketio.emit(f'plugin_event:{p_id}', {'event': event_name, 'data': data}, room=sid)
+            # Используем наш универсальный метод для соблюдения всех правил (шифрование, комнаты, форматы)
+            p_manager.emit_to_plugin_ui(p_id, event_name, data, sid=sid)

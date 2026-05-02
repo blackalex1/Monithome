@@ -24,19 +24,15 @@ import com.monithome.network.SocketManager
 @Composable
 fun DashboardScreen() {
     val uiConfigs by PluginRepository.uiConfigs.collectAsState()
-    LaunchedEffect(uiConfigs.size) {
-        android.util.Log.i("DashboardScreen", "uiConfigs changed! size: ${uiConfigs.size}")
+    LaunchedEffect(uiConfigs) {
+        val ids = uiConfigs.map { it.id }
+        android.util.Log.i("DashboardScreen", "uiConfigs changed! size: ${uiConfigs.size}, ids: $ids")
     }
     val activeLyrics by PluginRepository.activeLyrics.collectAsState()
     val strings = com.monithome.data.Strings
 
     Box(modifier = Modifier.fillMaxSize()) {
         AnimatedBackground()
-
-        val systemStats by PluginRepository.getPluginStats("system_stats").collectAsState()
-        val isConnected by SocketManager.isConnected.collectAsState()
-        val hostname = systemStats["hostname"]?.toString() ?: "PC"
-        val osName = systemStats["os"]?.toString() ?: "Windows"
 
         Scaffold(
             containerColor = Color.Transparent
@@ -60,27 +56,20 @@ fun DashboardScreen() {
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 72.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
-                    val firstMediaPluginId = uiConfigs.find { p -> 
-                        p.widgets?.any { w -> w.type == "unified_media" } == true 
-                    }?.id
+                    item {
+                        MediaWidget()
+                    }
 
                     items(uiConfigs, key = { it.id ?: it.hashCode().toString() }) { plugin ->
-                        val isFirstMedia = plugin.id == firstMediaPluginId
                         val otherWidgets = plugin.widgets?.filter { it.type != "unified_media" } ?: emptyList()
                         val hasOtherUi = otherWidgets.isNotEmpty() || !plugin.actions.isNullOrEmpty()
                         
-                        Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            if (isFirstMedia) {
-                                MediaWidget()
-                            }
-                            
-                            if (hasOtherUi) {
-                                AnimatedVisibility(
-                                    visible = true,
-                                    enter = fadeIn() + expandVertically()
-                                ) {
-                                    PluginCard(plugin)
-                                }
+                        if (hasOtherUi) {
+                            AnimatedVisibility(
+                                visible = true,
+                                enter = fadeIn() + expandVertically()
+                            ) {
+                                PluginCard(plugin)
                             }
                         }
                     }
@@ -92,61 +81,12 @@ fun DashboardScreen() {
             }
         }
 
-        Surface(
-            color = Color.Transparent,
-            modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
-        ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(64.dp)
-                    .padding(horizontal = 16.dp)
-            ) {
-                Text(
-                    "MONITHOME",
-                    modifier = Modifier.align(Alignment.Center),
-                    style = MaterialTheme.typography.titleMedium.copy(
-                        fontWeight = FontWeight.Black,
-                        letterSpacing = 2.sp,
-                        color = Color.White
-                    )
-                )
-
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    modifier = Modifier.align(Alignment.CenterEnd)
-                ) {
-                    Column(horizontalAlignment = Alignment.End) {
-                        Text(
-                            hostname.uppercase(),
-                            style = MaterialTheme.typography.labelMedium.copy(
-                                fontWeight = FontWeight.Bold,
-                                color = MonitTheme.Primary,
-                                letterSpacing = 1.sp
-                            )
-                        )
-                        Text(
-                            osName,
-                            style = MaterialTheme.typography.labelSmall.copy(
-                                fontSize = 9.sp,
-                                color = MonitTheme.TextSecondary
-                            )
-                        )
-                    }
-                    
-                    Box(
-                        modifier = Modifier
-                            .padding(start = 12.dp)
-                            .size(8.dp)
-                            .clip(CircleShape)
-                            .background(if (isConnected) Color.Green else Color.Red)
-                    )
-                }
-            }
-        }
+        // ИЗОЛИРОВАННАЯ ВЕРХНЯЯ ПАНЕЛЬ (не дергает весь экран при обновлении статов)
+        DashboardTopBar()
 
         // ПОЛНОЭКРАННЫЙ ТЕКСТ ПЕСНИ (Поверх всего, с явным zIndex)
         activeLyrics?.let { lyricsState ->
+            android.util.Log.d("LyricsPerf", "activeLyrics is SET: ${lyricsState.pluginId}:${lyricsState.deviceId}")
             AnimatedVisibility(
                 visible = true,
                 enter = fadeIn(animationSpec = tween(500)),
@@ -157,6 +97,68 @@ fun DashboardScreen() {
                     pluginId = lyricsState.pluginId,
                     deviceId = lyricsState.deviceId,
                     onDismiss = { PluginRepository.hideLyrics() }
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun DashboardTopBar() {
+    val systemStats by PluginRepository.getPluginStats("system_stats").collectAsState()
+    val isConnected by SocketManager.isConnected.collectAsState()
+    
+    val hostname = remember(systemStats) { systemStats["hostname"]?.toString() ?: "PC" }
+    val osName = remember(systemStats) { systemStats["os"]?.toString() ?: "Windows" }
+
+    Surface(
+        color = Color.Transparent,
+        modifier = Modifier.fillMaxWidth()
+    ) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(64.dp)
+                .padding(horizontal = 16.dp)
+        ) {
+            Text(
+                "MONITHOME",
+                modifier = Modifier.align(Alignment.Center),
+                style = MaterialTheme.typography.titleMedium.copy(
+                    fontWeight = FontWeight.Black,
+                    letterSpacing = 2.sp,
+                    color = Color.White
+                )
+            )
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.align(Alignment.CenterEnd)
+            ) {
+                Column(horizontalAlignment = Alignment.End) {
+                    Text(
+                        hostname.uppercase(),
+                        style = MaterialTheme.typography.labelMedium.copy(
+                            fontWeight = FontWeight.Bold,
+                            color = MonitTheme.Primary,
+                            letterSpacing = 1.sp
+                        )
+                    )
+                    Text(
+                        osName,
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = 9.sp,
+                            color = MonitTheme.TextSecondary
+                        )
+                    )
+                }
+                
+                Box(
+                    modifier = Modifier
+                        .padding(start = 12.dp)
+                        .size(8.dp)
+                        .clip(CircleShape)
+                        .background(if (isConnected) Color.Green else Color.Red)
                 )
             }
         }

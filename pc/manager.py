@@ -353,8 +353,50 @@ class PluginManager:
 
     def emit_to_plugin_ui(self, p_id, event, data, sid=None):
         """Метод для плагинов: отправка события в UI (может быть адресной)"""
-        room = sid if sid else 'authorized'
-        self.socketio.emit(f'plugin_event:{p_id}', {'event': event, 'data': data}, room=room, namespace='/')
+        
+        # Подготавливаем зашифрованную версию (только для yandex_config)
+        encrypted_data = None
+        if event == "yandex_config" and data:
+            from config import get_master_config
+            key = get_master_config().get("encryption_key")
+            if key:
+                from crypto_utils import CryptoUtils
+                import json
+                try:
+                    raw_data = json.dumps(data)
+                    encrypted_data = {"encrypted": CryptoUtils.encrypt(raw_data, key)}
+                except Exception as e:
+                    self.log("CORE", f"Failed to encrypt sensitive data: {e}", level="error")
+
+        # 1. Отправка конкретному SID
+        if sid:
+            # Для PC GUI - прямое событие.
+            local_payload = data.copy() if isinstance(data, dict) else data
+            if event == "wizard_data" and isinstance(local_payload, dict):
+                local_payload["plugin_id"] = p_id
+            self.socketio.emit(event, local_payload, room=sid, namespace='/')
+            
+            # Для мобильного приложения - обернутое
+            payload = encrypted_data if encrypted_data else data
+            self.socketio.emit(f'plugin_event:{p_id}', {'event': event, 'data': payload}, room=sid, namespace='/')
+            return
+
+        # 2. Массовая рассылка (Broadcast)
+        # В локальный интерфейс ПК (local_ui) - ВСЕГДА ПРЯМОЕ СОБЫТИЕ (как раньше)
+        # Добавляем plugin_id для wizard_data для совместимости
+        local_payload = data.copy() if isinstance(data, dict) else data
+        if event == "wizard_data" and isinstance(local_payload, dict):
+            local_payload["plugin_id"] = p_id
+            
+        self.socketio.emit(event, local_payload, room='local_ui', namespace='/')
+        
+        # Для удаленных устройств - обернутое и/или зашифрованное
+        if event == "yandex_config":
+            if encrypted_data:
+                self.socketio.emit(f'plugin_event:{p_id}', {'event': event, 'data': encrypted_data}, room='secure_clients', namespace='/')
+        else:
+            # Для всех остальных событий (включая wizard_data для планшета)
+            self.socketio.emit(f'plugin_event:{p_id}', {'event': event, 'data': data}, room='authorized', namespace='/')
 
     def _translate_recursive(self, data, p_id, plugin_dir):
         """Рекурсивный перевод всех строковых значений в словаре/списке"""

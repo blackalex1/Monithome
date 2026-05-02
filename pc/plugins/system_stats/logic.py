@@ -330,9 +330,9 @@ class Plugin(BasePlugin):
                 active.append(w["data_key"])
         return active
 
-    def handle_command(self, target, action, data=None):
+    def handle_command(self, sid, target, action, data=None):
         # Сначала даем базе обработать общие команды (мастер настройки)
-        if super().handle_command(target, action, data):
+        if super().handle_command(sid, target, action, data):
             return
         
         # Если появятся другие команды, обрабатываем здесь

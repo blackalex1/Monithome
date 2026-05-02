@@ -34,7 +34,8 @@ data class ChartSnapshot(
 fun ChartWidget(pluginId: String, widget: Widget) {
     val stats by PluginRepository.getPluginStats(pluginId).collectAsState()
     val key = widget.dataKey ?: ""
-    val history = remember(stats) {
+    // Оптимизация: берем историю только когда меняются сами данные статистики
+    val history = remember(stats[key]) {
         PluginRepository.getHistory(pluginId)[key] ?: emptyList()
     }
     val currentValue = stats.resolveStat(key, widget.unit)
@@ -108,13 +109,29 @@ fun ChartWidget(pluginId: String, widget: Widget) {
             // Optimized Neon Chart Canvas
             val chartPath = remember { Path() }
             val fillPath = remember { Path() }
+            
+            // Кэшируем кисти и градиенты, чтобы не создавать их каждый кадр
+            val fillBrush = remember(baseColor) {
+                Brush.verticalGradient(
+                    colors = listOf(baseColor.copy(alpha = 0.3f), baseColor.copy(alpha = 0.05f), Color.Transparent)
+                )
+            }
+            val glowBrush = remember(baseColor) {
+                Brush.radialGradient(
+                    colors = listOf(baseColor, Color.Transparent)
+                )
+            }
+
             val nativePaint = remember<android.graphics.Paint> {
                 android.graphics.Paint().apply {
                     isAntiAlias = true
                     style = android.graphics.Paint.Style.STROKE
-                    maskFilter = BlurMaskFilter(14f, BlurMaskFilter.Blur.NORMAL)
+                    // МЫ УБРАЛИ BlurMaskFilter, так как он сильно тормозит старые планшеты
                 }
             }
+            
+            // Для drawIntoCanvas используем стабильный нативный путь
+            val androidPath = remember { android.graphics.Path() }
             
             Canvas(modifier = Modifier.fillMaxWidth().height(84.dp)) {
                 val width = size.width
@@ -131,46 +148,47 @@ fun ChartWidget(pluginId: String, widget: Widget) {
                 val isScrolling = points.size >= pointCount + 3
                 val stepX = if (isScrolling) width / pointCount.toFloat() else if (points.size > 1) width / (points.size - 1).toFloat() else width
                 
-                // Helper to get X/Y for a point index
-                fun getPoint(i: Int): Offset {
-                    val x = if (isScrolling) (i - 1 - p) * stepX else i * stepX
-                    val y = (height - (points[i] / currentMaxVal * height)).coerceIn(0f, height)
-                    return Offset(x, y)
-                }
-
-                // 1. Build Smooth Cubic Bezier Path
-                var lastPt = getPoint(0)
-                chartPath.moveTo(lastPt.x, lastPt.y)
+                // 1. Build Smooth Cubic Bezier Path (Optimized)
+                var firstX = if (isScrolling) (0 - 1 - p) * stepX else 0 * stepX
+                var firstY = (height - (points[0] / currentMaxVal * height)).coerceIn(0f, height)
+                chartPath.moveTo(firstX, firstY)
+                
+                var prevX = firstX
+                var prevY = firstY
                 
                 for (i in 1 until points.size) {
-                    val currentPt = getPoint(i)
-                    // Control points for smooth curve
-                    val cx = (lastPt.x + currentPt.x) / 2f
-                    chartPath.cubicTo(cx, lastPt.y, cx, currentPt.y, currentPt.x, currentPt.y)
-                    lastPt = currentPt
+                    val curX = if (isScrolling) (i - 1 - p) * stepX else i * stepX
+                    val curY = (height - (points[i] / currentMaxVal * height)).coerceIn(0f, height)
+                    
+                    val cx = (prevX + curX) / 2f
+                    chartPath.cubicTo(cx, prevY, cx, curY, curX, curY)
+                    
+                    prevX = curX
+                    prevY = curY
                 }
 
                 // 2. Build Fill Path
                 fillPath.addPath(chartPath)
-                fillPath.lineTo(lastPt.x, height)
-                fillPath.lineTo(getPoint(0).x, height)
+                fillPath.lineTo(prevX, height)
+                fillPath.lineTo(firstX, height)
                 fillPath.close()
 
                 // 3. Draw Gradient Fill
-                drawPath(
-                    path = fillPath,
-                    brush = Brush.verticalGradient(
-                        colors = listOf(baseColor.copy(alpha = 0.3f), baseColor.copy(alpha = 0.05f), Color.Transparent)
-                    )
-                )
+                drawPath(path = fillPath, brush = fillBrush)
 
-                // 4. Draw Neon Outer Glow (Expensive but optimized)
+                // 4. Draw Neon Outer Glow (Using cached androidPath)
                 val glowStrokeWidth = 5.dp.toPx()
                 drawIntoCanvas { canvas ->
                     nativePaint.strokeWidth = glowStrokeWidth
                     nativePaint.color = baseColor.toArgb()
                     nativePaint.alpha = 80
-                    canvas.nativeCanvas.drawPath(chartPath.asAndroidPath(), nativePaint)
+                    
+                    // Синхронизируем нативный путь без создания нового объекта
+                    androidPath.rewind()
+                    androidPath.addPath(chartPath.asAndroidPath()) 
+                    // К сожалению, asAndroidPath() в Compose всё равно возвращает обертку, 
+                    // но это всё же лучше чем создавать вручную каждый раз.
+                    canvas.nativeCanvas.drawPath(androidPath, nativePaint)
                 }
 
                 // 5. Draw Main Neon Line
@@ -188,15 +206,13 @@ fun ChartWidget(pluginId: String, widget: Widget) {
                 )
 
                 // 7. Draw Leading Active Dot (The Glowy Tip)
-                val activePt = if (isScrolling) getPoint(points.size - 2) else getPoint(points.size - 1)
+                val activeX = prevX
+                val activeY = prevY
+                val activePt = Offset(activeX, activeY)
                 
                 // Outer glow of the dot
                 drawCircle(
-                    brush = Brush.radialGradient(
-                        colors = listOf(baseColor, Color.Transparent),
-                        center = activePt,
-                        radius = 12.dp.toPx()
-                    ),
+                    brush = glowBrush,
                     center = activePt,
                     radius = 12.dp.toPx()
                 )

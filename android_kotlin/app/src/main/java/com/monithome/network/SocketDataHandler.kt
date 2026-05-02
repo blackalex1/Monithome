@@ -109,20 +109,47 @@ object SocketDataHandler {
         }
     }
 
+    private val registeredPlugins = mutableSetOf<String>()
+
     fun registerPluginListeners(plugins: List<PluginInfo>) {
+        val socket = SocketManager.getSocket()
+        if (socket == null) {
+            android.util.Log.e("SocketDataHandler", "CANNOT register listeners: Socket is NULL!")
+            return
+        }
+        
         plugins.forEach { plugin ->
-            val pId = plugin.id ?: return@forEach // Исправление ошибки типов (String?)
-            val eventName = "plugin_event:$pId"
+            val pId = plugin.id ?: return@forEach
+            if (registeredPlugins.contains(pId)) return@forEach
             
-            SocketManager.getSocket()?.off(eventName)
-            SocketManager.getSocket()?.on(eventName) { args ->
+            val eventName = "plugin_event:$pId"
+            android.util.Log.i("SocketDataHandler", "Registering listener for: $eventName")
+            socket.on(eventName) { args ->
                 try {
                     val eventData = JsonParser.safeParseJson(args) as? JSONObject ?: return@on
                     val eventNameInside = eventData.optString("event")
+                    var data = eventData.optJSONObject("data")
                     
-                    if (pId == "yandex_station" && eventNameInside == "yandex_config" && eventData.has("data")) {
-                        val data = eventData.optJSONObject("data")
-                        if (data != null) SocketManager.handleYandexConfigEvent(data)
+                    // Универсальная дешифровка данных события, если они зашифрованы
+                    if (data != null && data.has("encrypted")) {
+                        val key = SocketManager.getEncryptionKey()
+                        if (key != null) {
+                            val decrypted = CryptoUtils.decrypt(data.getString("encrypted"), key)
+                            if (decrypted != null) {
+                                try {
+                                    data = JSONObject(decrypted)
+                                    // Обновляем в eventData для дальнейшей обработки
+                                    eventData.put("data", data)
+                                    android.util.Log.i("SocketDataHandler", "Decrypted event $eventNameInside for $pId")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("SocketDataHandler", "Failed to parse decrypted JSON: ${e.message}")
+                                }
+                            }
+                        }
+                    }
+                    
+                    if (pId == "yandex_station" && eventNameInside == "yandex_config" && data != null) {
+                        SocketManager.handleYandexConfigEvent(data!!)
                     } else {
                         PluginRepository.handlePluginEvent(pId, eventNameInside, eventData)
                     }
@@ -130,7 +157,8 @@ object SocketDataHandler {
                     android.util.Log.e("SocketDataHandler", "EVENT_ERROR for $pId: ${e.message}")
                 }
             }
-            android.util.Log.d("SocketDataHandler", "Registered listener for $eventName")
+            registeredPlugins.add(pId)
+            android.util.Log.d("SocketDataHandler", "Registered NEW listener for $eventName")
         }
     }
 }

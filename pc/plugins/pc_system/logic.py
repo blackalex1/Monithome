@@ -41,9 +41,9 @@ class Plugin(BasePlugin):
                 active.append(btn["action"])
         return active
 
-    def handle_command(self, target, action, data=None):
+    def handle_command(self, sid, target, action, data=None):
         # Базовая обработка (мастер настройки)
-        if super().handle_command(target, action, data):
+        if super().handle_command(sid, target, action, data):
             return
 
         self.log(f"Executing system command: {action}")

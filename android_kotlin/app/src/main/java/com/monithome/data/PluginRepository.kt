@@ -7,11 +7,13 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.*
 
 /**
  * Репозиторий для управления состоянием всех плагинов.
  */
 object PluginRepository {
+    private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     // 1. Поля и свойства (всегда наверху)
     private val _uiConfigs = MutableStateFlow<List<PluginInfo>>(emptyList())
     val uiConfigs: StateFlow<List<PluginInfo>> = _uiConfigs.asStateFlow()
@@ -51,23 +53,35 @@ object PluginRepository {
         }.asStateFlow()
     }
 
+    fun getPluginStatsBlocking(pluginId: String): Map<String, Any> {
+        return pluginStats[pluginId]?.value ?: emptyMap()
+    }
+
     fun getHistory(pluginId: String): Map<String, List<Float>> {
         return history[pluginId]?.mapValues { it.value.getValues() } ?: emptyMap()
     }
 
     // 3. Методы обновления данных
     fun bulkUpdate(updates: Map<String, Any>) {
-        updates.forEach { (pId, data) ->
-            if (pId == "_server_time") return@forEach
-            if (data is Map<*, *>) {
-                @Suppress("UNCHECKED_CAST")
-                updateStats(pId, data as Map<String, Any>)
+        repositoryScope.launch {
+            updates.forEach { (pId, data) ->
+                if (pId == "_server_time") return@forEach
+                if (data is Map<*, *>) {
+                    @Suppress("UNCHECKED_CAST")
+                    updateStatsInternal(pId, data as Map<String, Any>)
+                }
             }
         }
     }
 
-
     fun updateStats(pluginId: String, data: Map<String, Any>) {
+        repositoryScope.launch {
+            updateStatsInternal(pluginId, data)
+        }
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private suspend fun updateStatsInternal(pluginId: String, data: Map<String, Any>) {
         val flow = pluginStats.getOrPut(pluginId) {
             MutableStateFlow(emptyMap())
         }
@@ -88,21 +102,15 @@ object PluginRepository {
             }
             
             if (newDevices != null) {
-                newDevices!!.forEachIndexed { idx, newDev ->
+                newDevices.forEachIndexed { idx, newDev ->
                     val dId = newDev["id"]?.toString() ?: ""
                     val oldDev = oldDevices?.find { it["id"] == dId }
                     
                     if (newDev["status"] == "direct") {
-                        // Это обновление от самого планшета (прямое управление)
-                        // Принимаем его целиком
                         newDevices[idx] = newDev
                     } else if (oldDev != null && oldDev["status"] == "direct" && yandexDeviceFilter != null) {
-                        // Это обновление от сервера, но у нас есть приоритетные данные планшета
-                        android.util.Log.d("PluginRepo", "Ignoring server update for $dId (status is direct)")
                         newDevices[idx] = oldDev + mapOf("status" to "direct")
                     } else {
-                        android.util.Log.d("PluginRepo", "Yandex Update [$dId]: title=${newDev["title"]}, playing=${newDev["playing"]}")
-                        // Обычный режим или обновление обложек
                         val pendingKey = "$pluginId:$dId"
                         if (pendingCovers.containsKey(pendingKey)) {
                             val updated = newDev.toMutableMap()
@@ -122,27 +130,73 @@ object PluginRepository {
             }
         }
 
-        // Яндекс Тексты: агрессивное извлечение
-        if (pluginId == "yandex_lyrics" && data.containsKey("devices")) {
-            try {
-                val gson = Gson()
-                val devicesJson = gson.toJson(data["devices"])
-                val type = object : com.google.gson.reflect.TypeToken<Map<String, LyricsData>>() {}.type
-                val devicesMap: Map<String, LyricsData>? = gson.fromJson(devicesJson, type)
-                
-                devicesMap?.forEach { (dId, rawData) ->
-                    processLyrics(dId, rawData)
+        // Яндекс Тексты: прямое извлечение из Map
+        if (pluginId == "yandex_lyrics") {
+            val devicesData = data["devices"] as? Map<*, *>
+            val newLyricsMap = mutableMapOf<String, LyricsData>()
+            devicesData?.forEach { (dId, rawValue) ->
+                if (dId is String && rawValue is Map<*, *>) {
+                    try {
+                        val lyricsData = LyricsData(
+                            lyrics = rawValue["lyrics"] as? String,
+                            timings = (rawValue["timings"] as? List<Map<String, Any>>)?.map { t ->
+                                LyricTiming(
+                                    time = (t["time"] as? Number)?.toLong(),
+                                    text = t["text"] as? String
+                                )
+                            } ?: emptyList(),
+                            trackId = rawValue["trackId"] as? String
+                        )
+                        newLyricsMap[dId] = processLyricsInternal(lyricsData)
+                    } catch (e: Exception) {}
                 }
-            } catch (e: Exception) {
-                android.util.Log.e("PluginRepo", "Failed to extract lyrics: ${e.message}")
+            }
+            if (newLyricsMap.isNotEmpty()) {
+                val currentMap = _lyrics.value.toMutableMap()
+                currentMap.putAll(newLyricsMap)
+                _lyrics.value = currentMap
             }
         }
 
-        val finalDataWithTime = finalData.toMutableMap().apply {
+        // СЛИЯНИЕ ДАННЫХ: Объединяем новые данные со старыми, чтобы частичные обновления не затирали обложку и метаданные
+        val oldData = flow.value
+        val mergedData = oldData.toMutableMap().apply {
+            putAll(finalData)
             put("local_last_update", System.currentTimeMillis() / 1000.0)
         }
-        flow.value += finalDataWithTime
+        
+        // Обновляем только если данные реально изменились (не считая времени)
+        // Для сравнения создаем версию без времени, чтобы не триггерить Flow каждую секунду только из-за метки
+        val oldDataNoTime = oldData.filterKeys { it != "local_last_update" }
+        val newDataNoTime = mergedData.filterKeys { it != "local_last_update" }
+
+        if (oldDataNoTime != newDataNoTime) {
+            flow.value = mergedData
+        }
         updateHistory(pluginId, finalData)
+    }
+
+    fun updateDirectStatus(pluginId: String, deviceId: String, status: Map<String, Any>) {
+        val flow = pluginStats.getOrPut(pluginId) {
+            MutableStateFlow(emptyMap())
+        }
+        
+        val oldData = flow.value
+        @Suppress("UNCHECKED_CAST")
+        val devices = (oldData["devices"] as? List<Map<String, Any>>)?.toMutableList() ?: return
+        
+        val idx = devices.indexOfFirst { it["id"] == deviceId }
+        if (idx >= 0) {
+            val updated = devices[idx].toMutableMap()
+            updated.putAll(status)
+            updated["status"] = "direct"
+            updated["local_last_update"] = System.currentTimeMillis() / 1000.0
+            devices[idx] = updated
+            flow.value = oldData.toMutableMap().apply { 
+                put("devices", devices)
+                put("local_last_update", System.currentTimeMillis() / 1000.0)
+            }
+        }
     }
 
     fun clearDirectStatus(pluginId: String) {
@@ -198,13 +252,20 @@ object PluginRepository {
         val pluginHistory = history.getOrPut(pluginId) { ConcurrentHashMap() }
         data.forEach { (key, value) ->
             if (value is Number) {
-                val buffer = pluginHistory.getOrPut(key) { HistoryBuffer(30) }
-                buffer.push(value.toFloat())
+                // Сохраняем историю только для реальных метрик, чтобы не забивать память
+                val lowKey = key.lowercase()
+                if (lowKey.contains("cpu") || lowKey.contains("gpu") || 
+                    lowKey.contains("ram") || lowKey.contains("temp") || 
+                    lowKey.contains("load") || lowKey.contains("usage")) {
+                    
+                    val buffer = pluginHistory.getOrPut(key) { HistoryBuffer(60) }
+                    buffer.push(value.toFloat())
+                }
             }
         }
     }
 
-    private fun processLyrics(deviceId: String, rawData: LyricsData) {
+    private fun processLyricsInternal(rawData: LyricsData): LyricsData {
         var lyricsData = rawData
         // Парсим LRC, если есть текст, но нет таймингов
         if (!lyricsData.lyrics.isNullOrEmpty() && lyricsData.timings.isNullOrEmpty()) {
@@ -213,33 +274,38 @@ object PluginRepository {
                 lyricsData = lyricsData.copy(timings = parsedTimings)
             }
         }
-
-        // Обновляем состояние
-        val currentMap = _lyrics.value.toMutableMap()
-        currentMap[deviceId] = lyricsData
-        _lyrics.value = currentMap
-        android.util.Log.d("PluginRepo", "Lyrics updated for $deviceId (lines=${lyricsData.timings?.size ?: 0})")
+        return lyricsData
     }
 
     fun handlePluginEvent(pluginId: String, event: String, data: Any) {
+        repositoryScope.launch {
+            handlePluginEventInternal(pluginId, event, data)
+        }
+    }
+
+    private suspend fun handlePluginEventInternal(pluginId: String, event: String, data: Any) {
         when (event) {
             "lyrics" -> {
                 try {
-                    val jsonStr = data.toString()
-                    val json = org.json.JSONObject(jsonStr)
-                    val deviceId = if (json.has("device_id")) json.getString("device_id") else "all"
-                    val lyricsObj = if (json.has("data")) json.get("data").toString() else jsonStr
-                    val lyricsData = Gson().fromJson(lyricsObj, LyricsData::class.java)
+                    val lyricsObj = if (data is org.json.JSONObject) {
+                        data
+                    } else {
+                        org.json.JSONObject(data.toString())
+                    }
                     
-                    processLyrics(deviceId, lyricsData)
-                } catch (e: Exception) {
-                    android.util.Log.d("PluginRepo", "Lyrics parse error: ${e.message}")
-                }
+                    val deviceId = if (lyricsObj.has("device_id")) lyricsObj.getString("device_id") else "all"
+                    val actualData = if (lyricsObj.has("data")) lyricsObj.get("data").toString() else lyricsObj.toString()
+                    val lyricsData = Gson().fromJson(actualData, LyricsData::class.java)
+                    
+                    val processed = processLyricsInternal(lyricsData)
+                    val currentMap = _lyrics.value.toMutableMap()
+                    currentMap[deviceId] = processed
+                    _lyrics.value = currentMap
+                } catch (e: Exception) {}
             }
             "cover" -> {
                 try {
-                    val jsonStr = data.toString()
-                    val json = org.json.JSONObject(jsonStr)
+                    val json = if (data is org.json.JSONObject) data else org.json.JSONObject(data.toString())
                     val innerData = if (json.has("data")) json.getJSONObject("data") else json
                     
                     val cover = if (innerData.has("cover") && !innerData.isNull("cover")) innerData.getString("cover") else null
@@ -268,11 +334,34 @@ object PluginRepository {
                     android.util.Log.e("PluginRepo", "Cover parse error: ${e.message}")
                 }
             }
+            "status" -> {
+                try {
+                    val json = if (data is org.json.JSONObject) data else org.json.JSONObject(data.toString())
+                    val status = if (json.has("data")) json.get("data") else json
+                    if (status is org.json.JSONObject) {
+                        updateStats(pluginId, jsonToMap(status))
+                    } else if (status is org.json.JSONArray) {
+                        // Для плагинов, которые шлют список (например, диски)
+                        updateStats(pluginId, mapOf("items" to jsonArrayToList(status)))
+                    }
+                } catch (e: Exception) {}
+            }
+            "direct_status" -> {
+                try {
+                    val json = if (data is org.json.JSONObject) data else org.json.JSONObject(data.toString())
+                    val status = if (json.has("data")) json.getJSONObject("data") else json
+                    val deviceId = if (status.has("device_id")) status.getString("device_id") else null
+                    if (deviceId != null) {
+                        updateDirectStatus(pluginId, deviceId, jsonToMap(status))
+                    }
+                } catch (e: Exception) {}
+            }
             "yandex_config" -> {
                 try {
                     val json = (data as? org.json.JSONObject) ?: org.json.JSONObject(data.toString())
-                    if (json.has("devices")) {
-                        val devicesArray = json.getJSONArray("devices")
+                    val inner = if (json.has("data")) json.getJSONObject("data") else json
+                    if (inner.has("devices")) {
+                        val devicesArray = inner.getJSONArray("devices")
                         val configs = mutableListOf<StationConfig>()
                         for (i in 0 until devicesArray.length()) {
                             val obj = devicesArray.getJSONObject(i)
@@ -284,11 +373,15 @@ object PluginRepository {
                             ))
                         }
                         com.monithome.network.YandexStationManager.updateConfigs(configs)
-                        android.util.Log.d("PluginRepo", "Yandex direct config received: ${configs.size} devices")
                     }
-                } catch (e: Exception) {
-                    android.util.Log.e("PluginRepo", "Yandex config parse error: ${e.message}")
-                }
+                } catch (e: Exception) {}
+            }
+            else -> {
+                // Универсальный парсер для всех остальных событий
+                try {
+                    val json = if (data is org.json.JSONObject) data else org.json.JSONObject(data.toString())
+                    updateStats(pluginId, jsonToMap(json))
+                } catch (e: Exception) {}
             }
         }
     }

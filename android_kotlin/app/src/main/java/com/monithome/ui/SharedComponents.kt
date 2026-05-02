@@ -117,6 +117,9 @@ fun AnimatedProgressBar(
                 .height(12.dp),
             contentAlignment = Alignment.Center
         ) {
+            val neonGlowColors = remember(barColor) { listOf(barColor.copy(alpha = 0.3f), Color.Transparent) }
+            val barGradientColors = remember(barColor) { listOf(barColor.copy(alpha = 0.6f), barColor) }
+
             Canvas(modifier = Modifier.fillMaxWidth().height(6.dp)) {
                 val width = size.width
                 val height = size.height
@@ -137,7 +140,7 @@ fun AnimatedProgressBar(
                     // 2. Neon Glow (Outer)
                     drawCircle(
                         brush = Brush.radialGradient(
-                            colors = listOf(barColor.copy(alpha = 0.3f), Color.Transparent),
+                            colors = neonGlowColors,
                             center = Offset(progressWidth, corner),
                             radius = glowRadius
                         ),
@@ -147,9 +150,7 @@ fun AnimatedProgressBar(
                     
                     // 3. Main Progress Bar
                     drawRoundRect(
-                        brush = Brush.horizontalGradient(
-                            colors = listOf(barColor.copy(alpha = 0.6f), barColor)
-                        ),
+                        brush = Brush.horizontalGradient(colors = barGradientColors),
                         size = Size(progressWidth, height),
                         cornerRadius = CornerRadius(corner, corner)
                     )

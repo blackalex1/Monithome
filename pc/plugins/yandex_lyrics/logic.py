@@ -242,9 +242,9 @@ class Plugin(BasePlugin):
                 })
         return events
 
-    def handle_command(self, target, action, data=None):
+    def handle_command(self, sid, target, action, data=None):
         # Базовая обработка
-        if super().handle_command(target, action, data):
+        if super().handle_command(sid, target, action, data):
             return
 
     def stop(self):

@@ -123,9 +123,13 @@ async def main_loop():
             session = None
             try:
                 all_sessions = manager.get_sessions()
+                if is_first_run or (time.time() - last_print_time) > 30.0:
+                    print(json.dumps({"log": f"Found {len(all_sessions)} media sessions"}), flush=True)
                 # Приоритет 1: Реально играющая сессия
                 for s in all_sessions:
                     pb = s.get_playback_info()
+                    if is_first_run or (time.time() - last_print_time) > 30.0:
+                        print(json.dumps({"log": f"Session from: {s.source_app_user_model_id}, status: {pb.playback_status if pb else 'N/A'}"}), flush=True)
                     if pb and pb.playback_status == 4: # Playing
                         try:
                             tm = s.get_timeline_properties()

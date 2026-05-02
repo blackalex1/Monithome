@@ -133,13 +133,12 @@ class Plugin(BasePlugin):
         if "yandex_lyrics" in self.manager.plugins:
             self.manager.reload_plugin("yandex_lyrics")
 
-    def handle_command(self, target, action, data=None):
-        if super().handle_command(target, action, data):
+    def handle_command(self, sid, target, action, data=None):
+        if super().handle_command(sid, target, action, data):
             return
 
         if action == "get_yandex_config":
-            from flask import request
-            self._broadcast_config_to_tablet(sid=request.sid)
+            self._broadcast_config_to_tablet(sid=sid)
             return
             
         cmd = action.split(":", 1)[0]

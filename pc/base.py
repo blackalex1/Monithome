@@ -66,18 +66,18 @@ class BasePlugin:
             "config": self.config
         }
 
-    def handle_command(self, target: str, action: str, data: Any = None):
+    def handle_command(self, sid: str, target: str, action: str, data: Any = None):
         """Универсальный обработчик команд. Плагины могут расширять его."""
         if action == "get_wizard":
             # Отправляем данные мастера и список текущих активных элементов
             wizard_data = self.get_wizard_data() if hasattr(self, 'get_wizard_data') else {}
             active_items = self.get_active_items() if hasattr(self, 'get_active_items') else []
             
-            self.socketio.emit("wizard_data", {
-                "plugin_id": self.p_id,
+            payload = {
                 "wizard": wizard_data,
                 "active_items": active_items
-            }, room='authorized')
+            }
+            self.manager.emit_to_plugin_ui(self.p_id, "wizard_data", payload, sid=sid)
             return True
             
         elif action in ["handle_wizard", "save_wizard", "save_settings", "update_config"]:

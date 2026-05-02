@@ -34,6 +34,15 @@ object SocketManager {
     var onAuthSuccess: ((String) -> Unit)? = null
     var onDataReceived: (() -> Unit)? = null
 
+    private var encryptionKey: String? = null
+
+    fun setEncryptionKey(key: String?) {
+        encryptionKey = key
+        Log.i("SocketManager", "Encryption key updated: ${if (key != null) "SET" else "NULL"}")
+    }
+
+    fun getEncryptionKey(): String? = encryptionKey
+
     fun getSocket(): Socket? = socket
 
     fun clearError() {
@@ -62,7 +71,12 @@ object SocketManager {
                 reconnectionDelay = 1000
                 timeout = 10000
                 if (token != null) {
-                    auth = mapOf("token" to token)
+                    auth = mapOf(
+                        "token" to token,
+                        "supports_encryption" to "true"
+                    )
+                } else {
+                    auth = mapOf("supports_encryption" to "true")
                 }
             }
             
@@ -72,7 +86,10 @@ object SocketManager {
                 _isConnected.value = true
                 _isConnecting.value = false
                 _error.value = null
-                val authObj = JSONObject().put("token", token)
+                val authObj = JSONObject().apply {
+                    put("token", token)
+                    put("supports_encryption", true)
+                }
                 socket?.emit("authorize", authObj)
             }
 
@@ -95,27 +112,41 @@ object SocketManager {
                 Log.e("SocketManager", "Connect error: $err")
             }
 
-            // Обработка событий авторизации
+            socket?.off("auth_required")
             socket?.on("auth_required") {
                 onAuthRequired?.invoke()
             }
 
+            socket?.off("auth_success")
             socket?.on("auth_success") { args ->
                 try {
-                    val token = when (val data = args.getOrNull(0)) {
-                        is JSONObject -> data.optString("token", "")
-                        is Map<*, *> -> data["token"]?.toString() ?: ""
-                        else -> data?.toString() ?: ""
+                    val rawData = args.getOrNull(0)
+                    Log.i("SocketManager", "RAW_AUTH_DATA: $rawData (Type: ${rawData?.javaClass?.name})")
+                    
+                    if (rawData is JSONObject || rawData is Map<*, *>) {
+                        val token = if (rawData is JSONObject) rawData.optString("token", "") else (rawData as Map<*, *>)["token"]?.toString() ?: ""
+                        val encKey = if (rawData is JSONObject) rawData.optString("encryption_key", "") else (rawData as Map<*, *>)["encryption_key"]?.toString() ?: ""
+                        
+                        if (encKey.isNotEmpty()) {
+                            setEncryptionKey(encKey)
+                            Log.i("SocketManager", "Encryption key updated: SET")
+                        } else {
+                            Log.w("SocketManager", "Auth success object received BUT encryption_key is EMPTY")
+                        }
+                        
+                        onAuthSuccess?.invoke(token)
+                        Log.i("SocketManager", "Auth success processed, emitting get_yandex_config")
+                        socket?.emit("get_yandex_config")
+                    } else {
+                        Log.d("SocketManager", "Received simple auth success signal, waiting for data object...")
                     }
-                    onAuthSuccess?.invoke(token)
-                    Log.i("SocketManager", "Auth success, emitting get_yandex_config")
-                    socket?.emit("get_yandex_config", JSONObject())
                 } catch (e: Exception) {
                     Log.e("SocketManager", "AUTH_SUCCESS_PARSE_ERROR: ${e.message}")
                 }
             }
 
             // Обработка manager_data
+            socket?.off("manager_data")
             socket?.on("manager_data") { args ->
                 try {
                     onDataReceived?.invoke()
@@ -131,6 +162,7 @@ object SocketManager {
             }
 
             // Обработка ui_config
+            socket?.off("ui_config")
             socket?.on("ui_config") { args ->
                 try {
                     val data = JsonParser.safeParseJson(args, "ui_config") as? JSONObject ?: return@on
@@ -145,8 +177,10 @@ object SocketManager {
             }
 
             // Обработка бинарных данных (MessagePack)
+            socket?.off("stats")
             socket?.on("stats") { args ->
                 val rawData = if (args.size > 1 && args[0] == "stats") args[1] else args[0]
+                android.util.Log.v("SocketManager", "Binary stats received, size: ${(rawData as? ByteArray)?.size ?: 0}")
                 try {
                     val binaryData = rawData as? ByteArray ?: return@on
                     val statsMap = MessagePackDecoder.decode(binaryData)
@@ -154,6 +188,7 @@ object SocketManager {
                         @Suppress("UNCHECKED_CAST")
                         val actualStats = statsMap["stats"] as? Map<String, Any>
                         if (actualStats != null) {
+                            android.util.Log.v("SocketManager", "Stats keys: ${actualStats.keys}")
                             PluginRepository.bulkUpdate(actualStats)
                         }
                     }
@@ -163,6 +198,7 @@ object SocketManager {
             }
 
             // Обработка stats_json
+            socket?.off("stats_json")
             socket?.on("stats_json") { args ->
                 try {
                     val data = args.getOrNull(0) as? JSONObject ?: return@on
@@ -176,9 +212,24 @@ object SocketManager {
                 }
             }
             
+            socket?.off("yandex_config")
             socket?.on("yandex_config") { args ->
                 try {
-                    val data = JsonParser.safeParseJson(args) as? JSONObject ?: return@on
+                    var data = JsonParser.safeParseJson(args) as? JSONObject ?: return@on
+                    
+                    // Расшифровываем, если нужно
+                    if (data.has("encrypted")) {
+                        val encrypted = data.getString("encrypted")
+                        val key = encryptionKey
+                        if (key != null) {
+                            val decrypted = CryptoUtils.decrypt(encrypted, key)
+                            if (decrypted != null) {
+                                data = JSONObject(decrypted)
+                                Log.i("SocketManager", "Decrypted yandex_config successfully")
+                            }
+                        }
+                    }
+                    
                     handleYandexConfigEvent(data)
                 } catch (e: Exception) {
                     Log.e("SocketManager", "YANDEX_CONFIG_ERROR: ${e.message}")
@@ -265,7 +316,23 @@ object SocketManager {
             put("plugin_id", pluginId)
             put("action", action)
             put("target", target)
-            if (data != null) put("data", data)
+            
+            if (data != null) {
+                // Шифруем данные команд для безопасности (по желанию можно ограничить список плагинов)
+                val key = encryptionKey
+                if (key != null && (pluginId == "yandex_station" || action.contains("token"))) {
+                    val rawData = data.toString()
+                    val encrypted = CryptoUtils.encrypt(rawData, key)
+                    if (encrypted != null) {
+                        put("data", JSONObject().put("encrypted", encrypted))
+                        Log.i("SocketManager", "Encrypted command data for $pluginId")
+                    } else {
+                        put("data", data)
+                    }
+                } else {
+                    put("data", data)
+                }
+            }
         }
         socket?.emit("plugin_command", payload)
     }

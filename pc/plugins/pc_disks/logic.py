@@ -122,9 +122,9 @@ class Plugin(BasePlugin):
     def get_active_items(self):
         return self.config.get("selected_disks", [])
 
-    def handle_command(self, target, action, data=None):
+    def handle_command(self, sid, target, action, data=None):
         # Сначала даем базе обработать общие команды (мастер настройки)
-        if super().handle_command(target, action, data):
+        if super().handle_command(sid, target, action, data):
             return
 
         if action == "update_disks":

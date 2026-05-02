@@ -4,7 +4,7 @@ package com.monithome.data
  * Высокопроизводительный кольцевой буфер для хранения истории датчиков.
  * Использует FloatArray для минимального потребления памяти.
  */
-class HistoryBuffer(val size: Int = 30) {
+class HistoryBuffer(val size: Int = 60) {
     private val buffer = FloatArray(size)
     private var head = 0
     private var isFull = false

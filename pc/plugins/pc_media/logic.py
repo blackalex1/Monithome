@@ -158,9 +158,9 @@ class Plugin(BasePlugin):
         except Exception as e:
             self.log(f"Failed to read/send cover file: {e}", level="error")
 
-    def handle_command(self, target, action, data=None):
+    def handle_command(self, sid, target, action, data=None):
         # Сначала даем базе обработать общие команды (мастер настройки)
-        if super().handle_command(target, action, data):
+        if super().handle_command(sid, target, action, data):
             return
 
         if action.startswith("set_volume:"):
