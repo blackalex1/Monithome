@@ -96,7 +96,7 @@ fun AnimatedProgressBar(
     val barColor = remember(value, colorRanges) {
         val range = colorRanges?.find { value >= (it.min ?: 0f) && value <= (it.max ?: 100f) }
         if (range != null && range.color != null) {
-            try { Color(range.color!!.toColorInt()) } catch (e: Exception) { MonitTheme.Primary }
+            try { Color(range.color.toColorInt()) } catch (e: Exception) { MonitTheme.Primary }
         } else {
             MonitTheme.Primary
         }

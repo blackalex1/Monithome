@@ -69,11 +69,13 @@ export default function App() {
     
     setSocket(newSocket);
     
-    newSocket.on('connect', () => {
+    newSocket.on('connect', async () => {
       setConnected(true); 
       setLoading(false); 
       setConnectionStatus('Подключено');
-      AsyncStorage.setItem('server_ip', serverIp);
+      try {
+        await AsyncStorage.setItem('server_ip', serverIp);
+      } catch (e) {}
     });
 
     newSocket.on('disconnect', () => {
@@ -88,8 +90,10 @@ export default function App() {
       setConnectionStatus('Требуется авторизация');
     });
 
-    newSocket.on('auth_success', (data) => {
-      AsyncStorage.setItem('auth_token', data.token);
+    newSocket.on('auth_success', async (data) => {
+      try {
+        await AsyncStorage.setItem('auth_token', data.token);
+      } catch (e) {}
       setAuthToken(data.token);
       setIsPairing(false);
       setConnectionStatus('Авторизовано');

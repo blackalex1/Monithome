@@ -13,9 +13,12 @@ const DiskRow = React.memo(({ disk, t }) => {
   }, [disk.percent]);
 
   const animatedStyle = useAnimatedStyle(() => {
+    const p = sharedProgress.value;
     return {
-      width: `${sharedProgress.value}%`,
-      backgroundColor: sharedProgress.value > 90 ? '#ef4444' : '#38bdf8'
+      width: `${p}%`,
+      backgroundColor: p > 90 ? '#ef4444' : '#38bdf8',
+      height: '100%',
+      borderRadius: 4
     };
   });
 
@@ -26,7 +29,7 @@ const DiskRow = React.memo(({ disk, t }) => {
         <Text style={{ color: disk.percent > 90 ? '#ef4444' : '#38bdf8', fontWeight: 'bold' }}>{disk.percent}%</Text>
       </View>
       <View style={styles.volumeSliderTrack}>
-        <Animated.View style={[styles.volumeSliderFill, animatedStyle]} />
+        <Animated.View style={animatedStyle} />
       </View>
       <Text style={{ color: '#64748b', fontSize: 10, marginTop: 4 }}>
         {t('Свободно', 'Free')} {disk.free} {t('ГБ', 'GB')} {t('из', 'of')} {disk.total} {t('ГБ', 'GB')}

@@ -15,28 +15,29 @@ export const AnimatedProgressBar = React.memo(({ value, colorRanges }) => {
 
   const animatedStyle = useAnimatedStyle(() => {
     let color = '#38bdf8'; // Default blue
+    const v = sharedValue.value;
     if (colorRanges) {
-      // Динамический выбор цвета на основе переданных диапазонов
       for (const range of colorRanges) {
-        if (sharedValue.value >= range.min && sharedValue.value <= range.max) {
+        if (v >= range.min && v <= range.max) {
           color = range.color;
           break;
         }
       }
     } else {
-      // Fallback логика
-      color = sharedValue.value > 80 ? '#ef4444' : (sharedValue.value > 60 ? '#f59e0b' : '#38bdf8');
+      color = v > 80 ? '#ef4444' : (v > 60 ? '#f59e0b' : '#38bdf8');
     }
 
     return {
-      width: `${sharedValue.value}%`,
-      backgroundColor: color
+      width: `${v}%`,
+      backgroundColor: color,
+      height: '100%',
+      borderRadius: 4
     };
   });
 
   return (
     <View style={styles.volumeSliderTrack}>
-      <Animated.View style={[styles.volumeSliderFill, animatedStyle]} />
+      <Animated.View style={animatedStyle} />
     </View>
   );
 });

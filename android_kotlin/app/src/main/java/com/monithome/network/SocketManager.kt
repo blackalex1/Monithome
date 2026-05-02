@@ -54,7 +54,7 @@ object SocketManager {
 
         try {
             _isConnecting.value = true
-            android.util.Log.i("SocketManager", "Connecting to: $finalUrl")
+            Log.i("SocketManager", "Connecting to: $finalUrl")
             
             val opts = IO.Options().apply {
                 transports = arrayOf(WebSocket.NAME)
@@ -102,13 +102,10 @@ object SocketManager {
 
             socket?.on("auth_success") { args ->
                 try {
-                    val data = args.getOrNull(0)
-                    val token = if (data is JSONObject) {
-                        data.optString("token", "")
-                    } else if (data is Map<*, *>) {
-                        data["token"]?.toString() ?: ""
-                    } else {
-                        data?.toString() ?: ""
+                    val token = when (val data = args.getOrNull(0)) {
+                        is JSONObject -> data.optString("token", "")
+                        is Map<*, *> -> data["token"]?.toString() ?: ""
+                        else -> data?.toString() ?: ""
                     }
                     onAuthSuccess?.invoke(token)
                     Log.i("SocketManager", "Auth success, emitting get_yandex_config")
@@ -137,13 +134,13 @@ object SocketManager {
             socket?.on("ui_config") { args ->
                 try {
                     val data = JsonParser.safeParseJson(args, "ui_config") as? JSONObject ?: return@on
-                    val pluginsObj = data.opt("plugins")
+                    val pluginsObj = data.opt("plugins") ?: return@on
                     val listType = object : com.google.gson.reflect.TypeToken<List<PluginInfo>>() {}.type
                     val configs: List<PluginInfo> = gson.fromJson(pluginsObj.toString(), listType)
                     PluginRepository.updateUiConfigs(configs)
                     SocketDataHandler.registerPluginListeners(configs)
                 } catch (e: Exception) {
-                    android.util.Log.e("SocketManager", "UI_CONFIG_ERROR: ${e.message}")
+                    Log.e("SocketManager", "UI_CONFIG_ERROR: ${e.message}")
                 }
             }
 
@@ -161,7 +158,7 @@ object SocketManager {
                         }
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("SocketManager", "BINARY_STATS_ERROR: ${e.message}")
+                    Log.e("SocketManager", "BINARY_STATS_ERROR: ${e.message}")
                 }
             }
 
@@ -175,7 +172,7 @@ object SocketManager {
                         PluginRepository.bulkUpdate(statsMap)
                     }
                 } catch (e: Exception) {
-                    android.util.Log.e("SocketManager", "STATS_ERROR: ${e.message}")
+                    Log.e("SocketManager", "STATS_ERROR: ${e.message}")
                 }
             }
             
@@ -184,7 +181,7 @@ object SocketManager {
                     val data = JsonParser.safeParseJson(args) as? JSONObject ?: return@on
                     handleYandexConfigEvent(data)
                 } catch (e: Exception) {
-                    android.util.Log.e("SocketManager", "YANDEX_CONFIG_ERROR: ${e.message}")
+                    Log.e("SocketManager", "YANDEX_CONFIG_ERROR: ${e.message}")
                 }
             }
 
@@ -221,13 +218,13 @@ object SocketManager {
                         ))
                     }
                 } else {
-                    android.util.Log.w("SocketManager", "Skipping invalid device config: $deviceId (IP: $ip, Token: ${token.isNotEmpty()})")
+                    Log.w("SocketManager", "Skipping invalid device config: $deviceId (IP: $ip, Token: ${token.isNotEmpty()})")
                 }
             }
             SocketDataHandler.updateStandalone(isEnabled)
             YandexStationManager.updateConfigs(configs, yandexToken, isEnabled)
         } else {
-            android.util.Log.w("SocketManager", "yandex_config missing 'devices' field!")
+            Log.w("SocketManager", "yandex_config missing 'devices' field!")
         }
     }
 
@@ -238,9 +235,6 @@ object SocketManager {
         socket?.emit("auth_attempt", payload)
     }
 
-    fun requestYandexConfig() {
-        socket?.emit("get_yandex_config")
-    }
 
     fun disconnect() {
         socket?.disconnect()

@@ -6,9 +6,9 @@ import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONObject
 import java.io.InputStream
 
-enum class AppLanguage(val code: String, val displayName: String) {
-    RUSSIAN("ru", "Русский"),
-    ENGLISH("en", "English")
+enum class AppLanguage(val code: String) {
+    RUSSIAN("ru"),
+    ENGLISH("en")
 }
 
 object LanguageManager {
@@ -17,7 +17,6 @@ object LanguageManager {
 
     private var appContext: Context? = null
     private val _translations = MutableStateFlow(JSONObject())
-    val translations = _translations.asStateFlow()
 
     fun init(context: Context) {
         appContext = context.applicationContext
@@ -72,20 +71,9 @@ object LanguageManager {
  * Глобальный объект для удобного доступа к общим строкам
  */
 object Strings {
-    val loading: String get() = LanguageManager.i18n("loading", "Загрузка...")
     val waitingData: String get() = LanguageManager.i18n("waiting_data", "Ожидание данных...")
-    val settings: String get() = LanguageManager.i18n("settings", "Настройки")
-    val language: String get() = LanguageManager.i18n("language", "Язык")
-    val selectLanguage: String get() = LanguageManager.i18n("select_language", "Выберите язык")
-    val close: String get() = LanguageManager.i18n("close", "Закрыть")
     val yes: String get() = LanguageManager.i18n("yes", "ДА")
     val cancel: String get() = LanguageManager.i18n("cancel", "ОТМЕНА")
     val confirmAction: String get() = LanguageManager.i18n("confirm_action", "Подтверждение действия")
     val sureExecute: String get() = LanguageManager.i18n("sure_execute", "Вы уверены?")
-    val lyrics: String get() = LanguageManager.i18n("lyrics", "ТЕКСТ ПЕСНИ")
-    val unknownArtist: String get() = LanguageManager.i18n("unknown_artist", "Неизвестный исполнитель")
-    val waiting: String get() = LanguageManager.i18n("waiting", "Ожидание...")
-    val speaker: String get() = LanguageManager.i18n("speaker", "Колонка")
-    val media: String get() = LanguageManager.i18n("media", "Медиа")
-    val noMedia: String get() = LanguageManager.i18n("no_media", "Ничего не воспроизводится")
 }

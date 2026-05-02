@@ -1,13 +1,22 @@
 package com.monithome
 
 import android.os.Bundle
+import android.content.Context
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.content.edit
 import androidx.compose.runtime.*
 import com.monithome.ui.*
 import com.monithome.network.SocketManager
+import com.monithome.network.YandexStationManager
+import com.monithome.data.LanguageManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import android.graphics.Color
+import androidx.core.view.WindowCompat
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -15,27 +24,27 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         
         // Инициализируем менеджеры
-        com.monithome.data.LanguageManager.init(this)
-        com.monithome.network.YandexStationManager.init(this)
+        LanguageManager.init(this)
+        YandexStationManager.init(this)
         
         // Включаем полноэкранный режим (Immersive Mode) и прозрачность
-        androidx.core.view.WindowCompat.setDecorFitsSystemWindows(window, false)
-        window.statusBarColor = android.graphics.Color.TRANSPARENT
-        window.navigationBarColor = android.graphics.Color.TRANSPARENT
+        WindowCompat.setDecorFitsSystemWindows(window, false)
+        window.statusBarColor = Color.TRANSPARENT
+        window.navigationBarColor = Color.TRANSPARENT
         
         // Убираем ограничения выреза (notch)
         if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-            window.attributes.layoutInDisplayCutoutMode = android.view.WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+            window.attributes.layoutInDisplayCutoutMode = WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
         }
 
-        val controller = androidx.core.view.WindowInsetsControllerCompat(window, window.decorView)
-        controller.hide(androidx.core.view.WindowInsetsCompat.Type.systemBars())
-        controller.systemBarsBehavior = androidx.core.view.WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        val controller = WindowInsetsControllerCompat(window, window.decorView)
+        controller.hide(WindowInsetsCompat.Type.systemBars())
+        controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
         
         // Держим экран включенным
-        window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
-        val prefs = getSharedPreferences("monithome_prefs", android.content.Context.MODE_PRIVATE)
+        val prefs = getSharedPreferences("monithome_prefs", Context.MODE_PRIVATE)
         
         setContent {
             var serverIp by remember { mutableStateOf(prefs.getString("server_ip", "") ?: "") }
@@ -59,7 +68,10 @@ class MainActivity : ComponentActivity() {
                 }
                 SocketManager.onAuthSuccess = { token: String ->
                     scope.launch(Dispatchers.Main) {
-                        prefs.edit().putString("auth_token", token).putString("server_ip", serverIp).apply()
+                        prefs.edit {
+                            putString("auth_token", token)
+                            putString("server_ip", serverIp)
+                        }
                         authToken = token
                         currentScreen = "dashboard"
                     }
@@ -70,7 +82,7 @@ class MainActivity : ComponentActivity() {
                         scope.launch(Dispatchers.Main) {
                             currentScreen = "dashboard"
                             // Сохраняем IP, так как подключение успешно
-                            prefs.edit().putString("server_ip", serverIp).apply()
+                            prefs.edit { putString("server_ip", serverIp) }
                         }
                     }
                 }

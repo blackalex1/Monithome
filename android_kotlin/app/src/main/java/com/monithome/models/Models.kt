@@ -17,25 +17,7 @@ data class PluginInfo(
     val widgets: List<Widget>? = emptyList(),
     val actions: List<Widget>? = emptyList(),
     val active: Boolean? = false
-) {
-    fun getLocalizedLabel(): String {
-        val lang = com.monithome.data.LanguageManager.currentLanguage.value
-        return if (lang == com.monithome.data.AppLanguage.ENGLISH && !nameEn.isNullOrEmpty()) {
-            nameEn
-        } else {
-            name ?: ""
-        }
-    }
-
-    fun getLocalizedDescription(): String {
-        val lang = com.monithome.data.LanguageManager.currentLanguage.value
-        return if (lang == com.monithome.data.AppLanguage.ENGLISH && !descriptionEn.isNullOrEmpty()) {
-            descriptionEn
-        } else {
-            description ?: ""
-        }
-    }
-}
+)
 
 data class Widget(
     val id: String? = null,

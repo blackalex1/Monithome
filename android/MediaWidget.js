@@ -268,12 +268,14 @@ const MediaWidget = React.memo(({ widget, allPlugins, activeTargets, onCommand, 
           style={styles.volumeSliderTrack}
           onStartShouldSetResponder={() => true}
           onResponderGrant={(e) => {
-            const newVol = Math.round((e.nativeEvent.locationX / (screenWidth - 80)) * 100);
+            const containerWidth = screenWidth - 80;
+            const newVol = Math.round(Math.min(100, Math.max(0, (e.nativeEvent.locationX / containerWidth) * 100)));
             setSlidingVol(newVol);
             onCommand(pluginToUse, `set_volume:${newVol}`, finalTarget);
           }}
           onResponderMove={(e) => {
-            const newVol = Math.round((e.nativeEvent.locationX / (screenWidth - 80)) * 100);
+            const containerWidth = screenWidth - 80;
+            const newVol = Math.round(Math.min(100, Math.max(0, (e.nativeEvent.locationX / containerWidth) * 100)));
             setSlidingVol(newVol);
             if (newVol % 3 === 0) onCommand(pluginToUse, `set_volume:${newVol}`, finalTarget);
           }}
@@ -281,8 +283,14 @@ const MediaWidget = React.memo(({ widget, allPlugins, activeTargets, onCommand, 
             setTimeout(() => setSlidingVol(null), 500);
           }}
         >
-          <View style={[styles.volumeSliderFill, { width: `${slidingVol !== null ? slidingVol : (currentSource.volume || 0)}%` }]} />
-          <View style={[styles.volumeSliderThumb, { left: `${slidingVol !== null ? slidingVol : (currentSource.volume || 0)}%` }]} />
+          <View style={{ 
+            ...styles.volumeSliderFill, 
+            width: `${slidingVol !== null ? slidingVol : (currentSource.volume || 0)}%` 
+          }} />
+          <View style={{ 
+            ...styles.volumeSliderThumb, 
+            left: `${slidingVol !== null ? slidingVol : (currentSource.volume || 0)}%` 
+          }} />
         </View>
       </View>
 

@@ -24,15 +24,17 @@ export const StatWidget = React.memo(({ widget, stats, isSmall, lang }) => {
   const sharedProgress = useSharedValue(0);
 
   useEffect(() => {
-    sharedProgress.value = withTiming(Math.min(100, Math.max(0, progressPercent)), { duration: 300 });
+    sharedProgress.value = withTiming(Math.min(100, Math.max(0, Number(progressPercent) || 0)), { duration: 300 });
   }, [progressPercent]);
 
   const animatedProgressStyle = useAnimatedStyle(() => {
-    // Вычисляем цвет тоже на UI-потоке
-    const color = sharedProgress.value > 80 ? '#ef4444' : (sharedProgress.value > 60 ? '#f59e0b' : '#38bdf8');
+    const p = sharedProgress.value;
+    const color = p > 80 ? '#ef4444' : (p > 60 ? '#f59e0b' : '#38bdf8');
     return {
-      width: `${sharedProgress.value}%`,
-      backgroundColor: color
+      width: `${p}%`,
+      backgroundColor: color,
+      height: '100%',
+      borderRadius: 4
     };
   });
 
@@ -47,7 +49,7 @@ export const StatWidget = React.memo(({ widget, stats, isSmall, lang }) => {
       </View>
       <Text style={[styles.statValueText, isSmall && { fontSize: 24, marginTop: 8 }]}>{displayValue}</Text>
       <View style={styles.volumeSliderTrack}>
-        <Animated.View style={[styles.volumeSliderFill, animatedProgressStyle]} />
+        <Animated.View style={animatedProgressStyle} />
       </View>
     </View>
   );
@@ -82,7 +84,7 @@ export const ChartWidget = React.memo(({ widget, stats, history, pluginId, lang 
             key={i} 
             style={{ 
               flex: 1, 
-              height: `${Math.max(15, Math.min(100, val))}%`, 
+              height: `${Math.max(15, Math.min(100, Number(val) || 0))}%`, 
               backgroundColor: widget.color || '#38bdf8', 
               opacity: 0.6,
               borderRadius: 2

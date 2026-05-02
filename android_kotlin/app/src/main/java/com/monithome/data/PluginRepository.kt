@@ -55,10 +55,6 @@ object PluginRepository {
         return history[pluginId]?.mapValues { it.value.getValues() } ?: emptyMap()
     }
 
-    fun getLyricsForDevice(deviceId: String): LyricsData? {
-        return _lyrics.value[deviceId]
-    }
-
     // 3. Методы обновления данных
     fun bulkUpdate(updates: Map<String, Any>) {
         updates.forEach { (pId, data) ->
@@ -145,7 +141,7 @@ object PluginRepository {
         val finalDataWithTime = finalData.toMutableMap().apply {
             put("local_last_update", System.currentTimeMillis() / 1000.0)
         }
-        flow.value = flow.value + finalDataWithTime
+        flow.value += finalDataWithTime
         updateHistory(pluginId, finalData)
     }
 
@@ -248,7 +244,6 @@ object PluginRepository {
                     
                     val cover = if (innerData.has("cover") && !innerData.isNull("cover")) innerData.getString("cover") else null
                     val deviceId = if (innerData.has("device_id") && !innerData.isNull("device_id")) innerData.getString("device_id") else null
-                    val title = if (innerData.has("title") && !innerData.isNull("title")) innerData.getString("title") else ""
 
                     if (cover != null) {
                         if (deviceId != null) {
@@ -275,7 +270,7 @@ object PluginRepository {
             }
             "yandex_config" -> {
                 try {
-                    val json = if (data is org.json.JSONObject) data else org.json.JSONObject(data.toString())
+                    val json = (data as? org.json.JSONObject) ?: org.json.JSONObject(data.toString())
                     if (json.has("devices")) {
                         val devicesArray = json.getJSONArray("devices")
                         val configs = mutableListOf<StationConfig>()

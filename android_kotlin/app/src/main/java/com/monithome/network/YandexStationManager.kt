@@ -94,7 +94,7 @@ object YandexStationManager {
         val devices = configs.map { config ->
             mapOf(
                 "id" to config.deviceId,
-                "name" to (config.name ?: "Яндекс Станция"),
+                "name" to config.name,
                 "status" to "direct",
                 "online" to false // Пока не подключились
             )

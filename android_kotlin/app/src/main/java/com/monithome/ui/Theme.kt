@@ -19,12 +19,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.lerp
 
 object MonitTheme {
-    val Background = Color(0xFF020617)
-    val Surface = Color(0xFF0F172A)
     val Primary = Color(0xFF38BDF8)
     val Secondary = Color(0xFF818CF8)
-    val Accent = Color(0xFFF472B6)
-    val TextPrimary = Color.White
     val TextSecondary = Color(0xFF64748B)
     
     val GlassBrush = Brush.verticalGradient(

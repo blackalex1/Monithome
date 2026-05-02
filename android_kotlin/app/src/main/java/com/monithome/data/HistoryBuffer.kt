@@ -19,21 +19,17 @@ class HistoryBuffer(val size: Int = 30) {
      * Возвращает список значений в хронологическом порядке [самые старые -> самые новые]
      */
     fun getValues(): List<Float> {
-        val result = mutableListOf<Float>()
-        if (!isFull) {
-            for (i in 0 until head) {
-                result.add(buffer[i])
-            }
+        if (!isFull && head == 0) return emptyList()
+        
+        return if (!isFull) {
+            buffer.slice(0 until head)
         } else {
-            // Сначала старая часть (от head до конца)
-            for (i in head until size) {
-                result.add(buffer[i])
+            // Сначала старая часть (от head до конца), потом новая часть (от начала до head)
+            val result = buffer.slice(head until size).toMutableList()
+            if (head > 0) {
+                result.addAll(buffer.slice(0 until head))
             }
-            // Потом новая часть (от начала до head)
-            for (i in 0 until head) {
-                result.add(buffer[i])
-            }
+            result
         }
-        return result
     }
 }

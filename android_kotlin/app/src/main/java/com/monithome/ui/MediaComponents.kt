@@ -49,7 +49,7 @@ fun MediaWidget() {
         @Suppress("UNCHECKED_CAST")
         val devices = pStats["devices"] as? List<Map<String, Any>>
         
-        if (devices != null && devices.isNotEmpty()) {
+        if (!devices.isNullOrEmpty()) {
             devices.forEach { dev ->
                 sources.add(FlatSource(
                     pluginId = pId,
@@ -95,11 +95,7 @@ fun MediaWidget() {
     
     // Сброс прогресса при смене трека или резком скачке (более 5 сек)
     LaunchedEffect(title, baseProgress) {
-        if (title.isEmpty()) {
-            interpolatedProgress = 0.0
-        } else {
-            interpolatedProgress = baseProgress
-        }
+        interpolatedProgress = if (title.isEmpty()) 0.0 else baseProgress
     }
     
     LaunchedEffect(baseProgress, isPlaying, lastUpdate) {

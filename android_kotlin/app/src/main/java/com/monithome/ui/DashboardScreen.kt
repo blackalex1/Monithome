@@ -27,8 +27,6 @@ fun DashboardScreen() {
     LaunchedEffect(uiConfigs.size) {
         android.util.Log.i("DashboardScreen", "uiConfigs changed! size: ${uiConfigs.size}")
     }
-    val currentLanguage by com.monithome.data.LanguageManager.currentLanguage.collectAsState()
-    val translations by com.monithome.data.LanguageManager.translations.collectAsState()
     val activeLyrics by PluginRepository.activeLyrics.collectAsState()
     val strings = com.monithome.data.Strings
 
@@ -59,7 +57,7 @@ fun DashboardScreen() {
                     modifier = Modifier
                         .fillMaxSize()
                         .padding(padding),
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 72.dp), // Увеличили верхний отступ для шапки
+                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 72.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     items(uiConfigs, key = { it.id ?: it.hashCode().toString() }) { plugin ->
@@ -90,7 +88,6 @@ fun DashboardScreen() {
             }
         }
 
-        // ШАПКА (полностью прозрачная, чтобы не создавать "плашку")
         Surface(
             color = Color.Transparent,
             modifier = Modifier.fillMaxWidth().align(Alignment.TopCenter)
@@ -101,7 +98,6 @@ fun DashboardScreen() {
                     .height(64.dp)
                     .padding(horizontal = 16.dp)
             ) {
-                // Центр: Логотип
                 Text(
                     "MONITHOME",
                     modifier = Modifier.align(Alignment.Center),
@@ -112,7 +108,6 @@ fun DashboardScreen() {
                     )
                 )
 
-                // Право: Системная инфо и Статус
                 Row(
                     verticalAlignment = Alignment.CenterVertically,
                     modifier = Modifier.align(Alignment.CenterEnd)

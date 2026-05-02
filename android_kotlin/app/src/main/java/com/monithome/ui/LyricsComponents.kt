@@ -86,8 +86,10 @@ fun LyricsFullscreenView(pluginId: String, deviceId: String, onDismiss: () -> Un
         }
     }
 
+    val currentLanguage by com.monithome.data.LanguageManager.currentLanguage.collectAsState()
+    
     BoxWithConstraints(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        val viewHeight = constraints.maxHeight
+        val viewHeight = this.constraints.maxHeight
         val density = androidx.compose.ui.platform.LocalDensity.current
 
         val currentIndex by remember(lyricsData) {
@@ -147,7 +149,7 @@ fun LyricsFullscreenView(pluginId: String, deviceId: String, onDismiss: () -> Un
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         item { Spacer(modifier = Modifier.height(halfHeightDp)) }
-                        itemsIndexed(lyricsData.timings ?: emptyList(), key = { i, t -> "$i-${t.time}" }) { index, timing ->
+                        itemsIndexed(lyricsData.timings, key = { i, t -> "$i-${t.time}" }) { index, timing ->
                             val isCurrent = index == currentIndex
                             val distance = abs(index - currentIndex)
                             
@@ -169,7 +171,13 @@ fun LyricsFullscreenView(pluginId: String, deviceId: String, onDismiss: () -> Un
 
             // 3. ШАПКА
             val trackArtist = (stats["artist"] as? String) ?: (stats["subtitle"] as? String) ?: "Неизвестный исполнитель"
-            LyricsHeader(title = trackTitle, artist = trackArtist, hasNoLyrics = hasNoLyrics, onDismiss = onDismiss)
+            LyricsHeader(
+                title = trackTitle, 
+                artist = trackArtist, 
+                hasNoLyrics = hasNoLyrics, 
+                currentLanguageCode = currentLanguage.code,
+                onDismiss = onDismiss
+            )
         }
     }
 }
@@ -206,7 +214,7 @@ fun LyricsBackground(coverData: String?, blurEnabled: Boolean) {
 }
 
 @Composable
-fun LyricsHeader(title: String, artist: String, hasNoLyrics: Boolean, onDismiss: () -> Unit) {
+fun LyricsHeader(title: String, artist: String, hasNoLyrics: Boolean, currentLanguageCode: String, onDismiss: () -> Unit) {
     Surface(
         color = Color.Transparent,
         modifier = Modifier.fillMaxWidth()
@@ -223,7 +231,7 @@ fun LyricsHeader(title: String, artist: String, hasNoLyrics: Boolean, onDismiss:
                 }
                 if (hasNoLyrics) {
                     Text(
-                        text = if (com.monithome.data.LanguageManager.currentLanguage.value.code == "ru") "Текст недоступен" else "Lyrics not available",
+                        text = if (currentLanguageCode == "ru") "Текст недоступен" else "Lyrics not available",
                         color = Color(0xFF38BDF8),
                         fontSize = 13.sp,
                         fontWeight = FontWeight.Bold,

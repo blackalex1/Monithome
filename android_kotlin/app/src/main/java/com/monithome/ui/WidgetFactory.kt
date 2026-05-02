@@ -87,7 +87,7 @@ fun RowWidget(pluginId: String, widget: Widget) {
         modifier = Modifier.fillMaxWidth(),
         horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
-        widget.children?.forEach { child ->
+        for (child in (widget.children ?: emptyList())) {
             Box(modifier = Modifier.weight(1f)) {
                 WidgetRenderer(pluginId, child)
             }
