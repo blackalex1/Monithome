@@ -12,6 +12,7 @@ import com.monithome.models.Widget
 @Composable
 fun ListWidget(widget: Widget, stats: Map<String, Any>) {
     val lKey = widget.listKey ?: ""
+    @Suppress("UNCHECKED_CAST")
     val items = stats[lKey] as? List<Map<String, Any>> ?: emptyList()
 
     WidgetContainer {

@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.automirrored.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -157,10 +158,10 @@ fun mapIcon(iconName: String?): ImageVector {
         "power", "shutdown" -> Icons.Default.PowerSettingsNew
         "lock" -> Icons.Default.Lock
         "refresh", "restart", "refreshcw" -> Icons.Default.Refresh
-        "volume" -> Icons.Default.VolumeUp
+        "volume" -> Icons.AutoMirrored.Filled.VolumeUp
         "cpu" -> Icons.Default.Memory
         "gpu" -> Icons.Default.DeveloperBoard
         "ram" -> Icons.Default.Dns
-        else -> Icons.Default.Help // Изменил на знак вопроса для неизвестных, чтобы было понятнее
+        else -> Icons.AutoMirrored.Filled.Help // Изменил на знак вопроса для неизвестных, чтобы было понятнее
     }
 }
