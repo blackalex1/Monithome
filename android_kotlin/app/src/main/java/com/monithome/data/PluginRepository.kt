@@ -105,9 +105,7 @@ object PluginRepository {
                         android.util.Log.d("PluginRepo", "Ignoring server update for $dId (status is direct)")
                         newDevices[idx] = oldDev + mapOf("status" to "direct")
                     } else {
-                        if (pluginId == "yandex_station") {
-                            android.util.Log.d("PluginRepo", "Yandex Update [$dId]: title=${newDev["title"]}, playing=${newDev["playing"]}")
-                        }
+                        android.util.Log.d("PluginRepo", "Yandex Update [$dId]: title=${newDev["title"]}, playing=${newDev["playing"]}")
                         // Обычный режим или обновление обложек
                         val pendingKey = "$pluginId:$dId"
                         if (pendingCovers.containsKey(pendingKey)) {

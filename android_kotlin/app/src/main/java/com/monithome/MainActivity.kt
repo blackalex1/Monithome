@@ -5,7 +5,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
 import com.monithome.ui.*
-import com.monithome.data.PluginRepository
 import com.monithome.network.SocketManager
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch

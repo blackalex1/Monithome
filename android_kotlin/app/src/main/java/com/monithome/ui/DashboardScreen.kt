@@ -18,7 +18,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.zIndex
 import com.monithome.data.PluginRepository
-import com.monithome.models.PluginInfo
 import com.monithome.network.SocketManager
 
 @OptIn(ExperimentalMaterial3Api::class)
