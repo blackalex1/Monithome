@@ -21,6 +21,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
+import androidx.compose.foundation.Canvas
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.CornerRadius
 import com.monithome.models.ColorRange
 
 @Composable
@@ -109,20 +114,54 @@ fun AnimatedProgressBar(
         Box(
             modifier = Modifier
                 .weight(1f)
-                .height(8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color.White.copy(alpha = 0.05f))
+                .height(12.dp),
+            contentAlignment = Alignment.Center
         ) {
-            Box(
-                modifier = Modifier
-                    .fillMaxHeight()
-                    .fillMaxWidth(animatedProgress)
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(barColor.copy(alpha = 0.7f), barColor)
-                        )
+            Canvas(modifier = Modifier.fillMaxWidth().height(6.dp)) {
+                val width = size.width
+                val height = size.height
+                val corner = height / 2f
+                
+                // 1. Track
+                drawRoundRect(
+                    color = Color.White.copy(alpha = 0.06f),
+                    size = size,
+                    cornerRadius = CornerRadius(corner, corner)
+                )
+                
+                if (animatedProgress > 0) {
+                    val progressWidth = width * animatedProgress
+                    val glowRadius = 14.dp.toPx()
+                    val highlightRadius = 2.dp.toPx()
+                    
+                    // 2. Neon Glow (Outer)
+                    drawCircle(
+                        brush = Brush.radialGradient(
+                            colors = listOf(barColor.copy(alpha = 0.3f), Color.Transparent),
+                            center = Offset(progressWidth, corner),
+                            radius = glowRadius
+                        ),
+                        radius = glowRadius,
+                        center = Offset(progressWidth, corner)
                     )
-            )
+                    
+                    // 3. Main Progress Bar
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(
+                            colors = listOf(barColor.copy(alpha = 0.6f), barColor)
+                        ),
+                        size = Size(progressWidth, height),
+                        cornerRadius = CornerRadius(corner, corner)
+                    )
+                    
+                    // 4. Highlight Tip
+                    drawCircle(
+                        color = Color.White.copy(alpha = 0.8f),
+                        radius = highlightRadius,
+                        center = Offset(progressWidth, corner)
+                    )
+                }
+            }
         }
 
         if (label != null) {

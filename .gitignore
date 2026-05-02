@@ -42,6 +42,8 @@ yarn-error.log*
 .expo/
 web-build/
 
+# Build scripts
+build_scripts/
 # IDEs & System Files
 .idea/
 .vscode/

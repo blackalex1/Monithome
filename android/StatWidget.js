@@ -1,10 +1,10 @@
 import React, { useEffect } from 'react';
 import { View, Text } from 'react-native';
-import Animated, { 
-  useSharedValue, 
-  useAnimatedStyle, 
-  withTiming, 
-  interpolateColor 
+import Animated, {
+  useSharedValue,
+  useAnimatedStyle,
+  withTiming,
+  interpolateColor
 } from 'react-native-reanimated';
 import { styles } from './styles';
 import { IconMap, Activity, Layers } from './IconMap';
@@ -13,7 +13,7 @@ import { IconMap, Activity, Layers } from './IconMap';
 export const StatWidget = React.memo(({ widget, stats, isSmall, lang }) => {
   const t = (label, labelEn) => lang === 'en' ? (labelEn || label) : label;
   const Icon = IconMap[widget.icon] || Activity;
-  
+
   const value = stats?.[widget.data_key] || 0;
   const unit = widget.unit || '';
   const displayValue = stats?.[`display_${widget.data_key}`] || (stats?.[widget.data_key] !== undefined ? `${stats[widget.data_key]}${unit}` : `0${unit}`);
@@ -59,12 +59,12 @@ export const ChartWidget = React.memo(({ widget, stats, history, pluginId, lang 
   const t = (label, labelEn) => lang === 'en' ? (labelEn || label) : label;
   const ChartIcon = IconMap[widget.icon] || Layers;
   const componentName = stats?.[widget.data_key + '_name'] || '';
-  
+
   const pluginHistory = history?.[widget.data_key] || Array(20).fill(0);
   let chartData = pluginHistory;
   if (chartData.length > 20) chartData = chartData.slice(-20);
   else if (chartData.length < 20) chartData = [...Array(20 - chartData.length).fill(0), ...chartData];
-  
+
   return (
     <View style={styles.glassCard}>
       <View style={[styles.row, { justifyContent: 'space-between', marginBottom: 12 }]}>
@@ -77,18 +77,18 @@ export const ChartWidget = React.memo(({ widget, stats, history, pluginId, lang 
         </View>
         <Text style={styles.chartValueText}>{stats?.[widget.data_key] || 0}{widget.unit || '%'}</Text>
       </View>
-      
+
       <View style={{ height: 50, width: '100%', flexDirection: 'row', alignItems: 'flex-end', gap: 3 }}>
         {chartData.map((val, i) => (
-          <View 
-            key={i} 
-            style={{ 
-              flex: 1, 
-              height: `${Math.max(15, Math.min(100, Number(val) || 0))}%`, 
-              backgroundColor: widget.color || '#38bdf8', 
+          <View
+            key={i}
+            style={{
+              flex: 1,
+              height: `${Math.max(15, Math.min(100, Number(val) || 0))}%`,
+              backgroundColor: widget.color || '#38bdf8',
               opacity: 0.6,
               borderRadius: 2
-            }} 
+            }}
           />
         ))}
       </View>

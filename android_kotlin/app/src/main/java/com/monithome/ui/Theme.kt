@@ -112,6 +112,9 @@ fun UltraGlowCard(
         Color(0xFF00F5FF)
     )
 
+    val path = remember { Path() }
+    val innerPath = remember { Path() }
+
     Box(
         modifier = modifier
             .padding(20.dp)
@@ -143,9 +146,8 @@ fun UltraGlowCard(
                 val corner = cornerRadius.toPx()
                 val strokeWidth = 2.5.dp.toPx()
                 
-                val path = Path().apply {
-                    addRoundRect(RoundRect(Rect(Offset.Zero, size), CornerRadius(corner)))
-                }
+                path.rewind()
+                path.addRoundRect(RoundRect(Rect(Offset.Zero, size), CornerRadius(corner, corner)))
 
                 // 🌈 3. RGB КОНТУР (по всему телу карточки, но обрезанный)
                 clipPath(path) {
@@ -158,14 +160,13 @@ fun UltraGlowCard(
                 }
 
                 // 🧊 4. ТЕЛО КАРТОЧКИ (закрываем центр, оставляя рамку)
-                val innerPath = Path().apply {
-                    addRoundRect(
-                        RoundRect(
-                            rect = Rect(strokeWidth, strokeWidth, size.width - strokeWidth, size.height - strokeWidth),
-                            cornerRadius = CornerRadius(corner - strokeWidth)
-                        )
+                innerPath.rewind()
+                innerPath.addRoundRect(
+                    RoundRect(
+                        rect = Rect(strokeWidth, strokeWidth, size.width - strokeWidth, size.height - strokeWidth),
+                        cornerRadius = CornerRadius(corner - strokeWidth, corner - strokeWidth)
                     )
-                }
+                )
                 
                 drawPath(innerPath, color = Color(0xFF020617))
                 drawPath(innerPath, brush = MonitTheme.GlassBrush)
@@ -195,40 +196,64 @@ fun UltraGlowCard(
 
 @Composable
 fun AnimatedBackground() {
-    val infiniteTransition = rememberInfiniteTransition(label = "bg")
+    val transition = rememberInfiniteTransition(label = "nebula")
     
-    val progress1 by infiniteTransition.animateFloat(
+    val time by transition.animateFloat(
         initialValue = 0f,
         targetValue = 1f,
         animationSpec = infiniteRepeatable(
-            animation = tween(8000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
+            animation = tween(20000, easing = LinearEasing),
+            repeatMode = RepeatMode.Restart
         ),
-        label = "p1"
+        label = "time"
     )
-    
-    val progress2 by infiniteTransition.animateFloat(
-        initialValue = 0f,
-        targetValue = 1f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(6000, easing = LinearEasing),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "p2"
-    )
-
-    val color1 = lerp(Color(0xFF000000), Color(0xFF0F172A), progress1)
-    val color2 = lerp(Color(0xFF020617), Color(0xFF000000), progress2)
 
     Box(
         modifier = Modifier
             .fillMaxSize()
-            .background(
-                Brush.radialGradient(
-                    colors = listOf(color1, color2),
-                    center = Offset(0f, 0f),
-                    radius = 2000f
+            .background(Color(0xFF020617)) // Deep dark base
+            .drawBehind {
+                val w = size.width
+                val h = size.height
+                
+                // Spot 1: Cyan
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF00F5FF).copy(alpha = 0.08f), Color.Transparent),
+                        center = Offset(
+                            w * (0.2f + 0.3f * kotlin.math.sin(time * 2 * Math.PI.toFloat())),
+                            h * (0.3f + 0.2f * kotlin.math.cos(time * 2 * Math.PI.toFloat()))
+                        ),
+                        radius = w * 0.8f
+                    ),
+                    radius = w * 0.8f
                 )
-            )
+
+                // Spot 2: Purple
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF9B5CFF).copy(alpha = 0.07f), Color.Transparent),
+                        center = Offset(
+                            w * (0.8f + 0.2f * kotlin.math.cos(time * 2 * Math.PI.toFloat() + 1f)),
+                            h * (0.7f + 0.3f * kotlin.math.sin(time * 2 * Math.PI.toFloat() + 1f))
+                        ),
+                        radius = w * 0.9f
+                    ),
+                    radius = w * 0.9f
+                )
+
+                // Spot 3: Deep Blue / Indigo
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(Color(0xFF38BDF8).copy(alpha = 0.1f), Color.Transparent),
+                        center = Offset(
+                            w * (0.5f + 0.4f * kotlin.math.sin(time * 2 * Math.PI.toFloat() * 0.5f)),
+                            h * (0.5f + 0.4f * kotlin.math.cos(time * 2 * Math.PI.toFloat() * 0.5f))
+                        ),
+                        radius = w * 1.2f
+                    ),
+                    radius = w * 1.2f
+                )
+            }
     )
 }

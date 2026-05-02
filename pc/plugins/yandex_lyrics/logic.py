@@ -47,7 +47,8 @@ class Plugin(BasePlugin):
             self.log("MODE CHANGE: Tablet handles lyrics. PC fetching suspended.")
             return
         
-        # Обычный запуск...
+        self._stop_event.clear()
+        self.log("Yandex Lyrics service started on PC.")
 
     def _check_initial_state(self):
         """Проверка, не играет ли уже что-то на станциях"""
@@ -66,8 +67,10 @@ class Plugin(BasePlugin):
     def _on_track_changed(self, data):
         if self._stop_event.is_set(): return
         if self._is_tablet_control(): return
+        
         device_id = data.get("device_id")
         track_id = data.get("track_id")
+        self.log(f"Track change detected for {device_id}: {track_id}")
         
         if not track_id:
             self._active_fetches[device_id] = None
@@ -81,9 +84,16 @@ class Plugin(BasePlugin):
             return
 
         self._active_fetches[device_id] = track_id
-        # Используем ключи перевода вместо готовых строк
-        self._lyrics_cache[device_id] = {"track_id": track_id, "lyrics": "loading", "timings": []}
+        loading_entry = {"track_id": track_id, "lyrics": "loading", "timings": []}
+        self._lyrics_cache[device_id] = loading_entry
         self.update_state({"devices": self._lyrics_cache})
+        
+        # Сразу уведомляем планшет, чтобы стереть старый текст
+        self.manager.socketio.emit(f"plugin_event:{self.p_id}", {
+            "event": "lyrics",
+            "device_id": device_id,
+            "data": loading_entry
+        })
         
         # Debounce
         def delayed_fetch(d_id, t_id):
@@ -111,15 +121,23 @@ class Plugin(BasePlugin):
             }
             self._lyrics_cache[device_id] = lyrics_entry
             
-            # Отправляем событие в UI (здесь данные уже сырые или текст песни, он не переводится)
-            self.manager.emit_to_plugin_ui(
-                self.p_id, "lyrics", 
-                {"device_id": device_id, "data": lyrics_entry}
-            )
+            # Отправляем событие в специальный канал, который слушает планшет
+            self.manager.socketio.emit(f"plugin_event:{self.p_id}", {
+                "event": "lyrics",
+                "device_id": device_id,
+                "data": lyrics_entry
+            })
         else:
             self.manager.log("Lyrics", "Lyrics not available", level="warning")
             # Отправляем пустую строку, чтобы Android понял, что текста нет и не затемнял фон
-            self._lyrics_cache[device_id] = {"track_id": track_id, "lyrics": "", "timings": []}
+            lyrics_entry = {"track_id": track_id, "lyrics": "", "timings": []}
+            self._lyrics_cache[device_id] = lyrics_entry
+            
+            self.manager.socketio.emit(f"plugin_event:{self.p_id}", {
+                "event": "lyrics",
+                "device_id": device_id,
+                "data": lyrics_entry
+            })
             
         self.update_state({"devices": self._lyrics_cache})
 
@@ -219,7 +237,8 @@ class Plugin(BasePlugin):
             if data:
                 events.append({
                     "event": "lyrics",
-                    "data": {"device_id": d_id, "data": data}
+                    "device_id": d_id,
+                    "data": data
                 })
         return events
 

@@ -233,7 +233,7 @@ object PluginRepository {
                     
                     processLyrics(deviceId, lyricsData)
                 } catch (e: Exception) {
-                    android.util.Log.e("PluginRepo", "Lyrics parse error: ${e.message}")
+                    android.util.Log.d("PluginRepo", "Lyrics parse error: ${e.message}")
                 }
             }
             "cover" -> {

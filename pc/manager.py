@@ -231,7 +231,17 @@ class PluginManager:
             p_instance = self.plugins.pop(p_id)
             if hasattr(p_instance, 'stop'):
                 p_instance.stop()
+            
+            # Полностью очищаем состояние плагина, чтобы он исчез с UI
+            with self._lock:
+                if p_id in self._state:
+                    del self._state[p_id]
+            
+            # Оповещаем клиентов об остановке
+            self.socketio.emit('plugin_stopped', {'id': p_id}, room='authorized', namespace='/')
+            
             self.log("CORE", f"Plugin stopped: {p_id}")
+            self.broadcast_ui()
 
     def reload_plugin(self, p_id: str):
         """Перезагрузка плагина (остановка + запуск)"""
@@ -305,8 +315,9 @@ class PluginManager:
             item["id"] = p_id
             item["active"] = p_id in active_ids
             
-            # Удаляем несериализуемые объекты
+            # Удаляем несериализуемые объекты (классы, модули и т.д.)
             if "class" in item: del item["class"]
+            if "module" in item: del item["module"]
             
             info.append(item)
         return info

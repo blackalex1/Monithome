@@ -236,12 +236,13 @@ object YandexStationManager {
             mappedData["progress"] = progress
             mappedData["duration"] = state.optDouble("duration", playerState.optDouble("duration", 0.0))
             
-            // Проверка смены трека для текстов (используем локальный кэш для надежности)
+            // Проверка смены трека для текстов
             val oldTrackId = lastTrackIds[deviceId]
+            val isLyricsPluginActive = PluginRepository.uiConfigs.value.any { it.id == "yandex_lyrics" && it.active == true }
             
-            if (trackId.isNotEmpty() && trackId != oldTrackId) {
+            if (trackId.isNotEmpty() && trackId != oldTrackId && isLyricsPluginActive) {
                 lastTrackIds[deviceId] = trackId
-                Log.d(TAG, "Track changed for $deviceId: $oldTrackId -> $trackId. Fetching lyrics...")
+                Log.d(TAG, "Track changed for $deviceId: $oldTrackId -> $trackId. Fetching lyrics locally...")
                 lyricsFetcher.fetch(deviceId, trackId, yandexToken)
                 SocketManager.sendCommand("yandex_station", "sync_track", mapOf("track_id" to trackId), target = deviceId)
             }

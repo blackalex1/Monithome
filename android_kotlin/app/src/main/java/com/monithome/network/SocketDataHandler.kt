@@ -119,10 +119,10 @@ object SocketDataHandler {
                 try {
                     val eventData = JsonParser.safeParseJson(args) as? JSONObject ?: return@on
                     val eventNameInside = eventData.optString("event")
-                    val data = eventData.optJSONObject("data")
                     
-                    if (pId == "yandex_station" && eventNameInside == "yandex_config" && data != null) {
-                        SocketManager.handleYandexConfigEvent(data)
+                    if (pId == "yandex_station" && eventNameInside == "yandex_config" && eventData.has("data")) {
+                        val data = eventData.optJSONObject("data")
+                        if (data != null) SocketManager.handleYandexConfigEvent(data)
                     } else {
                         PluginRepository.handlePluginEvent(pId, eventNameInside, eventData)
                     }

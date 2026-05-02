@@ -5,6 +5,7 @@ export interface TranslationSchema {
     plugins: string;
     layout: string;
     import: string;
+    console: string;
     serverOnline: string;
     serverOffline: string;
     github: string;
@@ -13,6 +14,7 @@ export interface TranslationSchema {
     managePlugins: string;
     tabletOrder: string;
     importPlugin: string;
+    systemLogs: string;
     subtitle: string;
   };
   plugins: {
@@ -54,6 +56,7 @@ export const defaultTranslations: TranslationSchema = {
     plugins: "Плагины",
     layout: "Расположение",
     import: "Импорт",
+    console: "Консоль",
     serverOnline: "Сервер онлайн",
     serverOffline: "Сервер оффлайн",
     github: "GitHub Проект"
@@ -62,6 +65,7 @@ export const defaultTranslations: TranslationSchema = {
     managePlugins: "Управление Плагинами",
     tabletOrder: "Порядок на Планшете",
     importPlugin: "Импорт Плагинов",
+    systemLogs: "Консоль Системы",
     subtitle: "Конфигурация компонентов для мобильного приложения"
   },
   plugins: {

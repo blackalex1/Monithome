@@ -21,7 +21,7 @@ def register_socket_events(socketio, p_manager):
             token = auth.get('token')
         
         master = get_master_config()
-        is_localhost = request.remote_addr == '127.0.0.1' or request.remote_addr == 'localhost'
+        is_localhost = request.remote_addr in ['127.0.0.1', 'localhost', '::1']
         trusted = master.get("trusted_tokens", [])
         
         if is_localhost or (token in trusted and token is not None):

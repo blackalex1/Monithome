@@ -4,7 +4,8 @@ import {
   Puzzle, 
   Layers, 
   Upload, 
-  Monitor
+  Monitor,
+  Terminal
 } from 'lucide-react';
 import { motion, AnimatePresence, Reorder } from 'framer-motion';
 
@@ -29,6 +30,8 @@ function App() {
   
   const [allPlugins, setAllPlugins] = useState<PluginInfo[]>([]);
   const [masterConfig, setMasterConfig] = useState<MasterConfig | null>(null);
+  const [systemLogs, setSystemLogs] = useState<{message: string, level: string, time: number, id: number}[]>([]);
+  const logEndRef = useRef<HTMLDivElement>(null);
   
   const [lang, setLang] = useState<Language>('ru');
   const [t, setT] = useState(defaultTranslations);
@@ -39,6 +42,12 @@ function App() {
       .then(data => setT(data))
       .catch(err => console.error("Failed to load translations:", err));
   }, [lang]);
+
+  useEffect(() => {
+    if (activeTab === 'console' && logEndRef.current) {
+      logEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [systemLogs, activeTab]);
 
   useEffect(() => {
     if (masterConfig?.language) {
@@ -102,6 +111,10 @@ function App() {
       } else if (data.event === 'auth_success') {
         setYandexQrData(null);
       }
+    });
+
+    s.on('system_log', (log) => {
+      setSystemLogs(prev => [...prev.slice(-199), { ...log, id: Date.now() + Math.random() }]);
     });
 
     return () => { s.disconnect(); };
@@ -224,6 +237,9 @@ function App() {
           <div className={`nav-item ${activeTab === 'import' ? 'active' : ''}`} onClick={() => setActiveTab('import')}>
             <Upload size={20} /> {t.sidebar.import}
           </div>
+          <div className={`nav-item ${activeTab === 'console' ? 'active' : ''}`} onClick={() => setActiveTab('console')}>
+            <Terminal size={20} /> {t.sidebar.console || "Консоль"}
+          </div>
         </nav>
 
         <div style={{ padding: '0 1.5rem', marginBottom: '2rem' }}>
@@ -310,7 +326,9 @@ function App() {
           <div>
             <h1 style={{ fontSize: '1.75rem', fontWeight: 700 }}>
               {activeTab === 'plugins' ? t.header.managePlugins : 
-               activeTab === 'layout' ? t.header.tabletOrder : t.header.importPlugin}
+               activeTab === 'layout' ? t.header.tabletOrder : 
+               activeTab === 'console' ? t.header.systemLogs :
+               t.header.importPlugin}
             </h1>
             <p style={{ color: 'rgba(255,255,255,0.5)', marginTop: '0.25rem' }}>
               {t.header.subtitle}
@@ -339,6 +357,7 @@ function App() {
             <motion.div key="layout" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} className="layout-container">
               <Reorder.Group axis="y" values={masterConfig?.active_plugins || []} onReorder={updateOrder} className="layout-list" as="div">
                 {masterConfig?.active_plugins
+                  .filter(pId => pId !== 'yandex_station') // Яндекс Станция встроена в Медиа
                   .filter(pId => {
                     const pInfo = allPlugins.find(p => p.id === pId);
                     return (pInfo?.config?.widgets?.length || 0) > 0 || (pInfo?.config?.actions?.length || 0) > 0;
@@ -363,6 +382,39 @@ function App() {
                 </button>
              </motion.div>
           )}
+
+          {activeTab === 'console' && (
+             <motion.div key="console" initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.98 }} className="glass-card" style={{ height: 'calc(100vh - 250px)', display: 'flex', flexDirection: 'column', padding: '1.5rem', overflow: 'hidden' }}>
+               <div style={{ flex: 1, overflowY: 'auto', fontFamily: 'monospace', fontSize: '0.9rem', lineHeight: '1.6' }}>
+                  {systemLogs.length === 0 && <div style={{ opacity: 0.4, fontStyle: 'italic' }}>Ожидание системных логов...</div>}
+                  {systemLogs.map(log => (
+                    <div key={log.id} style={{ 
+                      marginBottom: '4px', 
+                      display: 'flex', 
+                      gap: '12px',
+                      color: log.level === 'ERROR' ? '#ff5555' : log.level === 'WARNING' ? '#ffcc00' : 'rgba(255,255,255,0.8)'
+                    }}>
+                      <span style={{ opacity: 0.3, minWidth: '70px' }}>{new Date(log.time * 1000).toLocaleTimeString()}</span>
+                      <span style={{ 
+                        fontWeight: 700, 
+                        minWidth: '50px',
+                        color: log.level === 'ERROR' ? '#ff5555' : log.level === 'WARNING' ? '#ffcc00' : 'var(--accent-cyan)'
+                      }}>
+                        [{log.level}]
+                      </span>
+                      <span style={{ wordBreak: 'break-all' }}>{log.message}</span>
+                    </div>
+                  ))}
+                  <div ref={logEndRef} />
+               </div>
+               <div style={{ marginTop: '1rem', paddingTop: '1rem', borderTop: '1px solid rgba(255,255,255,0.05)', display: 'flex', justifyContent: 'space-between', opacity: 0.5, fontSize: '0.75rem' }}>
+                 <span>Автопрокрутка включена</span>
+                 <button onClick={() => setSystemLogs([])} style={{ background: 'transparent', border: 'none', color: '#ff5555', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 700 }}>
+                   ОЧИСТИТЬ
+                 </button>
+               </div>
+             </motion.div>
+           )}
         </AnimatePresence>
 
         {editingPlugin && (

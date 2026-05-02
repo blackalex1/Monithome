@@ -1,34 +1,44 @@
 package com.monithome.ui
 
+import android.graphics.BlurMaskFilter
+import android.graphics.Paint
+import androidx.compose.animation.core.*
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.*
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monithome.data.PluginRepository
 import com.monithome.models.Widget
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.graphics.Brush
-import androidx.compose.ui.graphics.StrokeCap
 
 import com.monithome.utils.resolveStat
 import com.monithome.utils.toComposeColor
 
+data class ChartSnapshot(
+    val points: List<Float>,
+    val oldMax: Float,
+    val newMax: Float
+)
+
 @Composable
 fun ChartWidget(pluginId: String, widget: Widget) {
     val stats by PluginRepository.getPluginStats(pluginId).collectAsState()
-    val history = PluginRepository.getHistory(pluginId)[widget.dataKey ?: ""] ?: emptyList()
     val key = widget.dataKey ?: ""
+    val history = remember(stats) {
+        PluginRepository.getHistory(pluginId)[key] ?: emptyList()
+    }
     val currentValue = stats.resolveStat(key, widget.unit)
     
-    // Получаем название компонента (процессора или видеокарты)
     val componentName = remember(key, stats) {
         when {
             key.contains("cpu") -> stats["cpu_name"]?.toString()
@@ -37,128 +47,171 @@ fun ChartWidget(pluginId: String, widget: Widget) {
         }
     }
 
-    val color = widget.color.toComposeColor()
+    val baseColor = widget.color.toComposeColor()
+    val pointCount = 60
+    
+    // Единое атомарное состояние графика
+    var snapshot by remember { 
+        val initial = history.takeLast(pointCount + 3)
+        val rawMax = initial.maxOrNull() ?: 100f
+        val startMax = if (widget.unit == "%") 100f else if (rawMax < 1f) 1f else rawMax * 1.05f
+        mutableStateOf(ChartSnapshot(initial, startMax, startMax)) 
+    }
+    
+    val transitionProgress = remember { Animatable(0f) }
+    
+    LaunchedEffect(history.size, history.lastOrNull()) {
+        if (history.isNotEmpty()) {
+            val nextPoints = history.takeLast(pointCount + 3)
+            val rawMax = nextPoints.maxOrNull() ?: 100f
+            val nextMax = if (widget.unit == "%") 100f else if (rawMax < 1f) 1f else rawMax * 1.05f
+            
+            snapshot = ChartSnapshot(
+                points = nextPoints,
+                oldMax = snapshot.newMax,
+                newMax = nextMax
+            )
+            
+            transitionProgress.snapTo(0f)
+            transitionProgress.animateTo(1f, tween(1000, easing = LinearEasing))
+        }
+    }
 
     GlassCard(
-        modifier = Modifier.fillMaxWidth().padding(vertical = 4.dp),
-        cornerRadius = 16.dp
+        modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp),
+        cornerRadius = 20.dp
     ) {
-        Column {
+        Column(modifier = Modifier.padding(12.dp)) {
+            // Header
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.Top
+                verticalAlignment = Alignment.CenterVertically
             ) {
-                Row(
-                    modifier = Modifier.weight(1f),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
                     if (!widget.icon.isNullOrEmpty()) {
-                        Icon(
-                            imageVector = mapIcon(widget.icon),
-                            contentDescription = null,
-                            tint = color,
-                            modifier = Modifier.size(28.dp).padding(end = 10.dp)
-                        )
+                        Icon(imageVector = mapIcon(widget.icon), contentDescription = null, tint = baseColor, modifier = Modifier.size(24.dp))
+                        Spacer(modifier = Modifier.width(10.dp))
                     }
                     Column {
-                        Text(
-                            widget.label ?: "", 
-                            color = Color.White.copy(alpha = 0.9f), 
-                            fontSize = 12.sp, 
-                            fontWeight = FontWeight.Medium
-                        )
+                        Text(widget.label ?: "", color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
                         if (!componentName.isNullOrEmpty()) {
-                            Text(
-                                componentName,
-                                color = MonitTheme.TextSecondary.copy(alpha = 0.5f),
-                                fontSize = 10.sp,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
+                            Text(componentName, color = Color.White.copy(alpha = 0.4f), fontSize = 10.sp, maxLines = 1)
                         }
                     }
                 }
-                
-                Text(
-                    text = currentValue, 
-                    color = Color.White, 
-                    fontWeight = FontWeight.Black,
-                    fontSize = 16.sp,
-                    modifier = Modifier.padding(start = 8.dp)
-                )
+                Text(currentValue, color = Color.White, fontSize = 20.sp, fontWeight = FontWeight.Black)
             }
             
-            Spacer(modifier = Modifier.height(12.dp))
+            Spacer(modifier = Modifier.height(16.dp))
             
-            Canvas(modifier = Modifier.fillMaxWidth().height(55.dp)) {
-                if (history.isEmpty()) return@Canvas
-                
-                val path = Path()
-                val fillPath = Path()
+            // Optimized Neon Chart Canvas
+            val chartPath = remember { Path() }
+            val fillPath = remember { Path() }
+            val nativePaint = remember<android.graphics.Paint> {
+                android.graphics.Paint().apply {
+                    isAntiAlias = true
+                    style = android.graphics.Paint.Style.STROKE
+                    maskFilter = BlurMaskFilter(14f, BlurMaskFilter.Blur.NORMAL)
+                }
+            }
+            
+            Canvas(modifier = Modifier.fillMaxWidth().height(84.dp)) {
                 val width = size.width
                 val height = size.height
+                val p = transitionProgress.value
                 
-                val points = history.takeLast(40) // Берем чуть больше точек для плавности
-                val stepX = width / (points.size - 1).coerceAtLeast(1)
+                val currentMaxVal = (snapshot.oldMax + (snapshot.newMax - snapshot.oldMax) * p).coerceAtLeast(0.1f)
+                val points = snapshot.points
+                if (points.size < 2) return@Canvas
                 
-                // Динамическое масштабирование: ищем максимум в истории
-                val historyMax = points.maxOrNull() ?: 100f
-                // Если это проценты - до 100, если нет (напр. ГБ) - берем с запасом 10%
-                val maxVal = if (historyMax <= 100f && widget.unit == "%") 100f else historyMax * 1.1f
+                chartPath.rewind()
+                fillPath.rewind()
                 
-                points.forEachIndexed { i, valItem ->
-                    val x = i * stepX
-                    val y = (height - (valItem / maxVal * height)).coerceIn(0f, height)
-                    
-                    if (i == 0) {
-                        path.moveTo(x, y)
-                        fillPath.moveTo(x, height)
-                        fillPath.lineTo(x, y)
-                    } else {
-                        val prevX = (i - 1) * stepX
-                        val prevY = (height - (points[i - 1] / maxVal * height)).coerceIn(0f, height)
-                        
-                        // Cubic Bezier для сглаживания
-                        path.cubicTo(
-                            prevX + (x - prevX) / 2f, prevY,
-                            prevX + (x - prevX) / 2f, y,
-                            x, y
-                        )
-                        fillPath.cubicTo(
-                            prevX + (x - prevX) / 2f, prevY,
-                            prevX + (x - prevX) / 2f, y,
-                            x, y
-                        )
-                    }
-                    
-                    if (i == points.size - 1) {
-                        fillPath.lineTo(x, height)
-                        fillPath.close()
-                    }
+                val isScrolling = points.size >= pointCount + 3
+                val stepX = if (isScrolling) width / pointCount.toFloat() else if (points.size > 1) width / (points.size - 1).toFloat() else width
+                
+                // Helper to get X/Y for a point index
+                fun getPoint(i: Int): Offset {
+                    val x = if (isScrolling) (i - 1 - p) * stepX else i * stepX
+                    val y = (height - (points[i] / currentMaxVal * height)).coerceIn(0f, height)
+                    return Offset(x, y)
                 }
+
+                // 1. Build Smooth Cubic Bezier Path
+                var lastPt = getPoint(0)
+                chartPath.moveTo(lastPt.x, lastPt.y)
                 
-                // Draw gradient fill with more depth
+                for (i in 1 until points.size) {
+                    val currentPt = getPoint(i)
+                    // Control points for smooth curve
+                    val cx = (lastPt.x + currentPt.x) / 2f
+                    chartPath.cubicTo(cx, lastPt.y, cx, currentPt.y, currentPt.x, currentPt.y)
+                    lastPt = currentPt
+                }
+
+                // 2. Build Fill Path
+                fillPath.addPath(chartPath)
+                fillPath.lineTo(lastPt.x, height)
+                fillPath.lineTo(getPoint(0).x, height)
+                fillPath.close()
+
+                // 3. Draw Gradient Fill
                 drawPath(
                     path = fillPath,
                     brush = Brush.verticalGradient(
-                        colors = listOf(
-                            color.copy(alpha = 0.4f),
-                            color.copy(alpha = 0.1f),
-                            Color.Transparent
-                        )
+                        colors = listOf(baseColor.copy(alpha = 0.3f), baseColor.copy(alpha = 0.05f), Color.Transparent)
                     )
                 )
-                
-                // Draw smooth line
+
+                // 4. Draw Neon Outer Glow (Expensive but optimized)
+                val glowStrokeWidth = 5.dp.toPx()
+                drawIntoCanvas { canvas ->
+                    nativePaint.strokeWidth = glowStrokeWidth
+                    nativePaint.color = baseColor.toArgb()
+                    nativePaint.alpha = 80
+                    canvas.nativeCanvas.drawPath(chartPath.asAndroidPath(), nativePaint)
+                }
+
+                // 5. Draw Main Neon Line
                 drawPath(
-                    path = path,
-                    color = color,
-                    style = Stroke(
-                        width = 2.5.dp.toPx(), 
-                        cap = StrokeCap.Round,
-                        join = androidx.compose.ui.graphics.StrokeJoin.Round
-                    )
+                    path = chartPath,
+                    color = baseColor,
+                    style = Stroke(width = 2.5.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+
+                // 6. Draw White Core Line (for crispness)
+                drawPath(
+                    path = chartPath,
+                    color = Color.White.copy(alpha = 0.6f),
+                    style = Stroke(width = 0.8.dp.toPx(), cap = StrokeCap.Round, join = StrokeJoin.Round)
+                )
+
+                // 7. Draw Leading Active Dot (The Glowy Tip)
+                val activePt = if (isScrolling) getPoint(points.size - 2) else getPoint(points.size - 1)
+                
+                // Outer glow of the dot
+                drawCircle(
+                    brush = Brush.radialGradient(
+                        colors = listOf(baseColor, Color.Transparent),
+                        center = activePt,
+                        radius = 12.dp.toPx()
+                    ),
+                    center = activePt,
+                    radius = 12.dp.toPx()
+                )
+                
+                // Solid dot
+                drawCircle(
+                    color = Color.White,
+                    radius = 3.dp.toPx(),
+                    center = activePt
+                )
+                drawCircle(
+                    color = baseColor,
+                    radius = 4.dp.toPx(),
+                    center = activePt,
+                    style = Stroke(width = 2.dp.toPx())
                 )
             }
         }

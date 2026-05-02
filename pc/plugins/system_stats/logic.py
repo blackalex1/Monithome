@@ -8,9 +8,27 @@ import os
 import subprocess
 import wmi
 import json
+import ctypes
+import ctypes.wintypes
 from typing import Dict, List, Any, Optional
 from .afterburner_reader import get_afterburner_stats
 from base import BasePlugin
+
+def check_requirements():
+    """
+    Проверяет, может ли плагин работать без прав администратора.
+    Если MSI Afterburner запущен, мы можем работать без админа.
+    """
+    try:
+        # Пробуем открыть Shared Memory MSI Afterburner
+        # 0x0004 = FILE_MAP_READ
+        handle = ctypes.windll.kernel32.OpenFileMappingW(0x0004, False, "MAHMSharedMemory")
+        if handle:
+            ctypes.windll.kernel32.CloseHandle(handle)
+            return True # Afterburner запущен, админ не нужен
+    except:
+        pass
+    return False # Afterburner не найден, нужен админ для прямого доступа к железу
 
 class Plugin(BasePlugin):
     def __init__(self, socketio: Any, config: Dict[str, Any], manager: Any):
@@ -68,6 +86,7 @@ class Plugin(BasePlugin):
         while not self._stop_event.is_set():
             try:
                 # 1. Сначала пробуем Afterburner (самый быстрый способ через Shared Memory)
+                # Он уже запущен от админа и предоставляет нам "безопасный" доступ к данным.
                 ab_stats = get_afterburner_stats()
                 
                 cpu_t = 0
@@ -80,23 +99,31 @@ class Plugin(BasePlugin):
                     gpu_l = ab_stats.get('gpu_load', 0)
                     gpu_t = ab_stats.get('gpu_temp', 0)
                     has_gpu = gpu_l > 0 or gpu_t > 0
+                    if not gpu_name: gpu_name = ab_stats.get('gpu_name')
                 
-                # 2. Если Afterburner не запущен или не дает данных, используем PowerShell/WMI
-                if not ab_stats or cpu_t == 0:
+                # 2. Если Afterburner не запущен ИЛИ он пустой, только тогда пробуем системные вызовы
+                # Это предотвращает лишние запросы прав админа и ошибки доступа, когда AB работает.
+                if not ab_stats:
                     driver_stats = {}
-                    try:
-                        ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
-                        if os.path.exists(ps_script):
-                            process = subprocess.run(
-                                ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps_script],
-                                capture_output=True, text=True, encoding='utf-8', errors='ignore'
-                            )
-                            if process.returncode == 0:
-                                json_start = process.stdout.find('{')
-                                if json_start != -1:
-                                    driver_stats = json.loads(process.stdout[json_start:])
-                    except Exception as e:
-                        self.log(f"PowerShell stats collection failed: {e}", level="debug")
+                    # Проверяем, есть ли у нас права админа, прежде чем пытаться дергать систему
+                    is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+                    
+                    if is_admin:
+                        try:
+                            ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
+                            if os.path.exists(ps_script):
+                                process = subprocess.run(
+                                    ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps_script],
+                                    capture_output=True, text=True, encoding='utf-8', errors='ignore'
+                                )
+                                if process.returncode == 0:
+                                    json_start = process.stdout.find('{')
+                                    if json_start != -1:
+                                        driver_stats = json.loads(process.stdout[json_start:])
+                        except Exception as e:
+                            self.log(f"PowerShell stats collection failed: {e}", level="debug")
+                    else:
+                        self.log("MSI Afterburner is not running and we have no Admin rights for direct hardware access.", level="debug")
 
                     if not cpu_t: cpu_t = driver_stats.get('cpu_temp', 0)
                     if not gpu_l: gpu_l = driver_stats.get('gpu_load', 0)
@@ -104,8 +131,8 @@ class Plugin(BasePlugin):
                     if not cpu_name: cpu_name = driver_stats.get('cpu_name')
                     if not gpu_name: gpu_name = driver_stats.get('gpu_name')
 
-                # 3. Фолбэк для температур (WMI), если все остальное не сработало
-                if cpu_t == 0:
+                # 3. Фолбэк для температур (WMI) - только если все еще нет данных и AB не работает
+                if not ab_stats and cpu_t == 0:
                     try:
                         w = wmi.WMI(namespace="root\\wmi")
                         temperature_infos = w.MSAcpi_ThermalZoneTemperature()
@@ -126,23 +153,41 @@ class Plugin(BasePlugin):
                     except Exception as e:
                         self.log(f"GPUtil fetch failed: {e}", level="debug")
                 
-                # 5. Фолбэк для CPU Name
-                if not cpu_name:
-                    cpu_name = platform.processor()
-                    if "Family" in cpu_name:
-                        try:
-                            w_inst = wmi.WMI()
-                            processors = w_inst.Win32_Processor()
-                            if processors: cpu_name = processors[0].Name
-                        except Exception as e:
-                            self.log(f"WMI CPU name fetch failed: {e}", level="debug")
+                # 5. Определение имен (через реестр - самый надежный способ без админа)
+                if not cpu_name or not gpu_name or "Family" in str(cpu_name) or "GB203" in str(gpu_name):
+                    try:
+                        import winreg
+                        # CPU Name
+                        if not cpu_name or "Family" in str(cpu_name):
+                            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
+                            cpu_name = winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
+                            winreg.CloseKey(key)
+                        
+                        # GPU Name (если Afterburner дал техническое имя или его нет)
+                        if not gpu_name or "GB203" in str(gpu_name):
+                            # Пробуем найти через реестр видеоадаптеров
+                            for i in range(10): # Проверяем первые 10 видеокарт
+                                try:
+                                    path = rf"SYSTEM\CurrentControlSet\Control\Class\{{4d36e968-e325-11ce-bfc1-08002be10318}}\{i:04d}"
+                                    key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
+                                    name = winreg.QueryValueEx(key, "DriverDesc")[0]
+                                    winreg.CloseKey(key)
+                                    if "NVIDIA" in name or "AMD" in name or "Radeon" in name or "GeForce" in name:
+                                        gpu_name = name
+                                        if "NVIDIA" in name or "GeForce" in name: break # NVIDIA обычно основная
+                                except:
+                                    break
+                    except Exception as e:
+                        self.log(f"Registry name fetch failed: {e}", level="debug")
+                    
+                    if not cpu_name: cpu_name = platform.processor()
 
                 with self._lock:
                     self._state.update({
                         "cpu_temp": cpu_t,
                         "display_cpu_temp": f"{int(cpu_t)}°C" if cpu_t else "N/A",
                         "gpu_load": gpu_l,
-                        "display_gpu_load": f"{gpu_l}%",
+                        "display_gpu_load": f"{int(gpu_l)}%" if gpu_l else "0%",
                         "gpu_temp": gpu_t,
                         "display_gpu_temp": f"{int(gpu_t)}°C" if gpu_t else "N/A",
                         "has_gpu": has_gpu,
@@ -153,7 +198,7 @@ class Plugin(BasePlugin):
             except Exception as e:
                 self.log(f"Stats loop error: {e}", level="error")
             
-            time.sleep(2)
+            time.sleep(1)
 
     def get_stats(self):
         return self._state

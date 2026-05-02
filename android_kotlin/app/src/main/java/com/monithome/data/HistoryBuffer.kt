@@ -22,13 +22,11 @@ class HistoryBuffer(val size: Int = 30) {
         if (!isFull && head == 0) return emptyList()
         
         return if (!isFull) {
-            buffer.slice(0 until head)
+            buffer.sliceArray(0 until head).toList()
         } else {
-            // Сначала старая часть (от head до конца), потом новая часть (от начала до head)
-            val result = buffer.slice(head until size).toMutableList()
-            if (head > 0) {
-                result.addAll(buffer.slice(0 until head))
-            }
+            val result = ArrayList<Float>(size)
+            for (i in head until size) result.add(buffer[i])
+            for (i in 0 until head) result.add(buffer[i])
             result
         }
     }

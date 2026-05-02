@@ -66,9 +66,11 @@ export function PluginCard({ plugin, allPlugins, togglePlugin, openEditor, openI
       )}
 
       <div style={{ display: 'flex', gap: '0.5rem', marginTop: 'auto' }}>
-        <button className="control-btn" style={{ flex: 1 }} onClick={() => openEditor(plugin)}>
-          <Edit3 size={16} /> {t.plugins.setup}
-        </button>
+        {plugin.config?.has_settings !== false && (
+          <button className="control-btn" style={{ flex: 1 }} onClick={() => openEditor(plugin)}>
+            <Edit3 size={16} /> {t.plugins.setup}
+          </button>
+        )}
         <button className="control-btn" style={{ flex: 1 }} onClick={() => openInfo(plugin)}>
           <Info size={16} /> <span>{t.plugins.info}</span>
         </button>

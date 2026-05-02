@@ -38,6 +38,7 @@ def load_plugins():
                     if hasattr(module, 'Plugin'):
                         discovered[item.name] = {
                             "class": module.Plugin,
+                            "module": module,
                             "config": config,
                             "path": str(item.absolute())
                         }

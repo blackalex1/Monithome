@@ -60,13 +60,17 @@ fun DashboardScreen() {
                     contentPadding = PaddingValues(horizontal = 16.dp, vertical = 72.dp),
                     verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
+                    val firstMediaPluginId = uiConfigs.find { p -> 
+                        p.widgets?.any { w -> w.type == "unified_media" } == true 
+                    }?.id
+
                     items(uiConfigs, key = { it.id ?: it.hashCode().toString() }) { plugin ->
-                        val hasMedia = plugin.widgets?.any { it.type == "unified_media" } ?: false
+                        val isFirstMedia = plugin.id == firstMediaPluginId
                         val otherWidgets = plugin.widgets?.filter { it.type != "unified_media" } ?: emptyList()
                         val hasOtherUi = otherWidgets.isNotEmpty() || !plugin.actions.isNullOrEmpty()
                         
                         Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-                            if (hasMedia) {
+                            if (isFirstMedia) {
                                 MediaWidget()
                             }
                             

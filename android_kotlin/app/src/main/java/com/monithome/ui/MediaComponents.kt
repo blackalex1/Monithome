@@ -2,6 +2,7 @@ package com.monithome.ui
 
 import coil.compose.AsyncImage
 import androidx.compose.ui.res.painterResource
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -67,6 +68,9 @@ fun MediaWidget() {
             ))
         }
     }
+
+    // Принудительно ставим "Этот компьютер" (pc_media) на первое место
+    sources.sortByDescending { it.pluginId == "pc_media" }
 
     if (sources.isEmpty()) return
 
@@ -173,7 +177,6 @@ fun MediaWidget() {
                     }
 
                     if (model != null) {
-                        android.util.Log.d("MediaWidget", "Loading cover from: $model")
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(model)
@@ -216,7 +219,9 @@ fun MediaWidget() {
 
             // Кнопки управления и текст песни
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                if (currentSource.pluginId.contains("yandex", ignoreCase = true)) {
+                val isLyricsActive = allConfigs.any { it.id == "yandex_lyrics" && it.active == true }
+                
+                if (currentSource.pluginId.contains("yandex", ignoreCase = true) && isLyricsActive) {
                     Box(
                         modifier = Modifier
                             .padding(bottom = 8.dp)
@@ -276,30 +281,11 @@ fun MediaWidget() {
         }
 
         // Прогресс
-        Column(modifier = Modifier.padding(top = 16.dp)) {
-            val progress = if (duration > 0.0) (interpolatedProgress / duration).toFloat().coerceIn(0f, 1f) else 0f
-            
-            Box(modifier = Modifier.fillMaxWidth().height(4.dp)) {
-                Box(modifier = Modifier.fillMaxSize().background(Color.White.copy(alpha = 0.05f), RoundedCornerShape(2.dp)))
-                Box(
-                    modifier = Modifier
-                        .fillMaxHeight()
-                        .fillMaxWidth(progress)
-                        .background(
-                            Brush.horizontalGradient(listOf(MonitTheme.Primary, MonitTheme.Secondary)),
-                            RoundedCornerShape(2.dp)
-                        )
-                )
-            }
-            
-            Row(
-                modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-                horizontalArrangement = Arrangement.SpaceBetween
-            ) {
-                Text(formatTime(interpolatedProgress), color = MonitTheme.TextSecondary, fontSize = 10.sp, fontWeight = FontWeight.Bold)
-                Text(formatTime(duration), color = MonitTheme.TextSecondary, fontSize = 10.sp)
-            }
-        }
+        MediaProgressBar(
+            progressProvider = { if (duration > 0.0) (interpolatedProgress / duration).toFloat().coerceIn(0f, 1f) else 0f },
+            currentTimeProvider = { formatTime(interpolatedProgress) },
+            durationText = formatTime(duration)
+        )
 
         // Громкость
         var localVolume by remember { mutableFloatStateOf(volume.toFloat()) }
@@ -366,6 +352,52 @@ fun MediaWidget() {
                 }
             )
             Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = MonitTheme.TextSecondary, modifier = Modifier.size(18.dp))
+        }
+    }
+}
+
+@Composable
+fun MediaProgressBar(
+    progressProvider: () -> Float,
+    currentTimeProvider: () -> String,
+    durationText: String
+) {
+    Column(modifier = Modifier.padding(top = 16.dp)) {
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(6.dp)
+                .clip(RoundedCornerShape(3.dp))
+                .background(Color.White.copy(alpha = 0.05f))
+        ) {
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val progress = progressProvider()
+                val barWidth = size.width * progress
+                if (barWidth > 0) {
+                    drawRoundRect(
+                        brush = Brush.horizontalGradient(listOf(MonitTheme.Primary, MonitTheme.Secondary)),
+                        size = androidx.compose.ui.geometry.Size(barWidth, size.height),
+                        cornerRadius = androidx.compose.ui.geometry.CornerRadius(size.height / 2, size.height / 2)
+                    )
+                }
+            }
+        }
+        
+        Row(
+            modifier = Modifier.fillMaxWidth().padding(top = 6.dp),
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Text(
+                text = currentTimeProvider(), 
+                color = MonitTheme.TextSecondary, 
+                fontSize = 11.sp, 
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = durationText, 
+                color = MonitTheme.TextSecondary, 
+                fontSize = 11.sp
+            )
         }
     }
 }

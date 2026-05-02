@@ -65,7 +65,7 @@ export function WizardModal({
             
             <div style={{ display: 'flex', flexDirection: 'column', gap: '15px', marginBottom: '2rem' }}>
               {/* Informational items (text, images, buttons, links) */}
-              {wizardData?.items?.filter((i: any) => i.type !== 'yandex_station' && i.type !== 'setting').map((item: any) => {
+              {wizardData?.items?.filter((i: any) => i.type && i.type !== 'yandex_station' && i.type !== 'setting').map((item: any) => {
                 if (item.type === 'text') {
                   return (
                     <div key={item.id} style={{ padding: '4px 0', fontSize: '0.95rem', color: item.color || '#fff', textAlign: 'center' }}>
@@ -113,7 +113,7 @@ export function WizardModal({
 
               {/* Selectable settings/devices in a grid */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '12px' }}>
-                {wizardData?.items?.filter((i: any) => i.type === 'yandex_station' || i.type === 'setting').map((item: any) => {
+                {wizardData?.items?.filter((i: any) => !i.type || i.type === 'yandex_station' || i.type === 'setting').map((item: any) => {
                   const isSelected = selectedWizardItems.includes(item.id);
                   return (
                     <div 
