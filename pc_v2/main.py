@@ -6,13 +6,12 @@ from fastapi.responses import RedirectResponse
 import os
 from contextlib import asynccontextmanager
 
-from network.socket_server import sio, socket_manager
+from network.socket_server import sio, socket_manager, handle_get_ui_config
 from network.discovery import DiscoveryManager
 from plugin_engine.manager import plugin_manager
 from core.config import config_manager
 import socketio
 
-# Настройка логирования
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("Main")
 
@@ -124,6 +123,11 @@ async def toggle_plugin(req: PluginToggleRequest):
         
     config_manager.config.active_plugins = list(active_plugins)
     config_manager.save()
+    
+    # Уведомляем клиентов об изменении состава плагинов
+    from core.event_bus import event_bus
+    await event_bus.emit("ui_config_changed", {"plugin_id": req.plugin_id, "active": req.active})
+    
     return {"success": True, "active": req.active}
 
 class PluginConfigRequest(BaseModel):
@@ -144,6 +148,35 @@ async def save_plugin_config(plugin_id: str, req: PluginConfigRequest):
     os.makedirs(os.path.dirname(p_cfg_path), exist_ok=True)
     with open(p_cfg_path, "w", encoding="utf-8") as f:
         json.dump(req.config_data, f, indent=2, ensure_ascii=False)
+    
+    # Уведомляем клиентов об изменении настроек плагина
+    from core.event_bus import event_bus
+    await event_bus.emit("ui_config_changed", {"plugin_id": plugin_id})
+    
+    return {"success": True}
+
+@app.get("/api/config")
+async def get_global_config():
+    cfg = config_manager.get()
+    return {
+        "hostname": cfg.hostname,
+        "language": cfg.language,
+        "theme_color": cfg.theme_color if hasattr(cfg, 'theme_color') else "0xFF22C55E"
+    }
+
+@app.post("/api/config")
+async def save_global_config(data: dict):
+    cfg = config_manager.get()
+    if "hostname" in data: cfg.hostname = data["hostname"]
+    if "language" in data: cfg.language = data["language"]
+    if "theme_color" in data: cfg.theme_color = data["theme_color"]
+    config_manager.save()
+    
+    # Мгновенно уведомляем планшет об изменениях
+    from core.event_bus import event_bus
+    await event_bus.emit("ui_config_changed", {})
+    await sio.emit("theme_update", {"theme_color": cfg.theme_color}, room='authorized')
+    
     return {"success": True}
 
 # Монтируем Socket.IO приложение в FastAPI

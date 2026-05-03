@@ -5,6 +5,9 @@ import com.monithome.domain.models.PluginInfo
 
 data class DashboardState(
     val isLoading: Boolean = false,
+    val isReordering: Boolean = false,
+    val themeColor: Long = 0xFF22C55E,
+    val serverSuggestedColor: Long? = null,
     val isConnected: Boolean = false,
     val pcError: String? = null,
     val mediaState: MediaUIState = MediaUIState.Empty,
@@ -68,4 +71,7 @@ sealed class DashboardIntent {
     ) : DashboardIntent()
     
     data class MoveWidget(val fromIndex: Int, val toIndex: Int) : DashboardIntent()
+    data class ChangeThemeColor(val color: Long) : DashboardIntent()
+    object StartReordering : DashboardIntent()
+    object StopReordering : DashboardIntent()
 }

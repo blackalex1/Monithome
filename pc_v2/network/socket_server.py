@@ -23,11 +23,13 @@ class SocketServerManager:
         # Кэш состояния для батчинга
         self._state_cache: Dict[str, Any] = {}
         self._dirty = False
+        self.pairing_codes = {} # sid -> 4-digit code
 
     async def initialize(self):
         # Подписываемся на события от плагинов
         event_bus.subscribe("plugin_state_changed", self._on_plugin_state_changed)
         event_bus.subscribe("plugin_custom_event", self._on_plugin_custom_event)
+        event_bus.subscribe("ui_config_changed", self._on_ui_config_changed)
         
         # Запускаем фоновую рассылку (батчинг)
         asyncio.create_task(self._broadcast_loop())
@@ -50,6 +52,15 @@ class SocketServerManager:
         # Для обратной совместимости с планшетом отправляем yandex_config как топ-левел событие
         if event_name == "yandex_config":
             await self.sio.emit("yandex_config", data, room=room)
+
+    async def _on_ui_config_changed(self, payload: Dict[str, Any]):
+        p_id = payload.get("plugin_id")
+        logger.info(f"UI Config changed on server (plugin: {p_id}). Broadcasting to all clients.")
+        await handle_get_ui_config(None) # None отправит всем авторизованным
+        
+        # Если изменились настройки Яндекса, принудительно обновляем конфиг на планшете
+        if p_id == "yandex_station" or p_id is None:
+            await handle_get_yandex_config(None)
 
     async def _broadcast_loop(self):
         """Рассылка MessagePack/JSON данных с частотой 10Hz"""
@@ -99,30 +110,51 @@ async def connect(sid, environ, auth=None):
     cfg = config_manager.get()
     token = auth.get("token") if auth else None
     
-    # Проверяем токен
-    is_trusted = token in cfg.trusted_tokens if cfg.trusted_tokens and token else False
+    # Логируем детали подключения
+    ip = environ.get('REMOTE_ADDR', '')
+    ua = environ.get('HTTP_USER_AGENT', '')
+    logger.info(f"Connection: IP={ip}, Token={token[:8] if token else 'None'}..., UA={ua}")
     
-    # Если токена нет или он неверный, но в конфиге прописаны доверенные токены - требуем авторизацию
-    if cfg.trusted_tokens and not is_trusted:
-        logger.warning(f"Unauthorized connection attempt from {sid}")
-        # Пускаем в сокет, но не даем доступ к данным (не входим в 'authorized')
-        # И сразу просим пароль/код
+    is_gui = (token == config_manager.gui_token) and (config_manager.gui_token is not None)
+    is_trusted = is_gui or (token in cfg.trusted_tokens if cfg.trusted_tokens and token else False)
+    
+    if is_gui:
+        logger.info(f"Local GUI client {sid} authorized via gui_token.")
+    elif 'android' in ua.lower():
+        logger.info(f"Android device detected ({sid}) from {ip}. Trusted: {is_trusted}")
+    
+    # Если токена нет или он неверный - требуем сопряжение/код
+    if not is_trusted:
+        import random
+        code = str(random.randint(1000, 9999))
+        socket_manager.pairing_codes[sid] = code
+        
+        logger.info(f"\n" + "="*40 + f"\n[AUTH] NEW DEVICE CONNECTING!\n[AUTH] PAIRING CODE: {code}\n" + "="*40)
+        
+        # Отправляем в шину событий, чтобы GUI на ПК мог показать окно
+        from core.event_bus import event_bus
+        await event_bus.emit("show_pairing_code", {"code": code})
+        
         await sio.emit('auth_required', room=sid)
-        return True
+        return True # ВАЖНО: Прерываем выполнение здесь!
 
     # Если токенов в конфиге нет (первый запуск) или токен верный - пускаем
     await sio.enter_room(sid, 'authorized')
     
     key = cfg.encryption_key
     if not key:
+        from core.security import SecurityManager
         key = SecurityManager.generate_key()
-        config_manager.config.encryption_key = key
-        config_manager.save()
-        
-    await sio.emit('auth_success', {'token': token, 'encryption_key': key}, room=sid)
+        config_manager.save_secret("ENCRYPTION_KEY", key)
+    
+    await sio.emit('auth_success', {
+        'token': token, 
+        'encryption_key': key,
+        'theme_color': cfg.theme_color if hasattr(cfg, 'theme_color') else "0xFF22C55E"
+    }, room=sid)
     await sio.emit('authorized', {'status': 'ok'}, room=sid)
     
-    logger.info(f"Client {sid} connected and authorized.")
+    logger.info(f"Client {sid} authorized and ready.")
     
     await socket_manager._send_initial_data(sid)
     return True
@@ -130,43 +162,101 @@ async def connect(sid, environ, auth=None):
 
 @sio.on("auth_attempt")
 async def handle_auth_attempt(sid, data):
-    # Упрощенная проверка: код доступа = токену в конфиге
-    code = data.get("code")
+    code = str(data.get("code", ""))
     cfg = config_manager.get()
     
-    # В v2 мы можем использовать первый токен из списка как пароль
-    # Или добавить поле password в конфиг. Для начала - первый доверенный токен.
-    valid_tokens = cfg.trusted_tokens
+    # 1. Сначала проверяем, не является ли это кодом сопряжения для нового устройства
+    expected_code = socket_manager.pairing_codes.get(sid)
     
-    if not valid_tokens or code in valid_tokens:
-        # Если пароля нет или он верный
+    if expected_code and code == expected_code:
+        logger.info(f"[AUTH] Pairing successful for {sid}")
+        
+        # Генерируем новый постоянный токен для этого устройства
+        import secrets
+        new_token = secrets.token_hex(16)
+        
+        # Сохраняем токен (в .env через save_secret)
+        config_manager.save_secret("TRUSTED_TOKENS", new_token)
+        
+        # Удаляем временный код сопряжения
+        del socket_manager.pairing_codes[sid]
+        
+        # Авторизуем
         await sio.enter_room(sid, 'authorized')
         
-        # Если это новый токен, которого нет в конфиге, добавим его (если список был пуст)
-        if not valid_tokens:
-            config_manager.config.trusted_tokens.append(code)
-            config_manager.save()
+        # Отправляем успех с НОВЫМ токеном
+        key = cfg.encryption_key
+        if not key:
+            from core.security import SecurityManager
+            key = SecurityManager.generate_key()
+            config_manager.save_secret("ENCRYPTION_KEY", key)
             
-        await sio.emit('auth_success', {'token': code, 'encryption_key': cfg.encryption_key}, room=sid)
+        await sio.emit('auth_success', {
+            'token': new_token, 
+            'encryption_key': key,
+            'theme_color': cfg.theme_color
+        }, room=sid)
         await sio.emit('authorized', {'status': 'ok'}, room=sid)
-        
         await socket_manager._send_initial_data(sid)
-        logger.info(f"Client {sid} authorized via code.")
+        return
+
+    # 2. Если это не код сопряжения, проверяем, не является ли это существующим токеном
+    if cfg.trusted_tokens and code in cfg.trusted_tokens:
+        await sio.enter_room(sid, 'authorized')
+        await sio.emit('auth_success', {
+            'token': code, 
+            'encryption_key': cfg.encryption_key,
+            'theme_color': cfg.theme_color
+        }, room=sid)
+        await sio.emit('authorized', {'status': 'ok'}, room=sid)
+        await socket_manager._send_initial_data(sid)
+        logger.info(f"Client {sid} authorized via existing token.")
     else:
-        await sio.emit('auth_failed', {'message': 'Invalid code'}, room=sid)
-        logger.warning(f"Client {sid} failed authorization attempt.")
+        logger.warning(f"[AUTH] Invalid code/token from {sid}: {code}")
+        await sio.emit('auth_error', {'message': 'Invalid code or token'}, room=sid)
+
+async def check_auth(sid):
+    """Проверяет, авторизован ли клиент (находится ли он в комнате authorized)"""
+    if 'authorized' not in sio.rooms(sid):
+        logger.warning(f"Unauthorized access attempt from {sid}. Blocking.")
+        await sio.emit('auth_required', room=sid)
+        return False
+    return True
 
 @sio.on("authorize")
 async def handle_authorize(sid, data):
-    # Android клиент часто шлет это событие после коннекта
+    """Событие авторизации (используется Android и Веб клиентами)"""
+    token = data.get("token") if data else None
     cfg = config_manager.get()
-    token = data.get("token")
-    await sio.emit('auth_success', {'token': token, 'encryption_key': cfg.encryption_key}, room=sid)
-    await sio.emit('authorized', {'status': 'ok'}, room=sid)
-    await socket_manager._send_initial_data(sid)
+    
+    # Проверяем токен (с учетом GUI_TOKEN и списка доверенных)
+    is_gui = (token == config_manager.gui_token) and (config_manager.gui_token is not None)
+    is_trusted = is_gui or (token in cfg.trusted_tokens if cfg.trusted_tokens and token else False)
+    
+    if is_trusted:
+        await sio.enter_room(sid, 'authorized')
+        
+        # Получаем/генерируем ключ шифрования
+        key = cfg.encryption_key
+        if not key:
+            from core.security import SecurityManager
+            key = SecurityManager.generate_key()
+            config_manager.save_secret("ENCRYPTION_KEY", key)
+            
+        await sio.emit('auth_success', {
+            'token': token, 
+            'encryption_key': key,
+            'theme_color': cfg.theme_color
+        }, room=sid)
+        await sio.emit('authorized', {'status': 'ok'}, room=sid)
+        logger.info(f"Client {sid} authorized successfully.")
+    else:
+        logger.warning(f"Invalid token provided by {sid}. Connection rejected.")
+        await sio.emit('auth_required', room=sid)
 
 @sio.on("get_ui_config")
 async def handle_get_ui_config(sid):
+    if sid is not None and not await check_auth(sid): return
     # Отправляем конфигурацию плагинов для построения UI на Android
     cfg = config_manager.get()
     plugins_configs = []
@@ -189,13 +279,19 @@ async def handle_get_ui_config(sid):
                             p_cfg = json.load(f)
                 
                 if p_cfg:
-                    p_cfg["active"] = d in cfg.active_plugins
+                    p_cfg["active"] = d in plugin_manager.active_plugins
                     plugins_configs.append(p_cfg)
     
-    await sio.emit("ui_config", {"plugins": plugins_configs}, room=sid)
+    color = cfg.theme_color if hasattr(cfg, 'theme_color') else "0xFF22C55E"
+    logger.info(f"Emitting ui_config. Theme color: {color}, Room: {sid or 'authorized'}")
+    await sio.emit("ui_config", {
+        "plugins": plugins_configs,
+        "theme_color": color
+    }, room=sid or 'authorized')
 
 @sio.on("get_manager_data")
 async def handle_get_manager_data(sid):
+    if sid is not None and not await check_auth(sid): return
     # Android клиент просит список плагинов
     plugins = []
     cfg = config_manager.get()
@@ -212,6 +308,7 @@ async def handle_get_manager_data(sid):
 
 @sio.on("get_yandex_config")
 async def handle_get_yandex_config(sid):
+    if sid is not None and not await check_auth(sid): return
     # Перенаправляем запрос в плагин Яндекса, если он есть
     p = plugin_manager.active_plugins.get("yandex_station")
     if p:
@@ -223,6 +320,7 @@ async def disconnect(sid):
 
 @sio.event
 async def plugin_command(sid, data):
+    if not await check_auth(sid): return
     p_id = data.get('plugin_id')
     action = data.get('action')
     target = data.get('target')

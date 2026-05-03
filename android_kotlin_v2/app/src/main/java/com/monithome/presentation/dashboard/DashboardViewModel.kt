@@ -24,6 +24,9 @@ class DashboardViewModel(
     private val _state = MutableStateFlow(DashboardState())
     val state: StateFlow<DashboardState> = _state.asStateFlow()
 
+    // Поток для ручного выбора источника медиа
+    private val manualSelectedSourceId = MutableStateFlow<String?>(null)
+
     init {
         // Подписка на статус соединения
         viewModelScope.launch {
@@ -40,13 +43,33 @@ class DashboardViewModel(
 
         // Подписка на активные плагины UI
         viewModelScope.launch {
-            pluginRepository.uiConfigs.collect { configs ->
-                _state.update { s -> 
-                val isLyricsActive = configs.any { it.id == "yandex_lyrics" && it.active }
-                s.copy(
-                    activePlugins = configs,
-                    mediaState = s.mediaState.copy(isLyricsActive = isLyricsActive)
-                )
+            pluginRepository.uiConfigs
+                .collect { configs ->
+                _state.update { s ->
+                    val isLyricsActive = configs.any { it.id == "yandex_lyrics" && it.active }
+                    
+                    // Обновляем общий порядок виджетов: добавляем новые, если их еще нет.
+                    // Мы больше не удаляем отсюда неактивные плагины, чтобы они не пропадали навсегда.
+                    val currentOrder = s.widgetOrder.toMutableList()
+                    configs.forEach { plugin ->
+                        val widgetId = when {
+                            plugin.type == "media_source" -> "media"
+                            plugin.id == "yandex_lyrics" -> "yandex_lyrics"
+                            else -> plugin.id
+                        }
+                        // Добавляем только если это не скрытый системный плагин
+                        if (!currentOrder.contains(widgetId)) {
+                            currentOrder.add(widgetId)
+                        }
+                    }
+
+                    Log.d("DashboardVM", "UiConfig processed. Active: ${configs.filter { it.active }.map { it.id }}")
+                    s.copy(
+                        activePlugins = configs,
+                        widgetOrder = currentOrder,
+                        mediaState = s.mediaState.copy(isLyricsActive = isLyricsActive),
+                        isLoading = false
+                    )
                 }
                 
                 // При изменении конфигов (или первом получении), запускаем мониторинг медиа
@@ -64,180 +87,170 @@ class DashboardViewModel(
                     _state.update { it.copy(isAuthRequired = true, isLoading = false) }
                 }
                 if (event is SocketEvent.AuthSuccess) {
-                    _state.update { it.copy(isAuthRequired = false) }
+                    Log.d("DashboardVM", "AuthSuccess received. Saving token.")
+                    settingsRepository.saveString("auth_token", event.token)
+                    _state.update { s -> 
+                        val newState = s.copy(isAuthRequired = false, isLoading = false, pcError = null)
+                        event.themeColor?.let { color ->
+                            settingsRepository.saveThemeColor(color)
+                            newState.copy(themeColor = color, serverSuggestedColor = color)
+                        } ?: newState
+                    }
+                }
+                if (event is SocketEvent.UiConfig) {
+                    Log.d("DashboardVM", "UiConfig received. Server color: ${event.themeColor}")
+                    event.themeColor?.let { color ->
+                        settingsRepository.saveThemeColor(color)
+                        _state.update { it.copy(themeColor = color, serverSuggestedColor = color, isLoading = false) }
+                    } ?: _state.update { it.copy(isLoading = false) }
+                }
+                if (event is SocketEvent.ThemeUpdate) {
+                    Log.d("DashboardVM", "ThemeUpdate received: ${event.themeColor}")
+                    settingsRepository.saveThemeColor(event.themeColor)
+                    _state.update { it.copy(themeColor = event.themeColor, serverSuggestedColor = event.themeColor) }
                 }
             }
         }
         
-        // Загрузка сохраненного порядка виджетов
+        // Загрузка сохраненного порядка виджетов и цвета темы
         val savedOrder = settingsRepository.getWidgetOrder()
-        if (savedOrder != null) {
-            _state.update { it.copy(widgetOrder = savedOrder) }
-        }
+        val savedColor = settingsRepository.getThemeColor()
+        val savedSource = settingsRepository.getString("selected_media_source")
+        
+        manualSelectedSourceId.value = savedSource
+
+        _state.update { it.copy(
+            widgetOrder = savedOrder ?: it.widgetOrder,
+            themeColor = savedColor,
+            mediaState = it.mediaState.copy(selectedSourceId = savedSource)
+        ) }
         
         // Автоматический поиск серверов
         startDiscovery()
     }
 
     private var statsJob: kotlinx.coroutines.Job? = null
+    private var mediaJob: kotlinx.coroutines.Job? = null
 
     private fun observeMediaStats(configs: List<PluginInfo>) {
         statsJob?.cancel()
+        mediaJob?.cancel()
         val activeIds = configs.filter { it.active }.map { it.id }
-        if (activeIds.isEmpty()) return
+        if (activeIds.isEmpty()) {
+            Log.d("DashboardVM", "No active plugins to monitor")
+            return
+        }
 
         statsJob = viewModelScope.launch {
-            // Объединяем потоки статов от всех активных плагинов
             val flows = activeIds.map { id -> 
                 pluginRepository.getPluginStats(id).map { id to it } 
             }
             
+            Log.d("DashboardVM", "Starting statsJob for ${activeIds.size} plugins: $activeIds")
+            
             combine(flows) { pairs ->
                 val allStats = pairs.toMap()
-                
-                // Специальная обработка для медиа-плеера
-                val mediaPlugins = configs.filter { it.type == "media_source" && it.active }.map { it.id }
+                Log.v("DashboardVM", "Stats update: ${allStats.keys}")
+                allStats
+            }.collect { allStats ->
+                _state.update { it.copy(stats = allStats) }
+            }
+        }
+
+        // Отдельно следим за медиа и лирикой
+        mediaJob = viewModelScope.launch {
+            val mediaPlugins = configs.filter { it.type == "media_source" && it.active }
+            if (mediaPlugins.isEmpty()) {
+                _state.update { it.copy(mediaState = MediaUIState.Empty) }
+                return@launch
+            }
+
+            val statsFlows = mediaPlugins.map { plugin ->
+                pluginRepository.getPluginStats(plugin.id).map { plugin to it }
+            }
+
+            // Объединяем все статы медиа-плагинов И текущий ручной выбор
+            val mediaDataFlow = combine(combine(statsFlows) { it.toList() }, manualSelectedSourceId) { pairs, selectedId ->
                 val allSources = mutableListOf<MediaSource>()
-                var currentTitle = ""
-                var currentArtist = ""
-                var currentCover = ""
-                var isPlaying = false
-                var progress = 0.0
-                var duration = 0.0
-                var lastUpdate = 0.0
-                var volume = 0
-
-                mediaPlugins.forEach { pluginId ->
-                    val stats = allStats[pluginId] ?: return@forEach
-                    val devicesRaw = stats["devices"]
-                    
-                    val deviceList = when (devicesRaw) {
-                        is List<*> -> devicesRaw.filterIsInstance<Map<String, Any>>()
-                        is Map<*, *> -> devicesRaw.values.filterIsInstance<Map<String, Any>>()
-                        else -> emptyList()
-                    }
-
-                    if (deviceList.isNotEmpty()) {
-                        deviceList.forEach { dev ->
+                pairs.forEach { (plugin, stats) ->
+                    val devices = stats["devices"] as? List<Map<String, Any>>
+                    if (!devices.isNullOrEmpty()) {
+                        devices.forEach { dev ->
                             val devId = dev["id"] as? String ?: "default"
-                            val name = dev["name"] as? String ?: pluginId
-                            allSources.add(MediaSource(pluginId, devId, name))
-                            
-                            val fullId = "$pluginId:$devId"
-                            val currentSelectedId = _state.value.mediaState.selectedSourceId
-                            
-                            if (fullId == currentSelectedId || currentSelectedId == null) {
-                                if (currentSelectedId == null) {
-                                    // Auto-select first available source
-                                    _state.update { it.copy(mediaState = it.mediaState.copy(selectedSourceId = fullId)) }
-                                }
-                                if (fullId == _state.value.mediaState.selectedSourceId) {
-                                    currentTitle = dev["title"] as? String ?: ""
-                                    currentArtist = dev["artist"] as? String ?: ""
-                                    currentCover = dev["cover"] as? String ?: ""
-                                    isPlaying = dev["playing"] as? Boolean ?: false
-                                    progress = (dev["progress"] as? Number)?.toDouble() ?: 0.0
-                                    duration = (dev["duration"] as? Number)?.toDouble() ?: 0.0
-                                    lastUpdate = (dev["local_last_update"] as? Number)?.toDouble()
-                                        ?: (stats["local_last_update"] as? Number)?.toDouble()
-                                        ?: 0.0
-                                    volume = (dev["volume"] as? Number)?.toInt() ?: 0
-                                }
-                            }
+                            val devName = dev["name"] as? String ?: plugin.name
+                            allSources.add(MediaSource(plugin.id, devId, devName))
                         }
-                    } else if (stats.containsKey("title") || stats.containsKey("playing")) {
-                        allSources.add(MediaSource(pluginId, "pc", configs.find { it.id == pluginId }?.name ?: pluginId))
-                        val fullId = "$pluginId:pc"
-                        if (fullId == _state.value.mediaState.selectedSourceId || _state.value.mediaState.selectedSourceId == null) {
-                            if (_state.value.mediaState.selectedSourceId == null) {
-                                _state.update { it.copy(mediaState = it.mediaState.copy(selectedSourceId = fullId)) }
-                            }
-                            if (fullId == _state.value.mediaState.selectedSourceId) {
-                                currentTitle = stats["title"] as? String ?: ""
-                                currentArtist = stats["artist"] as? String ?: ""
-                                currentCover = stats["cover"] as? String ?: ""
-                                isPlaying = stats["playing"] as? Boolean ?: false
-                                progress = (stats["progress"] as? Number)?.toDouble() ?: 0.0
-                                duration = (stats["duration"] as? Number)?.toDouble() ?: 0.0
-                                lastUpdate = (stats["local_last_update"] as? Number)?.toDouble() ?: 0.0
-                                volume = (stats["volume"] as? Number)?.toInt() ?: 0
-                            }
-                        }
+                    } else {
+                        val devId = (stats["device_id"] as? String) ?: "pc"
+                        allSources.add(MediaSource(plugin.id, devId, plugin.name))
                     }
                 }
-                
-                // Проверка валидности выбранного источника
-                val currentSelectedId = _state.value.mediaState.selectedSourceId
-                val sourceStillExists = allSources.any { "${it.pluginId}:${it.deviceId}" == currentSelectedId }
-                
-                if (currentSelectedId != null && !sourceStillExists && allSources.isNotEmpty()) {
-                    Log.i("DashboardVM", "Current source $currentSelectedId disappeared, resetting for auto-selection")
-                    _state.update { it.copy(mediaState = it.mediaState.copy(selectedSourceId = null)) }
+
+                // Ищем данные для выбранного устройства
+                val currentPair = pairs.find { (plugin, stats) ->
+                    val devices = stats["devices"] as? List<Map<String, Any>>
+                    if (!devices.isNullOrEmpty()) {
+                        devices.any { "${plugin.id}:${it["id"]}" == selectedId }
+                    } else {
+                        "${plugin.id}:${stats["device_id"] ?: "pc"}" == selectedId
+                    }
                 }
 
-                val isLyricsPluginActive = configs.any { it.id == "yandex_lyrics" && it.active }
-                val mediaState = MediaUIState(
-                    sources = allSources,
-                    selectedSourceId = _state.value.mediaState.selectedSourceId,
-                    title = currentTitle,
-                    artist = currentArtist,
-                    coverUrl = currentCover,
-                    isPlaying = isPlaying,
-                    baseProgress = progress,
-                    duration = duration,
-                    lastUpdateUnixTime = lastUpdate,
-                    volume = volume,
-                    isLyricsActive = isLyricsPluginActive && (currentSelectedId?.startsWith("yandex_station") == true)
-                )
+                val targetPair = currentPair ?: if (selectedId == null) pairs.firstOrNull() else null
                 
-                if (mediaState.selectedSourceId != currentSelectedId) {
-                    Log.d("DashboardVM", "Selected source changed to: ${mediaState.selectedSourceId}")
+                if (targetPair != null) {
+                    val (plugin, stats) = targetPair
+                    val devices = stats["devices"] as? List<Map<String, Any>>
+                    val deviceStats = if (!devices.isNullOrEmpty()) {
+                        devices.find { "${plugin.id}:${it["id"]}" == selectedId } ?: devices.first()
+                    } else stats
+
+                    MediaUIState(
+                        sources = allSources,
+                        selectedSourceId = selectedId ?: "${plugin.id}:${deviceStats["id"] ?: deviceStats["device_id"] ?: "pc"}",
+                        title = (deviceStats["title"] as? String) ?: "",
+                        artist = (deviceStats["artist"] as? String) ?: (deviceStats["subtitle"] as? String) ?: "",
+                        coverUrl = (deviceStats["cover"] as? String) ?: "",
+                        isPlaying = (deviceStats["playing"] as? Boolean) ?: false,
+                        baseProgress = (deviceStats["progress"] as? Number)?.toDouble() ?: 0.0,
+                        duration = (deviceStats["duration"] as? Number)?.toDouble() ?: 0.0,
+                        lastUpdateUnixTime = (deviceStats["last_update"] as? Number)?.toDouble() 
+                            ?: (deviceStats["local_last_update"] as? Number)?.toDouble() 
+                            ?: (System.currentTimeMillis() / 1000.0),
+                        volume = (deviceStats["volume"] as? Number)?.toInt() ?: 0,
+                        isLyricsActive = configs.any { it.id == "yandex_lyrics" && it.active }
+                    )
+                } else {
+                    MediaUIState.Empty.copy(
+                        sources = allSources, 
+                        selectedSourceId = selectedId,
+                        isLyricsActive = configs.any { it.id == "yandex_lyrics" && it.active }
+                    )
                 }
+            }
 
-                // Обработка лирики
-                val lyricsStats = allStats["yandex_lyrics"]
-                val lyricsDevices = lyricsStats?.get("devices") as? Map<String, Any>
-                val selectedDeviceId = mediaState.selectedSourceId?.split(":")?.getOrNull(1)?.lowercase()?.trim()
+            val lyricsFlow = pluginRepository.getPluginStats("yandex_lyrics").map { stats ->
+                val devices = stats["devices"] as? Map<String, Any>
+                val selectedId = manualSelectedSourceId.value
+                val actualDeviceId = selectedId?.substringAfter(":") ?: ""
+                val data = devices?.get(actualDeviceId) as? Map<String, Any>
                 
-                val currentDeviceLyrics = if (selectedDeviceId != null) {
-                    // Ищем ключ более гибко (содержит ID или совпадает)
-                    val key = lyricsDevices?.keys?.find { 
-                        val k = it.lowercase().trim()
-                        k == selectedDeviceId || k.contains(selectedDeviceId) || selectedDeviceId.contains(k)
-                    }
-                    if (key != null) lyricsDevices[key] as? Map<String, Any> else null
-                } else null
-
-                val lyricsRaw = currentDeviceLyrics?.get("timings") as? List<Any>
-                val finalLyrics = lyricsRaw?.mapNotNull { item ->
-                    val map = item as? Map<*, *> ?: return@mapNotNull null
-                    val timeRaw = map["time"]
-                    val timeMs = when (timeRaw) {
-                        is Number -> timeRaw.toLong()
-                        is String -> timeRaw.toLongOrNull() ?: 0L
-                        else -> 0L
-                    }
+                (data?.get("timings") as? List<Map<String, Any>>)?.map {
                     com.monithome.domain.models.LyricLine(
-                        timeMs = timeMs,
-                        text = map["text"] as? String ?: ""
+                        timeMs = (it["time"] as? Number)?.toLong() ?: 0L,
+                        text = (it["text"] as? String) ?: ""
                     )
                 } ?: emptyList()
-                
-                // Если таймингов нет, но есть текст - добавим его как одну строку (fallback)
-                val finalLyricsWithFallback = if (finalLyrics.isEmpty()) {
-                    val fullText = currentDeviceLyrics?.get("lyrics") as? String
-                    if (!fullText.isNullOrEmpty()) {
-                        listOf(com.monithome.domain.models.LyricLine(0, fullText))
-                    } else emptyList()
-                } else finalLyrics
+            }
 
-                allStats to (mediaState to finalLyricsWithFallback)
-            }.collect { (allStats, pair) ->
-                val (mediaState, parsedLyrics) = pair
-                _state.update { it.copy(stats = allStats, mediaState = mediaState, lyrics = parsedLyrics) }
+            combine(mediaDataFlow, lyricsFlow) { mediaState, lyrics ->
+                mediaState to lyrics
+            }.collect { (mediaState, lyrics) ->
+                _state.update { it.copy(mediaState = mediaState, lyrics = lyrics) }
             }
         }
     }
+
 
     private fun startDiscovery() {
         viewModelScope.launch {
@@ -256,7 +269,8 @@ class DashboardViewModel(
         when (intent) {
             is DashboardIntent.Connect -> {
                 if (intent.url != null) {
-                    socketClient.connect(intent.url, null)
+                    val savedToken = settingsRepository.getString("auth_token")
+                    socketClient.connect(intent.url, savedToken)
                 } else {
                     startDiscovery()
                 }
@@ -269,6 +283,8 @@ class DashboardViewModel(
                 socketClient.authAttempt(intent.token)
             }
             is DashboardIntent.SelectMediaSource -> {
+                manualSelectedSourceId.value = intent.id
+                settingsRepository.saveString("selected_media_source", intent.id)
                 _state.update { it.copy(mediaState = it.mediaState.copy(selectedSourceId = intent.id)) }
             }
             is DashboardIntent.PlayPause -> {
@@ -306,13 +322,44 @@ class DashboardViewModel(
                 pluginRepository.sendCommand(intent.pluginId, intent.action, intent.target, intent.data)
             }
             is DashboardIntent.MoveWidget -> {
-                val newList = _state.value.widgetOrder.toMutableList()
-                if (intent.fromIndex in newList.indices && intent.toIndex in newList.indices) {
-                    val item = newList.removeAt(intent.fromIndex)
-                    newList.add(intent.toIndex, item)
-                    _state.update { it.copy(widgetOrder = newList) }
-                    settingsRepository.saveWidgetOrder(newList)
+                val s = _state.value
+                // Получаем список видимых ID по той же логике, что и на экране
+                val visibleWidgets = s.widgetOrder.filter { id ->
+                    when (id) {
+                        "media" -> s.activePlugins.any { it.type == "media_source" && it.active }
+                        "pc_system" -> s.activePlugins.any { it.id == "pc_system" && it.active }
+                        "yandex_lyrics" -> s.mediaState.isLyricsActive
+                        "system_stats" -> s.activePlugins.any { it.id == "system_stats" && it.active }
+                        "pc_disks" -> s.activePlugins.any { it.id == "pc_disks" && it.active }
+                        else -> s.activePlugins.any { it.id == id && it.active }
+                    }
                 }
+
+                if (intent.fromIndex in visibleWidgets.indices && intent.toIndex in visibleWidgets.indices) {
+                    val fromId = visibleWidgets[intent.fromIndex]
+                    val toId = visibleWidgets[intent.toIndex]
+
+                    val newList = s.widgetOrder.toMutableList()
+                    val fromFullIdx = newList.indexOf(fromId)
+                    val toFullIdx = newList.indexOf(toId)
+
+                    if (fromFullIdx != -1 && toFullIdx != -1) {
+                        val item = newList.removeAt(fromFullIdx)
+                        newList.add(toFullIdx, item)
+                        _state.update { it.copy(widgetOrder = newList) }
+                        settingsRepository.saveWidgetOrder(newList)
+                    }
+                }
+            }
+            is DashboardIntent.ChangeThemeColor -> {
+                _state.update { it.copy(themeColor = intent.color) }
+                settingsRepository.saveThemeColor(intent.color)
+            }
+            DashboardIntent.StartReordering -> {
+                _state.update { it.copy(isReordering = true) }
+            }
+            DashboardIntent.StopReordering -> {
+                _state.update { it.copy(isReordering = false) }
             }
         }
     }

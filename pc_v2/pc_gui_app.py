@@ -6,18 +6,36 @@ import ctypes
 import uvicorn
 
 try:
-    from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget
+    from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QMessageBox
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtCore import QUrl
+    from PySide6.QtCore import QUrl, Signal, QObject, Slot
 except ImportError:
     print("PySide6 is not installed. Please run: pip install PySide6")
     sys.exit(1)
 
-# Импортируем ASGI-приложение (FastAPI + SocketIO) из main.py
+# Добавляем путь к корню pc_v2, если запускаем скрипт напрямую
+import os
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+# Импортируем ASGI-приложение и конфиг из main.py и config.py
 from main import socket_app
+from core.config import config_manager
+from core.event_bus import event_bus
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] GUI: %(message)s")
 logger = logging.getLogger("GUI")
+
+class PairingBridge(QObject):
+    pairing_requested = Signal(str)
+
+    def __init__(self):
+        super().__init__()
+        event_bus.subscribe("show_pairing_code", self._on_pairing_event)
+
+    def _on_pairing_event(self, data):
+        code = data.get("code", "0000")
+        logger.info(f"Pairing request received in GUI: {code}")
+        self.pairing_requested.emit(code)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -36,7 +54,17 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(container)
         
         self.setStyleSheet("background-color: #020617;")
-        self.browser.setUrl(QUrl("http://127.0.0.1:5000"))
+        self.browser.setUrl(QUrl(f"http://127.0.0.1:5000/?gui_token={config_manager.gui_token}"))
+
+    @Slot(str)
+    def show_pairing_code(self, code):
+        msg = QMessageBox(self)
+        msg.setWindowTitle("New Device Connection")
+        msg.setIcon(QMessageBox.Information)
+        msg.setText(f"A new device is trying to connect.\n\nEnter this code on the device:")
+        msg.setInformativeText(f"<b style='font-size: 24px; color: #22C55E;'>{code}</b>")
+        msg.setStandardButtons(QMessageBox.Ok)
+        msg.exec()
 
 def run_uvicorn():
     logger.info("Starting Async FastAPI Server in background thread...")
@@ -72,7 +100,10 @@ def main():
     qt_app = QApplication(sys.argv)
     qt_app.setApplicationName("MonitHome v2")
     
+    bridge = PairingBridge()
     window = MainWindow()
+    bridge.pairing_requested.connect(window.show_pairing_code)
+    
     window.show()
     
     sys.exit(qt_app.exec())

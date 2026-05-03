@@ -1,46 +1,23 @@
 package com.monithome.presentation.dashboard
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.expandIn
-import androidx.compose.animation.shrinkOut
+import androidx.compose.animation.*
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.lazy.staggeredgrid.LazyVerticalStaggeredGrid
-import androidx.compose.foundation.lazy.staggeredgrid.StaggeredGridCells
-import androidx.compose.foundation.lazy.staggeredgrid.items
-import androidx.compose.material3.CircularProgressIndicator
-import androidx.compose.material3.Text
-import androidx.compose.material3.AlertDialog
-import androidx.compose.material3.Button
-import androidx.compose.material3.TextField
-import androidx.compose.runtime.mutableStateOf
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.setValue
-import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.foundation.lazy.staggeredgrid.*
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import com.monithome.domain.models.LyricLine
-import com.monithome.presentation.components.lyrics.LyricsWidget
-import com.monithome.presentation.components.media.MediaWidget
-import com.monithome.presentation.components.stats.StatWidget
-import com.monithome.presentation.components.stats.DisksWidget
-import com.monithome.presentation.components.system.SystemControlWidget
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.dp
+import com.monithome.presentation.components.lyrics.LyricsWidget
+import com.monithome.presentation.dashboard.components.*
 import org.koin.androidx.compose.koinViewModel
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
-import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.unit.IntOffset
-import androidx.compose.foundation.lazy.staggeredgrid.rememberLazyStaggeredGridState
 import kotlin.math.roundToInt
 
 @Composable
@@ -56,222 +33,154 @@ fun DashboardScreen(
 
     if (state.isLoading) {
         Box(modifier = Modifier.fillMaxSize().background(Color.Black), contentAlignment = Alignment.Center) {
-            CircularProgressIndicator(color = Color(0xFF4CAF50))
+            CircularProgressIndicator(color = MaterialTheme.colorScheme.primary)
         }
         return
     }
 
-    Box(
-        modifier = Modifier
-            .fillMaxSize()
-            .background(Color.Black)
-    ) {
-        // ОСНОВНОЙ КОНТЕНТ (с отступами)
+    Scaffold(
+        containerColor = Color.Black
+    ) { paddingValues ->
         Box(
             modifier = Modifier
                 .fillMaxSize()
-                .padding(16.dp)
+                .padding(paddingValues)
         ) {
-            if (!state.isConnected && !state.isAuthRequired) {
-                val manualIp = remember { mutableStateOf("192.168.1.100") }
-                Column(
-                    modifier = Modifier.align(Alignment.Center),
-                    horizontalAlignment = Alignment.CenterHorizontally
+            Column(modifier = Modifier.fillMaxSize()) {
+                // Панель выбора цвета (появляется при перетаскивании)
+                AnimatedVisibility(
+                    visible = state.isReordering,
+                    enter = expandVertically() + fadeIn(),
+                    exit = shrinkVertically() + fadeOut()
                 ) {
-                    if (state.pcError != null) {
-                        Text("Ошибка: ${state.pcError}", color = Color.Red, fontSize = 14.sp)
-                        Spacer(modifier = Modifier.height(8.dp))
-                    }
-                    Text("Выберите сервер или введите IP:", color = Color.White, fontSize = 20.sp)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    state.discoveredServers.forEach { server ->
-                        Button(
-                            onClick = { viewModel.processIntent(DashboardIntent.Connect(server.url)) },
-                            modifier = Modifier.fillMaxWidth(0.7f).padding(vertical = 4.dp)
-                        ) {
-                            Text("${server.name} (${server.url})")
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Ручной ввод:", color = Color.Gray)
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        TextField(
-                            value = manualIp.value,
-                            onValueChange = { manualIp.value = it },
-                            modifier = Modifier.width(200.dp),
-                            singleLine = true
-                        )
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Button(onClick = { viewModel.processIntent(DashboardIntent.Connect(manualIp.value)) }) {
-                            Text("ОК")
-                        }
-                    }
+                    ThemeColorPicker(
+                        selectedColor = state.themeColor,
+                        onColorSelect = { viewModel.processIntent(DashboardIntent.ChangeThemeColor(it)) },
+                        onClose = { viewModel.processIntent(DashboardIntent.StopReordering) },
+                        suggestedColor = state.serverSuggestedColor
+                    )
                 }
-            } else if (state.isAuthRequired) {
-                val password = remember { mutableStateOf("") }
-                AlertDialog(
-                    onDismissRequest = {},
-                    title = { Text("Авторизация") },
-                    text = {
-                        Column {
-                            Text("Введите код доступа для MonitHome:")
-                            Spacer(modifier = Modifier.height(8.dp))
-                            TextField(
-                                value = password.value,
-                                onValueChange = { password.value = it },
-                                placeholder = { Text("Пароль") },
-                                singleLine = true
-                            )
-                        }
-                    },
-                    confirmButton = {
-                        Button(onClick = { viewModel.processIntent(DashboardIntent.Auth(password.value)) }) {
-                            Text("Войти")
-                        }
-                    }
-                )
-            } else {
-                val gridState = rememberLazyStaggeredGridState()
-                
-                // СТУПЕНЧАТАЯ СЕТКА ВИДЖЕТОВ (Динамический порядок)
-                LazyVerticalStaggeredGrid(
-                    state = gridState,
-                    columns = StaggeredGridCells.Adaptive(minSize = 340.dp),
-                    contentPadding = PaddingValues(bottom = 16.dp),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp),
-                    verticalItemSpacing = 16.dp,
-                    modifier = Modifier.fillMaxSize()
-                ) {
-                    items(state.widgetOrder.size, key = { index -> state.widgetOrder[index] }) { index ->
-                        val widgetId = state.widgetOrder[index]
-                        var offsetX by remember { mutableStateOf(0f) }
-                        var offsetY by remember { mutableStateOf(0f) }
-                        var isDragging by remember { mutableStateOf(false) }
 
-                        Box(
-                            modifier = Modifier
-                                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
-                                .graphicsLayer {
-                                    shadowElevation = if (isDragging) density.run { 8.dp.toPx() } else 0f
-                                    scaleX = if (isDragging) 1.05f else 1.0f
-                                    scaleY = if (isDragging) 1.05f else 1.0f
-                                    alpha = if (isDragging) 0.8f else 1.0f
+                Box(modifier = Modifier.fillMaxSize().padding(16.dp)) {
+                    if (!state.isConnected) {
+                        ConnectionScreen(state, viewModel)
+                    } else {
+                        val gridState = rememberLazyStaggeredGridState()
+                        // Фильтруем только активные виджеты для отображения
+                        val visibleWidgets = remember(state.widgetOrder, state.activePlugins, state.mediaState.isLyricsActive) {
+                            state.widgetOrder.filter { id ->
+                                when (id) {
+                                    "media" -> state.activePlugins.any { it.type == "media_source" && it.active }
+                                    "pc_system" -> state.activePlugins.any { it.id == "pc_system" && it.active }
+                                    "yandex_lyrics" -> state.mediaState.isLyricsActive
+                                    "system_stats" -> state.activePlugins.any { it.id == "system_stats" && it.active }
+                                    "pc_disks" -> state.activePlugins.any { it.id == "pc_disks" && it.active }
+                                    else -> state.activePlugins.any { it.id == id && it.active }
                                 }
-                                .pointerInput(Unit) {
-                                    detectDragGesturesAfterLongPress(
-                                        onDragStart = { isDragging = true },
-                                        onDragEnd = {
-                                            isDragging = false
-                                            offsetX = 0f
-                                            offsetY = 0f
-                                        },
-                                        onDragCancel = {
-                                            isDragging = false
-                                            offsetX = 0f
-                                            offsetY = 0f
-                                        },
-                                        onDrag = { change, dragAmount ->
-                                            change.consume()
-                                            offsetX += dragAmount.x
-                                            offsetY += dragAmount.y
-                                            
-                                            // Логика поиска соседа для обмена
-                                            val layoutInfo = gridState.layoutInfo
-                                            val currentItemInfo = layoutInfo.visibleItemsInfo.find { it.key == widgetId }
-                                            if (currentItemInfo != null) {
-                                                val centerX = currentItemInfo.offset.x + currentItemInfo.size.width / 2 + offsetX
-                                                val centerY = currentItemInfo.offset.y + currentItemInfo.size.height / 2 + offsetY
-                                                
-                                                val targetItem = layoutInfo.visibleItemsInfo.find { target ->
-                                                    target.key != widgetId &&
-                                                    centerX > target.offset.x && centerX < (target.offset.x + target.size.width) &&
-                                                    centerY > target.offset.y && centerY < (target.offset.y + target.size.height)
-                                                }
-                                                
-                                                if (targetItem != null) {
-                                                    val targetIndex = state.widgetOrder.indexOf(targetItem.key)
-                                                    if (targetIndex != -1) {
-                                                        viewModel.processIntent(DashboardIntent.MoveWidget(index, targetIndex))
-                                                        // Сбрасываем смещение, так как индекс изменился и Compose сам перерисует
-                                                        offsetX = 0f
-                                                        offsetY = 0f
+                            }
+                        }
+
+                        LazyVerticalStaggeredGrid(
+                            state = gridState,
+                            columns = StaggeredGridCells.Adaptive(minSize = 340.dp),
+                            contentPadding = PaddingValues(bottom = 16.dp),
+                            horizontalArrangement = Arrangement.spacedBy(16.dp),
+                            verticalItemSpacing = 16.dp,
+                            modifier = Modifier.fillMaxSize()
+                        ) {
+                            items(visibleWidgets.size, key = { index -> visibleWidgets[index] }) { index ->
+                                val widgetId = visibleWidgets[index]
+                                var offsetX by remember { mutableStateOf(0f) }
+                                var offsetY by remember { mutableStateOf(0f) }
+                                var isDragging by remember { mutableStateOf(false) }
+
+                                Box(
+                                    modifier = Modifier
+                                        .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                                        .graphicsLayer {
+                                            shadowElevation = if (isDragging) density.run { 8.dp.toPx() } else 0f
+                                            scaleX = if (isDragging) 1.05f else 1.0f
+                                            scaleY = if (isDragging) 1.05f else 1.0f
+                                            alpha = if (isDragging) 0.8f else 1.0f
+                                        }
+                                        .pointerInput(Unit) {
+                                            detectDragGesturesAfterLongPress(
+                                                onDragStart = { 
+                                                    isDragging = true
+                                                    viewModel.processIntent(DashboardIntent.StartReordering)
+                                                },
+                                                onDragEnd = {
+                                                    isDragging = false
+                                                    offsetX = 0f
+                                                    offsetY = 0f
+                                                },
+                                                onDragCancel = {
+                                                    isDragging = false
+                                                    offsetX = 0f
+                                                    offsetY = 0f
+                                                },
+                                                onDrag = { change, dragAmount ->
+                                                    change.consume()
+                                                    offsetX += dragAmount.x
+                                                    offsetY += dragAmount.y
+                                                    
+                                                    val layoutInfo = gridState.layoutInfo
+                                                    val currentItemInfo = layoutInfo.visibleItemsInfo.find { it.key == widgetId }
+                                                    if (currentItemInfo != null) {
+                                                        val centerX = currentItemInfo.offset.x + currentItemInfo.size.width / 2 + offsetX
+                                                        val centerY = currentItemInfo.offset.y + currentItemInfo.size.height / 2 + offsetY
+                                                        
+                                                        val targetItem = layoutInfo.visibleItemsInfo.find { target ->
+                                                            target.key != widgetId &&
+                                                            centerX > target.offset.x && centerX < (target.offset.x + target.size.width) &&
+                                                            centerY > target.offset.y && centerY < (target.offset.y + target.size.height)
+                                                        }
+                                                        
+                                                        if (targetItem != null) {
+                                                            val targetIndex = visibleWidgets.indexOf(targetItem.key)
+                                                            if (targetIndex != -1) {
+                                                                viewModel.processIntent(DashboardIntent.MoveWidget(index, targetIndex))
+                                                                offsetX = 0f
+                                                                offsetY = 0f
+                                                            }
+                                                        }
                                                     }
                                                 }
-                                            }
+                                            )
                                         }
-                                    )
-                                }
-                        ) {
-                            when (widgetId) {
-                                "media" -> {
-                                    if (state.activePlugins.any { it.type == "media_source" && it.active }) {
-                                        MediaWidget(
-                                            state = state.mediaState,
-                                            onIntent = { viewModel.processIntent(it) }
-                                        )
-                                    }
-                                }
-                                "pc_system" -> {
-                                    if (state.activePlugins.any { it.id == "pc_system" && it.active }) {
-                                        SystemControlWidget(
-                                            onIntent = { viewModel.processIntent(it) }
-                                        )
-                                    }
-                                }
-                                "yandex_lyrics" -> {
-                                    if (state.mediaState.isLyricsActive) {
-                                        LyricsWidget(
-                                            lyrics = state.lyrics,
-                                            currentTimeMs = (state.mediaState.currentProgress * 1000).toLong(),
-                                            coverUrl = state.mediaState.coverUrl,
-                                            onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) }
-                                        )
-                                    }
-                                }
-                                "system_stats" -> {
-                                    if (state.activePlugins.any { it.id == "system_stats" && it.active }) {
-                                        StatWidget(
-                                            title = "Производительность",
-                                            stats = state.stats["system_stats"] ?: emptyMap()
-                                        )
-                                    }
-                                }
-                                "pc_disks" -> {
-                                    if (state.activePlugins.any { it.id == "pc_disks" && it.active }) {
-                                        @Suppress("UNCHECKED_CAST")
-                                        DisksWidget(
-                                            disks = (state.stats["pc_disks"]?.get("disks") as? List<Map<String, Any>>) ?: emptyList()
-                                        )
-                                    }
+                                ) {
+                                    WidgetContent(widgetId, state, viewModel)
                                 }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Обработка кнопки Назад
-        androidx.activity.compose.BackHandler(enabled = state.isLyricsFullScreen) {
-            viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen)
+            // ПОЛНОЭКРАННЫЙ ТЕКСТ
+            AnimatedVisibility(
+                visible = state.isLyricsFullScreen,
+                enter = fadeIn() + expandIn(),
+                exit = fadeOut() + shrinkOut()
+            ) {
+                LyricsWidget(
+                    lyrics = state.lyrics,
+                    currentTimeMs = (state.mediaState.currentProgress * 1000).toLong(),
+                    isFullScreen = true,
+                    coverUrl = state.mediaState.coverUrl,
+                    onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) },
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
         }
+        
+        // Диалог авторизации (поверх всего)
+        if (state.isAuthRequired) {
+            AuthDialog(state, viewModel)
+        }
+    }
 
-        // ПОЛНОЭКРАННЫЙ ТЕКСТ (теперь реально на весь экран, без отступов)
-        AnimatedVisibility(
-            visible = state.isLyricsFullScreen,
-            enter = fadeIn() + expandIn(),
-            exit = fadeOut() + shrinkOut()
-        ) {
-            LyricsWidget(
-                lyrics = state.lyrics,
-                currentTimeMs = (state.mediaState.currentProgress * 1000).toLong(),
-                isFullScreen = true,
-                coverUrl = state.mediaState.coverUrl,
-                onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) },
-                modifier = Modifier.fillMaxSize()
-            )
-        }
+    androidx.activity.compose.BackHandler(enabled = state.isLyricsFullScreen) {
+        viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen)
     }
 }

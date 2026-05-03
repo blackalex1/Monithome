@@ -25,8 +25,9 @@ sealed class SocketConnectionState {
 
 sealed class SocketEvent {
     object AuthRequired : SocketEvent()
-    data class AuthSuccess(val token: String, val encryptionKey: String) : SocketEvent()
-    data class UiConfig(val config: JSONObject) : SocketEvent()
+    data class AuthSuccess(val token: String, val encryptionKey: String, val themeColor: Long? = null) : SocketEvent()
+    data class UiConfig(val config: JSONObject, val themeColor: Long? = null) : SocketEvent()
+    data class ThemeUpdate(val themeColor: Long) : SocketEvent()
     data class ManagerDataObj(val data: JSONObject) : SocketEvent()
     data class ManagerDataArr(val data: JSONArray) : SocketEvent()
     data class StatsJson(val data: JSONObject) : SocketEvent()
@@ -85,11 +86,6 @@ class PcSocketClient {
         s.on(Socket.EVENT_CONNECT) {
             Log.i("PcSocketClient", "Socket CONNECTED to server")
             _connectionState.value = SocketConnectionState.Connected
-            val authObj = JSONObject().apply {
-                put("token", token)
-                put("supports_encryption", true)
-            }
-            s.emit("authorize", authObj)
         }
 
         s.on(Socket.EVENT_DISCONNECT) {
@@ -114,25 +110,40 @@ class PcSocketClient {
             if (rawData is JSONObject) {
                 val t = rawData.optString("token", "")
                 val key = rawData.optString("encryption_key", "")
-                _events.tryEmit(SocketEvent.AuthSuccess(t, key))
-                s.emit("get_yandex_config")
+                val colorStr = rawData.optString("theme_color", "")
+                val color = parseHexColor(colorStr)
+                _events.tryEmit(SocketEvent.AuthSuccess(t, key, color))
             } else if (rawData is Map<*, *>) {
                 val t = rawData["token"]?.toString() ?: ""
                 val key = rawData["encryption_key"]?.toString() ?: ""
-                _events.tryEmit(SocketEvent.AuthSuccess(t, key))
-                s.emit("get_yandex_config")
+                val colorStr = rawData["theme_color"]?.toString() ?: ""
+                val color = parseHexColor(colorStr)
+                _events.tryEmit(SocketEvent.AuthSuccess(t, key, color))
             }
         }
 
         s.on("authorized") {
             Log.d("PcSocketClient", "Received 'authorized' event")
-            s.emit("get_yandex_config")
-            s.emit("get_manager_data")
         }
 
         s.on("ui_config") { args ->
             (JsonParser.safeParseJson(args, "ui_config") as? JSONObject)?.let {
-                _events.tryEmit(SocketEvent.UiConfig(it))
+                val colorStr = it.optString("theme_color", "")
+                Log.d("PcSocketClient", "UI CONFIG raw: $it")
+                Log.d("PcSocketClient", "Extracted theme_color string: '$colorStr'")
+                val color = parseHexColor(colorStr)
+                _events.tryEmit(SocketEvent.UiConfig(it, color))
+            }
+        }
+
+        s.on("theme_update") { args ->
+            (JsonParser.safeParseJson(args) as? JSONObject)?.let {
+                val colorStr = it.optString("theme_color", "")
+                val color = parseHexColor(colorStr)
+                Log.d("PcSocketClient", "THEME UPDATE received: '$colorStr', parsed: $color")
+                if (color != null) {
+                    _events.tryEmit(SocketEvent.ThemeUpdate(color))
+                }
             }
         }
 
@@ -145,6 +156,7 @@ class PcSocketClient {
 
         s.on("stats") { args ->
             val rawData = if (args.size > 1 && args[0] == "stats") args[1] else args[0]
+            Log.v("PcSocketClient", "Received BINARY stats, size: ${if (rawData is ByteArray) rawData.size else "unknown"}")
             (rawData as? ByteArray)?.let { bytes ->
                 try {
                     val map = MessagePackDecoder.decode(bytes)
@@ -156,6 +168,7 @@ class PcSocketClient {
         }
 
         s.on("stats_json") { args ->
+            Log.v("PcSocketClient", "Received JSON stats")
             (args.getOrNull(0) as? JSONObject)?.let {
                 _events.tryEmit(SocketEvent.StatsJson(it))
             }
@@ -189,5 +202,15 @@ class PcSocketClient {
         socket?.disconnect()
         socket = null
         _connectionState.value = SocketConnectionState.Disconnected
+    }
+
+    private fun parseHexColor(hex: String?): Long? {
+        if (hex.isNullOrEmpty()) return null
+        return try {
+            val sanitized = hex.replace("0x", "").replace("#", "")
+            sanitized.toLong(16)
+        } catch (e: Exception) {
+            null
+        }
     }
 }

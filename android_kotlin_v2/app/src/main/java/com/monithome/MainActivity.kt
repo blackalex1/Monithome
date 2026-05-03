@@ -7,8 +7,13 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.ui.Modifier
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.ui.graphics.Color
 import com.monithome.presentation.dashboard.DashboardScreen
+import com.monithome.presentation.dashboard.DashboardViewModel
 import com.monithome.presentation.theme.MonitHomeTheme
+import org.koin.androidx.viewmodel.ext.android.viewModel
 
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
@@ -23,13 +28,17 @@ class MainActivity : ComponentActivity() {
         val controller = WindowInsetsControllerCompat(window, window.decorView)
         controller.hide(WindowInsetsCompat.Type.systemBars())
         controller.systemBarsBehavior = WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        val viewModel: DashboardViewModel by viewModel()
+        
         setContent {
-            MonitHomeTheme {
+            val state by viewModel.state.collectAsState()
+            
+            MonitHomeTheme(primaryColor = Color(state.themeColor)) {
                 Surface(
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background
                 ) {
-                    DashboardScreen()
+                    DashboardScreen(viewModel = viewModel)
                 }
             }
         }

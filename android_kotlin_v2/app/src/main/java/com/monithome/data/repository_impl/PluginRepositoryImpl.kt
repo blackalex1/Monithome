@@ -146,6 +146,7 @@ class PluginRepositoryImpl(
     }
 
     private fun bulkUpdate(updates: Map<String, Any>) {
+        Log.v("PluginRepo", "bulkUpdate: ${updates.keys}")
         updates.forEach { (pluginId, pluginData) ->
             // Если мы в автономном режиме Яндекса, игнорируем статы Яндекса от ПК, 
             // чтобы они не затирали локальные данные от прямого подключения.

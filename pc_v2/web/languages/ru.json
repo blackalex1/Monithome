@@ -1,0 +1,15 @@
+{
+    "nav_plugins": "Менеджер плагинов",
+    "nav_logs": "Логи сервера",
+    "nav_settings": "Глобальные настройки",
+    "nav_about": "О программе",
+    "settings_title": "Глобальные настройки",
+    "settings_desc": "Настройка ядра MonitHome.",
+    "server_name": "Имя сервера",
+    "interface_lang": "Язык интерфейса",
+    "accent_color": "Акцентный цвет (для планшета)",
+    "save_config": "Сохранить конфигурацию",
+    "status_connecting": "Подключение...",
+    "status_connected": "Сервер подключен",
+    "status_disconnected": "Отключено"
+}

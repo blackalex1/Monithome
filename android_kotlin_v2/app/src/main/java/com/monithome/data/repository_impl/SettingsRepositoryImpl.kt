@@ -16,4 +16,20 @@ class SettingsRepositoryImpl(context: Context) : SettingsRepository {
         val orderString = order.joinToString(",")
         prefs.edit().putString("widget_order", orderString).apply()
     }
+
+    override fun getThemeColor(): Long {
+        return prefs.getLong("theme_color", 0xFF22C55E) // Default Green
+    }
+
+    override fun saveThemeColor(color: Long) {
+        prefs.edit().putLong("theme_color", color).apply()
+    }
+
+    override fun getString(key: String, default: String?): String? {
+        return prefs.getString(key, default)
+    }
+
+    override fun saveString(key: String, value: String?) {
+        prefs.edit().putString(key, value).apply()
+    }
 }

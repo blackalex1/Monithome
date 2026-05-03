@@ -1,4 +1,11 @@
-const socket = io("http://127.0.0.1:5000");
+const urlParams = new URLSearchParams(window.location.search);
+const guiToken = urlParams.get('gui_token');
+
+const socket = io("http://127.0.0.1:5000", {
+    auth: {
+        token: guiToken || localStorage.getItem('auth_token')
+    }
+});
 
 // Connection UI
 const dot = document.getElementById('connection-dot');
@@ -6,13 +13,93 @@ const statusText = document.getElementById('connection-status');
 
 socket.on('connect', () => {
     dot.classList.add('connected');
-    statusText.textContent = 'Server Connected';
+    updateConnectionStatus('status_connected', 'Server Connected');
 });
 
 socket.on('disconnect', () => {
     dot.classList.remove('connected');
-    statusText.textContent = 'Disconnected';
+    updateConnectionStatus('status_disconnected', 'Disconnected');
 });
+
+socket.on('auth_required', () => {
+    // Если мы в GUI, возможно токен протух или не сработал
+    const message = guiToken ? 
+        "Local GUI token invalid. Enter pairing code from PC screen:" : 
+        "New device detected. Enter pairing code from PC screen:";
+    
+    const code = prompt(message);
+    if (code) {
+        socket.emit('auth_attempt', { code: code });
+    }
+});
+
+socket.on('auth_success', (data) => {
+    console.log("Authorized successfully!");
+    if (data.token) {
+        localStorage.setItem('auth_token', data.token);
+    }
+    if (data.encryption_key) {
+        localStorage.setItem('encryption_key', data.encryption_key);
+    }
+    // Если мы получили конфиг при авторизации, применим его
+    if (data.theme_color) {
+        applyThemeColor(data.theme_color);
+    }
+});
+
+socket.on('auth_error', (data) => {
+    alert("Authorization failed: " + data.message);
+    localStorage.removeItem('auth_token');
+    location.reload();
+});
+
+socket.on('server_log', (data) => {
+    const logOutput = document.getElementById('log-output');
+    if (logOutput) {
+        const entry = typeof data === 'string' ? data : data.message;
+        logOutput.textContent += entry + '\n';
+        logOutput.scrollTop = logOutput.scrollHeight;
+        
+        const lines = logOutput.textContent.split('\n');
+        if (lines.length > 500) {
+            logOutput.textContent = lines.slice(lines.length - 500).join('\n');
+        }
+    }
+});
+
+function updateConnectionStatus(key, fallback) {
+    if (window.translations && window.translations[key]) {
+        statusText.textContent = window.translations[key];
+        statusText.setAttribute('data-i18n', key);
+    } else {
+        statusText.textContent = fallback;
+    }
+}
+
+// i18n System
+window.translations = {};
+async function switchLanguage(lang) {
+    try {
+        const res = await fetch(`/static/languages/${lang}.json`);
+        window.translations = await res.json();
+        
+        // Apply translations to all elements with data-i18n
+        document.querySelectorAll('[data-i18n]').forEach(el => {
+            const key = el.getAttribute('data-i18n');
+            if (window.translations[key]) {
+                if (el.tagName === 'INPUT' && el.type === 'button') {
+                    el.value = window.translations[key];
+                } else {
+                    el.textContent = window.translations[key];
+                }
+            }
+        });
+        
+        console.log(`Language switched to: ${lang}`);
+    } catch (err) {
+        console.error("Failed to load language file", err);
+    }
+}
 
 // Navigation
 document.querySelectorAll('.nav-links a').forEach(link => {
@@ -259,3 +346,93 @@ socket.on('server_log', (payload) => {
 
 // Initial Load
 loadPlugins();
+loadGlobalConfig();
+
+// Global Settings Logic
+async function loadGlobalConfig() {
+    try {
+        const res = await fetch('/api/config');
+        const config = await res.json();
+        
+        document.getElementById('server-hostname').value = config.hostname || '';
+        document.getElementById('server-language').value = config.language || 'ru';
+        
+        // Load translations
+        await switchLanguage(config.language || 'ru');
+        
+        const colorHex = config.theme_color || '0xFF22C55E';
+        document.getElementById('server-theme-hex').value = colorHex;
+        
+        // Sync color picker
+        const cssColor = colorHex.replace('0x', '#');
+        document.getElementById('server-theme-picker').value = cssColor.substring(0, 7);
+    } catch (err) {
+        console.error("Failed to load global config", err);
+    }
+}
+
+// Language Switch Preview
+document.getElementById('server-language').addEventListener('change', (e) => {
+    switchLanguage(e.target.value);
+});
+
+// Sync HEX input and Color Picker
+const themePicker = document.getElementById('server-theme-picker');
+const themeHex = document.getElementById('server-theme-hex');
+
+themePicker.addEventListener('input', (e) => {
+    const hex = e.target.value.toUpperCase();
+    themeHex.value = '0xFF' + hex.substring(1);
+});
+
+themeHex.addEventListener('input', (e) => {
+    let hex = e.target.value;
+    if (hex.startsWith('0x')) {
+        const cssColor = '#' + hex.substring(4);
+        if (/^#[0-9A-F]{6}$/i.test(cssColor)) {
+            themePicker.value = cssColor;
+        }
+    }
+});
+
+document.getElementById('global-settings-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = document.getElementById('save-config-btn');
+    const originalText = btn.textContent;
+    
+    btn.textContent = 'Saving...';
+    btn.disabled = true;
+
+    const config = {
+        hostname: document.getElementById('server-hostname').value,
+        language: document.getElementById('server-language').value,
+        theme_color: document.getElementById('server-theme-hex').value
+    };
+
+    try {
+        const res = await fetch('/api/config', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(config)
+        });
+        
+        if (res.ok) {
+            btn.textContent = 'Saved!';
+            btn.style.background = 'var(--success)';
+            setTimeout(() => {
+                btn.textContent = originalText;
+                btn.style.background = 'var(--accent)';
+                btn.disabled = false;
+            }, 2000);
+        }
+    } catch (err) {
+        console.error("Failed to save config", err);
+        btn.textContent = 'Error!';
+        btn.style.background = 'var(--danger)';
+        setTimeout(() => {
+            btn.textContent = originalText;
+            btn.style.background = 'var(--accent)';
+            btn.disabled = false;
+        }, 2000);
+    }
+});

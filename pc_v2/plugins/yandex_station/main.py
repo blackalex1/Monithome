@@ -40,7 +40,16 @@ class Plugin(BasePlugin):
         self.zeroconf = Zeroconf()
         self.browser = ServiceBrowser(self.zeroconf, "_yandexio._tcp.local.", self)
         
+        # Подписываемся на изменения конфига, чтобы реагировать на смену режима (ПК/Планшет)
+        event_bus.subscribe("ui_config_changed", self._on_config_changed)
+        
         await self.apply_mode()
+
+    async def _on_config_changed(self, payload: dict):
+        # Если изменился наш плагин или конфиг в целом
+        if payload.get("plugin_id") == self.plugin_id or payload.get("plugin_id") is None:
+            self.log("Config changed on disk. Re-applying mode...")
+            await self.apply_mode()
 
     async def apply_mode(self):
         """Применяет текущий режим управления (Локально / Планшет)"""
@@ -53,26 +62,39 @@ class Plugin(BasePlugin):
         if not selected_ids:
             selected_ids = config.get("selected_device_ids", [])
 
-        if is_tablet:
-            
-            # Останавливаем воркеры тех устройств, которые теперь не выбраны
-            for d_id in list(self.workers.keys()):
-                if d_id not in selected_ids:
-                    self.log(f"Stopping worker for unselected device: {d_id}")
-                    self.workers[d_id].stop()
-                    del self.workers[d_id]
-                    if d_id in self.cmd_queues: del self.cmd_queues[d_id]
+        # УПРАВЛЕНИЕ ВОРКЕРАМИ (Всегда работает для выбранных устройств)
+        
+        # Останавливаем воркеры тех устройств, которые теперь не выбраны
+        for d_id in list(self.workers.keys()):
+            if selected_ids and d_id not in selected_ids:
+                self.log(f"Stopping worker for unselected device: {d_id}")
+                self.workers[d_id].stop()
+                del self.workers[d_id]
+                if d_id in self.cmd_queues: del self.cmd_queues[d_id]
 
-            # Запускаем воркеры только для выбранных устройств
-            for d_id in selected_ids:
-                if d_id in self.devices and d_id not in self.workers:
-                    self.log(f"Starting worker for: {d_id}")
-                    self.cmd_queues[d_id] = asyncio.Queue()
-                    self._force_broadcast_until[d_id] = 0
-                    worker = DeviceWorker(self, d_id)
-                    self.workers[d_id] = worker
-                    worker.start()
-            await self._broadcast_config_to_tablet()
+        # Запускаем воркеры для выбранных устройств
+        for d_id in selected_ids:
+            if d_id in self.devices and d_id not in self.workers:
+                self.log(f"Starting worker for: {d_id}")
+                self.cmd_queues[d_id] = asyncio.Queue()
+                self._force_broadcast_until[d_id] = 0
+                worker = DeviceWorker(self, d_id)
+                self.workers[d_id] = worker
+                worker.start()
+
+        # Всегда уведомляем планшет о текущем режиме (даже если управление на ПК),
+        # чтобы планшет знал, нужно ли ему закрывать свои прямые соединения.
+        await self._broadcast_config_to_tablet()
+
+        if not is_tablet:
+            # Если управление перешло к ПК - принудительно уведомляем другие плагины (например, лирику)
+            # о текущих треках, чтобы они подгрузили данные сразу, не дожидаясь смены песни.
+            for d_id, state in self.states.items():
+                track_id = state.get("track_id")
+                if track_id:
+                    self.log(f"Forcing track_changed event for {d_id} on mode switch")
+                    await self.emit_event("track_changed", {"device_id": d_id, "track_id": track_id})
+        
         await self._push_state()
 
     async def on_stop(self):

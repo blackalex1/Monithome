@@ -6,8 +6,8 @@ import androidx.compose.material3.darkColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 
-private val DarkColorScheme = darkColorScheme(
-    primary = AccentGreen,
+private fun createColorScheme(primaryColor: Color) = darkColorScheme(
+    primary = primaryColor,
     secondary = AccentBlue,
     tertiary = AccentAmber,
     background = DarkBackground,
@@ -22,10 +22,11 @@ private val DarkColorScheme = darkColorScheme(
 
 @Composable
 fun MonitHomeTheme(
+    primaryColor: Color = AccentGreen,
     content: @Composable () -> Unit
 ) {
     MaterialTheme(
-        colorScheme = DarkColorScheme,
+        colorScheme = createColorScheme(primaryColor),
         shapes = Shapes,
         content = content
     )

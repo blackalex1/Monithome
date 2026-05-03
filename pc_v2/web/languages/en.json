@@ -1,0 +1,15 @@
+{
+    "nav_plugins": "Plugin Manager",
+    "nav_logs": "Server Logs",
+    "nav_settings": "Global Settings",
+    "nav_about": "About",
+    "settings_title": "Global Settings",
+    "settings_desc": "Configure the core MonitHome server.",
+    "server_name": "Server Name",
+    "interface_lang": "Interface Language",
+    "accent_color": "Accent Color (Suggestions for Tablet)",
+    "save_config": "Save Configuration",
+    "status_connecting": "Connecting...",
+    "status_connected": "Server Connected",
+    "status_disconnected": "Disconnected"
+}

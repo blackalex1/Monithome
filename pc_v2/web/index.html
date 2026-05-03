@@ -20,14 +20,14 @@
                 <h1>MonitHome</h1>
             </div>
             <ul class="nav-links">
-                <li class="active"><a href="#" data-target="plugins-section">Plugin Manager</a></li>
-                <li><a href="#" data-target="logs-section">Server Logs</a></li>
-                <li><a href="#" data-target="settings-section">Global Settings</a></li>
-                <li><a href="#" data-target="about-section">About</a></li>
+                <li class="active"><a href="#" data-target="plugins-section" data-i18n="nav_plugins">Plugin Manager</a></li>
+                <li><a href="#" data-target="logs-section" data-i18n="nav_logs">Server Logs</a></li>
+                <li><a href="#" data-target="settings-section" data-i18n="nav_settings">Global Settings</a></li>
+                <li><a href="#" data-target="about-section" data-i18n="nav_about">About</a></li>
             </ul>
             <div class="status-indicator">
                 <span class="dot" id="connection-dot"></span>
-                <span id="connection-status">Connecting...</span>
+                <span id="connection-status" data-i18n="status_connecting">Connecting...</span>
             </div>
         </nav>
 
@@ -37,7 +37,7 @@
             <!-- Plugins Section -->
             <section id="plugins-section" class="content-section active">
                 <header class="section-header">
-                    <h2>Plugin Manager</h2>
+                    <h2 data-i18n="nav_plugins">Plugin Manager</h2>
                     <p>Enable or disable modules for monitoring and control.</p>
                 </header>
 
@@ -49,7 +49,7 @@
             <!-- Server Logs Section -->
             <section id="logs-section" class="content-section">
                 <header class="section-header">
-                    <h2>Server Logs</h2>
+                    <h2 data-i18n="nav_logs">Server Logs</h2>
                     <p>Real-time system and plugin activity.</p>
                 </header>
                 <div class="glass-panel logs-container">
@@ -60,11 +60,36 @@
             <!-- Global Settings Section -->
             <section id="settings-section" class="content-section">
                 <header class="section-header">
-                    <h2>Global Settings</h2>
-                    <p>Configure the core MonitHome server.</p>
+                    <h2 data-i18n="settings_title">Global Settings</h2>
+                    <p data-i18n="settings_desc">Configure the core MonitHome server.</p>
                 </header>
                 <div class="glass-panel p-4">
-                    <p>Coming soon...</p>
+                    <form id="global-settings-form">
+                        <div class="form-group">
+                            <label for="server-hostname" data-i18n="server_name">Server Name</label>
+                            <input type="text" id="server-hostname" class="form-input" placeholder="MonitHome PC">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="server-language" data-i18n="interface_lang">Interface Language</label>
+                            <select id="server-language" class="form-input">
+                                <option value="ru">Russian (RU)</option>
+                                <option value="en">English (EN)</option>
+                            </select>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="server-theme-color" data-i18n="accent_color">Accent Color (Suggestions for Tablet)</label>
+                            <div class="color-picker-container">
+                                <input type="color" id="server-theme-picker" class="form-input color-picker">
+                                <input type="text" id="server-theme-hex" class="form-input color-hex" placeholder="0xFF22C55E">
+                            </div>
+                        </div>
+                        
+                        <div class="form-actions mt-4">
+                            <button type="submit" class="btn btn-primary" id="save-config-btn" data-i18n="save_config">Save Configuration</button>
+                        </div>
+                    </form>
                 </div>
             </section>
 
