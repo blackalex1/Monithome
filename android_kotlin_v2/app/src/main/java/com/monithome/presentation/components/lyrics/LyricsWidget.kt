@@ -116,18 +116,25 @@ fun LyricsWidget(
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (isFullScreen) 0.4f else 0.3f }
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(shape) // Принудительно обрезаем картинку по форме плагина
+                    .graphicsLayer { alpha = if (isFullScreen) 0.4f else 0.3f }
             )
             // Затемняющий градиент поверх
-            Box(modifier = Modifier.fillMaxSize().background(
-                Brush.verticalGradient(
-                    colors = if (isFullScreen) {
-                        listOf(Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.9f))
-                    } else {
-                        listOf(Color.Black.copy(alpha = 0.6f), Color.Black.copy(alpha = 0.8f))
-                    }
+            Box(modifier = Modifier
+                .fillMaxSize()
+                .clip(shape) // Обрезаем и градиент тоже
+                .background(
+                    Brush.verticalGradient(
+                        colors = if (isFullScreen) {
+                            listOf(Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.9f))
+                        } else {
+                            listOf(Color.Black.copy(alpha = 0.6f), Color.Black.copy(alpha = 0.8f))
+                        }
+                    )
                 )
-            ))
+            )
         }
 
         // КОНТЕНТ (с отступами)
@@ -157,8 +164,8 @@ fun LyricsWidget(
                             contentScale = ContentScale.Crop,
                             modifier = Modifier
                                 .size(if (isFullScreen) 280.dp else 180.dp)
-                                .clip(RoundedCornerShape(24.dp))
-                                .background(Color(0xFF2C2C2C))
+                                .clip(RoundedCornerShape(28.dp))
+                                .background(MaterialTheme.colorScheme.outline)
                         )
                         if (isFullScreen) {
                             Spacer(modifier = Modifier.height(24.dp))

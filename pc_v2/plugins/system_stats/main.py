@@ -45,9 +45,11 @@ class Plugin(BasePlugin):
         self.log("system_stats stopped.")
 
     async def handle_command(self, action: str, data: any):
-        if action == "handle_wizard":
-            # Вызов логики формирования виджетов (аналог старого handle_wizard)
-            self._handle_wizard_selections(data)
+        if action == "update_sensor_settings":
+            # Сохраняем новые настройки сенсоров
+            self.save_config({"enabled_sensors": data})
+            # Пересобираем виджеты на основе выбранных сенсоров
+            await self._rebuild_widgets_from_settings(data)
             await self._update_and_emit()
 
     async def check_admin_requirement(self) -> bool:
@@ -78,29 +80,52 @@ class Plugin(BasePlugin):
             self.log("Stats loop cancelled.")
 
     async def _update_and_emit(self):
-        # Быстрые проверки через psutil
-        ram = psutil.virtual_memory()
-        cpu_load = psutil.cpu_percent(interval=None)
+        cfg = self.get_config()
+        sensors = cfg.get("enabled_sensors", {})
+        new_state = {}
         
-        # Обновляем базовые показатели
-        self._state.update({
-            "cpu": cpu_load,
-            "display_cpu": f"{cpu_load}%",
-            "ram_percent": ram.percent,
-            "display_ram_percent": f"{ram.percent}%",
-            "ram_used": round(ram.used / (1024**3), 2),
-            "ram_total": round(ram.total / (1024**3), 2),
-        })
-        self._state["display_ram_used"] = f"{self._state['ram_used']} GB"
-        self._state["display_ram_combined"] = f"{self._state['ram_used']} / {self._state['ram_total']} GB"
-        self._state["secondary_ram_combined"] = f"{int(ram.percent)}%"
-        self._state["ram_used_total"] = ram.percent
-        self._state["display_ram_used_total"] = f"{self._state['ram_used']} / {self._state['ram_total']} GB"
+        # 1. Быстрые проверки через psutil
+        if sensors.get("ram", True):
+            ram = psutil.virtual_memory()
+            ram_used_gb = round(ram.used / (1024**3), 2)
+            ram_total_gb = round(ram.total / (1024**3), 2)
+            new_state.update({
+                "ram_percent": ram.percent,
+                "display_ram_percent": f"{ram.percent}%",
+                "ram_used": ram_used_gb,
+                "ram_total": ram_total_gb,
+                "display_ram_used": f"{ram_used_gb} GB",
+                "display_ram_combined": f"{ram_used_gb} / {ram_total_gb} GB",
+                "secondary_ram_combined": f"{int(ram.percent)}%",
+                "ram_used_total": ram.percent,
+                "display_ram_used_total": f"{ram_used_gb} / {ram_total_gb} GB"
+            })
 
-        # Тяжелый сбор температур и нагрузок в отдельном потоке
-        hw_stats = await asyncio.to_thread(self._fetch_hardware_stats)
-        self._state.update(hw_stats)
+        if sensors.get("cpu_load", True):
+            cpu_load = psutil.cpu_percent(interval=None)
+            new_state.update({
+                "cpu": cpu_load,
+                "display_cpu": f"{cpu_load}%"
+            })
 
+        # 2. Тяжелый сбор (Температуры, GPU)
+        # Собираем только если включено хоть что-то из тяжелого
+        if sensors.get("cpu_temp", True) or sensors.get("gpu_load", True) or sensors.get("gpu_temp", True):
+            hw_stats = await asyncio.to_thread(self._fetch_hardware_stats)
+            # Фильтруем hw_stats перед добавлением
+            if not sensors.get("cpu_temp", True):
+                hw_stats.pop("cpu_temp", None)
+                hw_stats.pop("display_cpu_temp", None)
+            if not sensors.get("gpu_load", True):
+                hw_stats.pop("gpu_load", None)
+                hw_stats.pop("display_gpu_load", None)
+            if not sensors.get("gpu_temp", True):
+                hw_stats.pop("gpu_temp", None)
+                hw_stats.pop("display_gpu_temp", None)
+                
+            new_state.update(hw_stats)
+
+        self._state = new_state
         await self.emit_state(self._state)
 
     def _fetch_hardware_stats(self) -> Dict[str, Any]:
@@ -215,26 +240,39 @@ class Plugin(BasePlugin):
         })
         return hw
 
-    def _handle_wizard_selections(self, selections: list):
+    async def _rebuild_widgets_from_settings(self, sensors: dict):
         widgets = []
-        cpu_g = []
-        if 'cpu' in selections: cpu_g.append({"id": "cpu_chart", "type": "chart", "label": "cpu_usage", "data_key": "cpu", "color": "#38bdf8", "icon": "cpu"})
-        if 'cpu_temp' in selections: cpu_g.append({"id": "cpu_temp_chart", "type": "chart", "label": "cpu_temp", "data_key": "cpu_temp", "color": "#ef4444", "unit": "°C", "icon": "cpu"})
-        if cpu_g: widgets.append({"id": "cpu_row", "type": "row", "children": cpu_g})
+        
+        # CPU Load
+        if sensors.get("cpu_load", True):
+            widgets.append({"id": "cpu_chart", "type": "chart", "label": "cpu_usage", "data_key": "cpu", "color": "#38bdf8", "icon": "cpu"})
+            
+        # CPU Temp
+        if sensors.get("cpu_temp", True):
+            widgets.append({"id": "cpu_temp_chart", "type": "chart", "label": "cpu_temp", "data_key": "cpu_temp", "color": "#ef4444", "unit": "°C", "icon": "cpu"})
 
-        gpu_g = []
-        if 'gpu_load' in selections: gpu_g.append({"id": "gpu_chart", "type": "chart", "label": "gpu_usage", "data_key": "gpu_load", "color": "#fbbf24", "icon": "gpu"})
-        if 'gpu_temp' in selections: gpu_g.append({"id": "gpu_temp_chart", "type": "chart", "label": "gpu_temp", "data_key": "gpu_temp", "color": "#f97316", "unit": "°C", "icon": "gpu"})
-        if gpu_g: widgets.append({"id": "gpu_row", "type": "row", "condition": "has_gpu", "children": gpu_g})
+        # GPU Section
+        if sensors.get("gpu_load", True):
+            widgets.append({"id": "gpu_load_widget", "type": "stat", "label": "gpu_load", "data_key": "display_gpu_load", "icon": "gpu", "color": "#10b981"})
+        if sensors.get("gpu_temp", True):
+            widgets.append({"id": "gpu_temp_widget", "type": "stat", "label": "gpu_temp", "data_key": "display_gpu_temp", "icon": "gpu", "color": "#f59e0b"})
 
-        ram_sel_percent = 'ram_percent' in selections
-        ram_sel_used = 'ram_used' in selections
+        # RAM Section
+        if sensors.get("ram", True):
+            widgets.append({
+                "id": "ram_combined_widget", 
+                "type": "stat", 
+                "label": "ram_label", 
+                "data_key": "display_ram_combined", 
+                "icon": "ram", 
+                "unit": "%"
+            })
 
-        if ram_sel_percent and ram_sel_used:
-            widgets.append({"id": "ram_combined_widget", "type": "stat", "label": "ram_label", "data_key": "ram_combined", "icon": "ram", "unit": "%"})
-        elif ram_sel_percent:
-            widgets.append({"id": "ram_percent_widget", "type": "stat", "label": "ram_percent_label", "data_key": "ram_percent", "unit": "%", "icon": "ram"})
-        elif ram_sel_used:
-            widgets.append({"id": "ram_gb_widget", "type": "stat", "label": "ram_combined_label", "data_key": "ram_used_total", "icon": "ram"})
-
-        self.save_config({"widgets": widgets})
+        self.save_config({
+            "widgets": widgets,
+            "enabled_sensors": sensors
+        })
+        
+        # Даем системе время на запись файла и уведомляем всех
+        await asyncio.sleep(0.1)
+        await event_bus.emit("ui_config_changed", {"plugin_id": self.plugin_id})

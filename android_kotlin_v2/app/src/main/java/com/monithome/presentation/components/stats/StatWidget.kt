@@ -36,20 +36,21 @@ fun StatWidget(
             )
             Spacer(modifier = Modifier.height(16.dp))
 
-            // CPU Load
-            StatItem(
-                label = translations["cpu_usage"] ?: "CPU",
-                subLabel = stats["cpu_name"] as? String,
-                value = "${(stats["cpu"] as? Number)?.toInt() ?: 0}%",
-                temp = (stats["cpu_temp"] as? Number)?.toInt()?.let { "$it°C" },
-                progress = (stats["cpu"] as? Number)?.toFloat()?.div(100f) ?: 0f,
-                color = Color(0xFF38BDF8)
-            )
-
-            Spacer(modifier = Modifier.height(12.dp))
+            // CPU Load (if exists)
+            if (stats.containsKey("cpu")) {
+                StatItem(
+                    label = translations["cpu_usage"] ?: "CPU",
+                    subLabel = stats["cpu_name"] as? String,
+                    value = "${(stats["cpu"] as? Number)?.toInt() ?: 0}%",
+                    temp = (stats["cpu_temp"] as? Number)?.toInt()?.let { "$it°C" },
+                    progress = (stats["cpu"] as? Number)?.toFloat()?.div(100f) ?: 0f,
+                    color = Color(0xFF38BDF8)
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+            }
 
             // GPU Load (if exists)
-            if (stats["has_gpu"] == true) {
+            if (stats["has_gpu"] == true && stats.containsKey("gpu_load")) {
                 StatItem(
                     label = translations["gpu_usage"] ?: "GPU",
                     subLabel = stats["gpu_name"] as? String,
@@ -61,13 +62,15 @@ fun StatWidget(
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // RAM Load
-            StatItem(
-                label = translations["ram_label"] ?: "RAM",
-                value = "${(stats["ram_used"] as? Number)?.toDouble() ?: 0.0} / ${(stats["ram_total"] as? Number)?.toDouble() ?: 0.0} GB",
-                progress = (stats["ram_percent"] as? Number)?.toFloat()?.div(100f) ?: 0f,
-                color = Color(0xFFA78BFA)
-            )
+            // RAM Load (if exists)
+            if (stats.containsKey("ram_percent")) {
+                StatItem(
+                    label = translations["ram_label"] ?: "RAM",
+                    value = "${(stats["ram_used"] as? Number)?.toDouble() ?: 0.0} / ${(stats["ram_total"] as? Number)?.toDouble() ?: 0.0} GB",
+                    progress = (stats["ram_percent"] as? Number)?.toFloat()?.div(100f) ?: 0f,
+                    color = Color(0xFFA78BFA)
+                )
+            }
         }
     }
 }

@@ -41,11 +41,11 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                 )
             }
         }
-        "system_stats" -> {
-            if (state.activePlugins.any { it.id == "system_stats" && it.active }) {
+        "system_stats", "pc_stats" -> {
+            if (state.activePlugins.any { (it.id == "system_stats" || it.id == "pc_stats") && it.active }) {
                 StatWidget(
-                    title = state.t("plugin_name_system_stats", "Статистика системы"), 
-                    stats = state.stats["system_stats"] ?: emptyMap(),
+                    title = state.t("plugin_name_pc_stats", "Статистика системы"), 
+                    stats = state.stats[widgetId] ?: emptyMap(),
                     translations = state.translations,
                     onClick = { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) }
                 )

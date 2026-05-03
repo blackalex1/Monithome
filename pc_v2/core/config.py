@@ -33,9 +33,9 @@ class ConfigManager:
 
     def _setup_gui_token(self) -> str:
         import secrets
+        # Всегда используем абсолютный путь к токену в корне
         token_path = os.path.join(BASE_DIR, ".gui_token")
         
-        # Читаем существующий токен, если он есть
         if os.path.exists(token_path):
             try:
                 with open(token_path, "r") as f:
@@ -43,7 +43,6 @@ class ConfigManager:
                     if token: return token
             except: pass
             
-        # Генерируем новый
         new_token = secrets.token_hex(16)
         try:
             with open(token_path, "w") as f:
@@ -63,32 +62,30 @@ class ConfigManager:
 
     def _load_secrets(self):
         """Загружает секреты из .env файла в корне проекта"""
-        # Ищем .env в корне (на уровень выше от pc_v2) или в текущей папке
-        env_paths = [".env", "../.env"]
-        for path in env_paths:
-            if os.path.exists(path):
-                try:
-                    with open(path, "r", encoding="utf-8") as f:
-                        for line in f:
-                            if "=" in line:
-                                k, v = line.split("=", 1)
-                                k = k.strip()
-                                v = v.strip()
-                                if k == "ENCRYPTION_KEY":
-                                    self.config.encryption_key = v
-                                    print("[ConfigManager] Encryption key loaded from .env")
-                                elif k == "TRUSTED_TOKENS":
-                                    # Можно хранить токены через запятую
-                                    tokens = [t.strip() for t in v.split(",") if t.strip()]
-                                    self.config.trusted_tokens.extend(tokens)
-                except Exception as e:
-                    print(f"[ConfigManager] Error loading secrets from {path}: {e}")
-                break
+        env_path = os.path.join(BASE_DIR, ".env")
+        if os.path.exists(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if not line or line.startswith("#"): continue
+                        if "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip()
+                            if k == "ENCRYPTION_KEY":
+                                self.config.encryption_key = v
+                            elif k == "TRUSTED_TOKENS":
+                                tokens = [t.strip() for t in v.split(",") if t.strip()]
+                                # Очищаем и заменяем, чтобы не дублировать при перезагрузках
+                                self.config.trusted_tokens = list(set(tokens))
+                                print(f"[ConfigManager] Loaded {len(self.config.trusted_tokens)} trusted tokens")
+            except Exception as e:
+                print(f"[ConfigManager] Error loading secrets from {env_path}: {e}")
 
     def save(self):
         self.config._v += 1
         with open(self.config_path, "w", encoding="utf-8") as f:
-            # Явно исключаем секретные поля при сохранении в JSON
             f.write(self.config.model_dump_json(
                 indent=4, 
                 exclude={'encryption_key', 'trusted_tokens'}
@@ -96,22 +93,19 @@ class ConfigManager:
 
     def save_secret(self, key: str, value: str):
         """Сохраняет секрет в .env файл"""
-        self._write_env_var(key, value)
-        
         # Обновляем в текущем конфиге
         if key == "ENCRYPTION_KEY":
             self.config.encryption_key = value
+            self._write_env_var(key, value)
         elif key == "TRUSTED_TOKENS":
-            # value может быть новым токеном, который нужно добавить
             if value not in self.config.trusted_tokens:
                 self.config.trusted_tokens.append(value)
-                
-            # Перезаписываем строку в .env со всем списком
+            
             tokens_str = ",".join(self.config.trusted_tokens)
             self._write_env_var("TRUSTED_TOKENS", tokens_str)
 
     def _write_env_var(self, key: str, value: str):
-        env_path = ".env"
+        env_path = os.path.join(BASE_DIR, ".env")
         lines = []
         found = False
         if os.path.exists(env_path):

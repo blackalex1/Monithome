@@ -171,7 +171,8 @@ class PluginRepositoryImpl(
                 @Suppress("UNCHECKED_CAST")
                 val newData = (pluginData as Map<String, Any>).toMutableMap()
                 newData["local_last_update"] = System.currentTimeMillis() / 1000.0
-                currentFlow.value = mergeMaps(currentFlow.value, newData)
+                // Заменяем данные полностью, а не склеиваем, чтобы отключенные датчики исчезали
+                currentFlow.value = newData
             }
         }
     }

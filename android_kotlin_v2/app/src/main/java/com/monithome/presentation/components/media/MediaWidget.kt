@@ -170,7 +170,7 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
         modifier = modifier
             .height(80.dp) // Фиксированная высота
             .aspectRatio(aspectRatio) // Адаптивная ширина на основе пропорций
-            .clip(MaterialTheme.shapes.small)
+            .clip(MaterialTheme.shapes.medium)
             .background(MaterialTheme.colorScheme.outline),
         contentAlignment = Alignment.Center
     ) {
@@ -198,32 +198,60 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
 
 @Composable
 fun MediaControls(isPlaying: Boolean, onPlayPause: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit) {
-    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        IconButton(
-            onClick = onPrev, 
-            modifier = Modifier
-                .size(40.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), MaterialTheme.shapes.small)
+    Row(
+        verticalAlignment = Alignment.CenterVertically, 
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        // Кнопка НАЗАД
+        Surface(
+            onClick = onPrev,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+            modifier = Modifier.size(42.dp)
         ) {
-            Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Default.SkipPrevious, 
+                    contentDescription = null, 
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
+
+        // Кнопка PLAY/PAUSE (Центральная)
         Surface(
             onClick = onPlayPause,
             shape = MaterialTheme.shapes.medium,
             color = MaterialTheme.colorScheme.primary,
-            modifier = Modifier.size(48.dp)
+            modifier = Modifier.size(52.dp),
+            shadowElevation = 4.dp
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
+                Icon(
+                    if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, 
+                    contentDescription = null, 
+                    tint = MaterialTheme.colorScheme.onPrimary,
+                    modifier = Modifier.size(32.dp)
+                )
             }
         }
-        IconButton(
-            onClick = onNext, 
-            modifier = Modifier
-                .size(40.dp)
-                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), MaterialTheme.shapes.small)
+
+        // Кнопка ВПЕРЕД
+        Surface(
+            onClick = onNext,
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+            modifier = Modifier.size(42.dp)
         ) {
-            Icon(Icons.Default.SkipNext, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+            Box(contentAlignment = Alignment.Center) {
+                Icon(
+                    Icons.Default.SkipNext, 
+                    contentDescription = null, 
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+            }
         }
     }
 }

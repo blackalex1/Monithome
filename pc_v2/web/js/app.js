@@ -7,6 +7,16 @@ const socket = io("http://127.0.0.1:5000", {
     }
 });
 
+// Helper for secure API calls
+async function secureFetch(url, options = {}) {
+    const token = guiToken || localStorage.getItem('auth_token');
+    const headers = {
+        ...options.headers,
+        'X-Token': token
+    };
+    return fetch(url, { ...options, headers });
+}
+
 // Connection UI
 const dot = document.getElementById('connection-dot');
 const statusText = document.getElementById('connection-status');
@@ -145,7 +155,7 @@ const pluginsList = document.getElementById('plugins-list');
 
 async function loadPlugins() {
     try {
-        const response = await fetch('/api/plugins');
+        const response = await secureFetch('/api/plugins');
         const data = await response.json();
 
         pluginsList.innerHTML = '';
@@ -176,7 +186,7 @@ async function loadPlugins() {
                     </span>
                     <div style="display:flex; gap: 8px;">
                         <button class="plugin-btn" onclick="showPluginInfo('${plugin.id}')" title="${window.translations['btn_info'] || 'Info'}">ℹ️</button>
-                        <button class="plugin-btn" onclick="editPluginConfig('${plugin.id}')" title="${window.translations['btn_settings'] || 'Settings'}">⚙️</button>
+                        ${plugin.has_settings ? `<button class="plugin-btn" onclick="editPluginConfig('${plugin.id}')" title="${window.translations['btn_settings'] || 'Settings'}">⚙️</button>` : ''}
                         ${plugin.id === 'yandex_station' && plugin.active ? `<button class="plugin-btn" onclick="requestYandexQR()">${loginStr}</button>` : ''}
                     </div>
                 </div>
@@ -191,7 +201,7 @@ async function loadPlugins() {
 // Toggle Plugin
 window.togglePlugin = async (pluginId, isActive) => {
     try {
-        const res = await fetch('/api/plugins/toggle', {
+        const res = await secureFetch('/api/plugins/toggle', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ plugin_id: pluginId, active: isActive })
@@ -212,7 +222,7 @@ document.getElementById('modal-close').onclick = () => modal.classList.add('hidd
 
 window.showPluginInfo = async (pluginId) => {
     try {
-        const res = await fetch(`/api/plugins/${pluginId}/config`);
+        const res = await secureFetch(`/api/plugins/${pluginId}/config`);
         const config = await res.json();
 
         const name = window.translations[`plugin_name_${pluginId}`] || config.name || pluginId;
@@ -243,26 +253,128 @@ window.editPluginConfig = async (pluginId) => {
     }
 
     try {
-        const res = await fetch(`/api/plugins/${pluginId}/config`);
+        const res = await secureFetch(`/api/plugins/${pluginId}/config`);
         const config = await res.json();
 
         const settingsLabel = window.translations['label_settings'] || 'Settings';
         const saveChangesLabel = window.translations['btn_save_changes'] || 'Save Changes';
 
-        modalTitle.textContent = `${settingsLabel}: ${pluginId}`;
-        modalContent.innerHTML = `
-            <textarea id="config-editor" style="width:100%; height: 300px; background: #020617; color: #a5b4fc; font-family: monospace; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color);"></textarea>
-            <button class="plugin-btn" style="width: 100%; background: var(--accent); margin-top: 10px;" onclick="savePluginConfig('${pluginId}')">${saveChangesLabel}</button>
-        `;
-        document.getElementById('config-editor').value = JSON.stringify(config, null, 2);
+        const pluginName = window.translations[`plugin_name_${pluginId}`] || config.name || pluginId;
+        modalTitle.textContent = `${settingsLabel}: ${pluginName}`;
+
+        if (pluginId === 'system_stats' && config.enabled_sensors) {
+            // ... (keeping previous logic)
+            let html = `<div class="settings-list">`;
+            for (const [key, enabled] of Object.entries(config.enabled_sensors)) {
+                const label = window.translations[`sensor_${key}`] || key;
+                html += `
+                    <div class="settings-item glass-panel" style="display:flex; justify-content: space-between; padding: 12px; margin-bottom: 8px;">
+                        <span>${label}</span>
+                        <label class="switch">
+                            <input type="checkbox" id="sensor-${key}" ${enabled ? 'checked' : ''}>
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                `;
+            }
+            html += `</div>
+            <button class="plugin-btn" style="width: 100%; background: var(--accent); margin-top: 15px;" onclick="saveSensorSettings()">${saveChangesLabel}</button>`;
+            modalContent.innerHTML = html;
+        } else if (pluginId === 'pc_disks') {
+            modalContent.innerHTML = `<div class="loading-spinner"></div>`;
+            socket.emit('plugin_command', { plugin_id: 'pc_disks', action: 'get_disks_for_settings', data: {} });
+        } else {
+            // Fallback to JSON editor
+            modalContent.innerHTML = `
+                <textarea id="config-editor" style="width:100%; height: 300px; background: #020617; color: #a5b4fc; font-family: monospace; padding: 10px; border-radius: 8px; border: 1px solid var(--border-color);"></textarea>
+                <button class="plugin-btn" style="width: 100%; background: var(--accent); margin-top: 10px;" onclick="savePluginConfig('${pluginId}')">${saveChangesLabel}</button>
+            `;
+            document.getElementById('config-editor').value = JSON.stringify(config, null, 2);
+        }
         modal.classList.remove('hidden');
     } catch (err) { console.error(err); }
+};
+
+// Обработка ответа от pc_disks со списком дисков
+socket.on('plugin_event:pc_disks', (payload) => {
+    if (payload.event === 'disks_for_settings') {
+        const { all_disks, monitored_disks, show_new_disks } = payload.data;
+        const saveChangesLabel = window.translations['btn_save_changes'] || 'Save Changes';
+        
+        let html = `<div class="settings-list">`;
+        
+        // Чекбокс для "Отображать новые диски"
+        html += `
+            <div class="settings-item glass-panel" style="display:flex; justify-content: space-between; padding: 12px; margin-bottom: 15px; border-bottom: 2px solid var(--accent);">
+                <span style="font-weight: bold;">${window.translations['setting_show_new_disks'] || 'Show new disks'}</span>
+                <label class="switch">
+                    <input type="checkbox" id="disk-show-new" ${show_new_disks ? 'checked' : ''}>
+                    <span class="slider"></span>
+                </label>
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); margin-bottom: 10px;">${window.translations['setting_monitored_disks'] || 'Monitored Disks'}:</p>
+        `;
+
+        all_disks.forEach(disk => {
+            const isMonitored = monitored_disks.includes(disk.device);
+            html += `
+                <div class="settings-item glass-panel" style="display:flex; justify-content: space-between; padding: 10px; margin-bottom: 8px;">
+                    <span>${disk.device} (${disk.label || 'Disk'})</span>
+                    <label class="switch">
+                        <input type="checkbox" class="disk-checkbox" data-device="${disk.device}" ${isMonitored ? 'checked' : ''}>
+                        <span class="slider"></span>
+                    </label>
+                </div>
+            `;
+        });
+
+        html += `</div>
+        <button class="plugin-btn" style="width: 100%; background: var(--accent); margin-top: 15px;" onclick="saveDiskSettings()">${saveChangesLabel}</button>`;
+        modalContent.innerHTML = html;
+    }
+});
+
+window.saveDiskSettings = () => {
+    const showNew = document.getElementById('disk-show-new').checked;
+    const monitored = [];
+    modalContent.querySelectorAll('.disk-checkbox').forEach(cb => {
+        if (cb.checked) monitored.push(cb.getAttribute('data-device'));
+    });
+
+    socket.emit('plugin_command', { 
+        plugin_id: 'pc_disks', 
+        action: 'update_settings', 
+        data: { monitored_disks: monitored, show_new_disks: showNew } 
+    });
+    
+    modal.classList.add('hidden');
+    setTimeout(loadPlugins, 500);
+};
+
+window.saveSensorSettings = () => {
+    const sensors = {};
+    const switches = modalContent.querySelectorAll('input[type="checkbox"]');
+    switches.forEach(sw => {
+        const key = sw.id.replace('sensor-', '');
+        sensors[key] = sw.checked;
+    });
+
+    // Отправляем команду плагину для применения настроек
+    socket.emit('plugin_command', { 
+        plugin_id: 'system_stats', 
+        action: 'update_sensor_settings', 
+        data: sensors 
+    });
+    
+    modal.classList.add('hidden');
+    // Небольшая задержка перед перезагрузкой, чтобы сервер успел сохранить
+    setTimeout(loadPlugins, 500);
 };
 
 window.savePluginConfig = async (pluginId) => {
     try {
         const newConfig = JSON.parse(document.getElementById('config-editor').value);
-        const res = await fetch(`/api/plugins/${pluginId}/config`, {
+        const res = await secureFetch(`/api/plugins/${pluginId}/config`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ config_data: newConfig })
@@ -388,7 +500,7 @@ loadGlobalConfig();
 // Global Settings Logic
 async function loadGlobalConfig() {
     try {
-        const res = await fetch('/api/config');
+        const res = await secureFetch('/api/config');
         const config = await res.json();
 
         document.getElementById('server-hostname').value = config.hostname || '';
@@ -448,7 +560,7 @@ document.getElementById('global-settings-form').addEventListener('submit', async
     };
 
     try {
-        const res = await fetch('/api/config', {
+        const res = await secureFetch('/api/config', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(config)

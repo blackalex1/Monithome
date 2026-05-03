@@ -89,14 +89,34 @@ from fastapi.responses import RedirectResponse, FileResponse
 async def root():
     return FileResponse(os.path.join(web_dir, "index.html"))
 
+from fastapi import Header, HTTPException, Depends, Request
 from pydantic import BaseModel
 import json
+
+async def verify_token(request: Request):
+    # Разрешаем доступ без токена только к корневой странице и статике
+    if request.url.path == "/" or request.url.path.startswith("/static"):
+        return
+    
+    # Проверяем заголовок X-Token или параметр запроса token
+    token = request.headers.get("X-Token") or request.query_params.get("token")
+    
+    cfg = config_manager.get()
+    valid_tokens = []
+    if config_manager.gui_token:
+        valid_tokens.append(config_manager.gui_token)
+    if cfg.trusted_tokens:
+        valid_tokens.extend(cfg.trusted_tokens)
+        
+    if not token or token not in valid_tokens:
+        logger.warning(f"Unauthorized API access attempt to {request.url.path} from {request.client.host}")
+        raise HTTPException(status_code=401, detail="Unauthorized")
 
 class PluginToggleRequest(BaseModel):
     plugin_id: str
     active: bool
 
-@app.get("/api/plugins")
+@app.get("/api/plugins", dependencies=[Depends(verify_token)])
 async def get_plugins():
     plugins_dir = os.path.join(os.path.dirname(__file__), "plugins")
     cfg = config_manager.get()
@@ -124,13 +144,14 @@ async def get_plugins():
                             "active": p_id in active_plugins,
                             "name": p_cfg.get("name", p_id.replace("_", " ").title()),
                             "description": p_cfg.get("description", ""),
-                            "version": p_cfg.get("version", "1.0.0")
+                            "version": p_cfg.get("version", "1.0.0"),
+                            "has_settings": p_cfg.get("has_settings", False)
                         })
                 except Exception as e:
                     print(f"[Main] Error reading config for {p_id}: {e}")
     return {"plugins": result}
 
-@app.post("/api/plugins/toggle")
+@app.post("/api/plugins/toggle", dependencies=[Depends(verify_token)])
 async def toggle_plugin(req: PluginToggleRequest):
     cfg = config_manager.get()
     active_plugins = set(cfg.active_plugins)
@@ -154,7 +175,7 @@ async def toggle_plugin(req: PluginToggleRequest):
 class PluginConfigRequest(BaseModel):
     config_data: dict
 
-@app.get("/api/plugins/{plugin_id}/config")
+@app.get("/api/plugins/{plugin_id}/config", dependencies=[Depends(verify_token)])
 async def get_plugin_config(plugin_id: str):
     p_cfg_path = os.path.join(os.path.dirname(__file__), "plugins", plugin_id, "config.json")
     if os.path.exists(p_cfg_path):
@@ -162,7 +183,7 @@ async def get_plugin_config(plugin_id: str):
             return json.load(f)
     return {}
 
-@app.post("/api/plugins/{plugin_id}/config")
+@app.post("/api/plugins/{plugin_id}/config", dependencies=[Depends(verify_token)])
 async def save_plugin_config(plugin_id: str, req: PluginConfigRequest):
     p_cfg_path = os.path.join(os.path.dirname(__file__), "plugins", plugin_id, "config.json")
     # Создаем папку, если ее нет, хотя она должна быть
@@ -176,7 +197,7 @@ async def save_plugin_config(plugin_id: str, req: PluginConfigRequest):
     
     return {"success": True}
 
-@app.get("/api/config")
+@app.get("/api/config", dependencies=[Depends(verify_token)])
 async def get_global_config():
     cfg = config_manager.get()
     return {
@@ -185,7 +206,7 @@ async def get_global_config():
         "theme_color": cfg.theme_color if hasattr(cfg, 'theme_color') else "0xFF22C55E"
     }
 
-@app.post("/api/config")
+@app.post("/api/config", dependencies=[Depends(verify_token)])
 async def save_global_config(data: dict):
     cfg = config_manager.get()
     if "hostname" in data: cfg.hostname = data["hostname"]
