@@ -8,7 +8,29 @@ from plugin_engine.base_plugin import BasePlugin
 from core.config import config_manager
 from core.event_bus import event_bus
 
+import ctypes
+import sys
+import json
+
 logger = logging.getLogger("PluginManager")
+
+def is_admin():
+    try:
+        return ctypes.windll.shell32.IsUserAnAdmin() != 0
+    except:
+        return False
+
+def elevate_and_restart():
+    """Перезапуск приложения с правами администратора"""
+    logger.info("Requesting Administrator privileges...")
+    # ShellExecuteW с параметром "runas" вызывает системное окно UAC
+    params = " ".join(sys.argv)
+    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    if ret > 32:
+        logger.info("Elevation successful, exiting current process.")
+        os._exit(0)
+    else:
+        logger.error(f"Elevation failed with code: {ret}")
 
 class PluginManager:
     """
@@ -41,8 +63,27 @@ class PluginManager:
             module = importlib.import_module(module_name)
             plugin_class: Type[BasePlugin] = getattr(module, "Plugin")
             
-            # Инстанцируем и запускаем
+            # Инстанцируем
             instance = plugin_class(plugin_id=plugin_id)
+            
+            # --- ПРОВЕРКА ПРАВ АДМИНИСТРАТОРА ---
+            p_cfg = instance.get_config()
+            req_admin = p_cfg.get("requires_admin", False)
+            
+            should_elevate = False
+            if req_admin is True or req_admin == "true":
+                should_elevate = not is_admin()
+            elif req_admin == "if_required":
+                # Плагин сам проверяет, нужны ли ему права в текущей среде
+                if await instance.check_admin_requirement():
+                    should_elevate = not is_admin()
+            
+            if should_elevate:
+                logger.warning(f"Plugin {plugin_id} requires Administrator privileges. Restarting...")
+                elevate_and_restart()
+                return # Процесс завершится внутри elevate_and_restart
+            # ------------------------------------
+
             self.active_plugins[plugin_id] = instance
             
             # Запускаем в фоне, чтобы не блокировать менеджер

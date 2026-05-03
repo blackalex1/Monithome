@@ -38,6 +38,7 @@ import org.koin.compose.koinInject
 @Composable
 fun MediaWidget(
     state: MediaUIState,
+    translations: Map<String, String>,
     onIntent: (DashboardIntent) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -53,6 +54,7 @@ fun MediaWidget(
             if (state.sources.size > 1) {
                 MediaSourceSelector(
                     sources = state.sources,
+                    translations = translations,
                     selectedId = state.selectedSourceId,
                     onSelect = { onIntent(DashboardIntent.SelectMediaSource(it)) }
                 )
@@ -109,7 +111,12 @@ fun MediaWidget(
 }
 
 @Composable
-fun MediaSourceSelector(sources: List<MediaSource>, selectedId: String?, onSelect: (String) -> Unit) {
+fun MediaSourceSelector(
+    sources: List<MediaSource>, 
+    translations: Map<String, String>,
+    selectedId: String?, 
+    onSelect: (String) -> Unit
+) {
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         sources.forEach { source ->
             val id = "${source.pluginId}:${source.deviceId}"
@@ -121,9 +128,12 @@ fun MediaSourceSelector(sources: List<MediaSource>, selectedId: String?, onSelec
                 modifier = Modifier.height(32.dp)
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 12.dp)) {
+                    val displayName = source.name.ifBlank { 
+                        translations["plugin_name_${source.pluginId}"] ?: source.pluginId 
+                    }
                     Text(
-                        text = source.name.uppercase(),
-                        color = if (isSelected) Color.White else Color.Gray,
+                        text = displayName.uppercase(),
+                        color = if (isSelected) MaterialTheme.colorScheme.onPrimary else Color.Gray,
                         fontSize = 10.sp,
                         fontWeight = FontWeight.Bold
                     )
@@ -189,8 +199,13 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
 @Composable
 fun MediaControls(isPlaying: Boolean, onPlayPause: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        IconButton(onClick = onPrev, modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)) {
-            Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+        IconButton(
+            onClick = onPrev, 
+            modifier = Modifier
+                .size(40.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), MaterialTheme.shapes.small)
+        ) {
+            Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         }
         Surface(
             onClick = onPlayPause,
@@ -202,8 +217,13 @@ fun MediaControls(isPlaying: Boolean, onPlayPause: () -> Unit, onPrev: () -> Uni
                 Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
             }
         }
-        IconButton(onClick = onNext, modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)) {
-            Icon(Icons.Default.SkipNext, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
+        IconButton(
+            onClick = onNext, 
+            modifier = Modifier
+                .size(40.dp)
+                .background(MaterialTheme.colorScheme.primary.copy(alpha = 0.1f), MaterialTheme.shapes.small)
+        ) {
+            Icon(Icons.Default.SkipNext, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
         }
     }
 }

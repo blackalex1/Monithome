@@ -15,6 +15,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import com.monithome.presentation.components.lyrics.LyricsWidget
+import com.monithome.presentation.components.stats.StatsChartsWidget
 import com.monithome.presentation.dashboard.components.*
 import org.koin.androidx.compose.koinViewModel
 import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
@@ -54,6 +55,7 @@ fun DashboardScreen(
                     exit = shrinkVertically() + fadeOut()
                 ) {
                     ThemeColorPicker(
+                        state = state,
                         selectedColor = state.themeColor,
                         onColorSelect = { viewModel.processIntent(DashboardIntent.ChangeThemeColor(it)) },
                         onClose = { viewModel.processIntent(DashboardIntent.StopReordering) },
@@ -172,6 +174,26 @@ fun DashboardScreen(
                     modifier = Modifier.fillMaxSize()
                 )
             }
+            
+            // ГРАФИКИ СТАТИСТИКИ
+            AnimatedVisibility(
+                visible = state.isStatsExpanded,
+                enter = fadeIn() + expandIn(),
+                exit = fadeOut() + shrinkOut()
+            ) {
+                val systemStats = state.stats["system_stats"] ?: emptyMap()
+                StatsChartsWidget(
+                    cpuHistory = state.cpuHistory,
+                    cpuTempHistory = state.cpuTempHistory,
+                    gpuHistory = state.gpuLoadHistory,
+                    gpuTempHistory = state.gpuTempHistory,
+                    diskTemps = (systemStats["disk_temps"] as? List<Map<String, Any>>) ?: emptyList(),
+                    currentStats = systemStats,
+                    translations = state.translations,
+                    onClose = { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) },
+                    modifier = Modifier.fillMaxSize().wrapContentHeight(Alignment.CenterVertically)
+                )
+            }
         }
         
         // Диалог авторизации (поверх всего)
@@ -180,7 +202,8 @@ fun DashboardScreen(
         }
     }
 
-    androidx.activity.compose.BackHandler(enabled = state.isLyricsFullScreen) {
-        viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen)
+    androidx.activity.compose.BackHandler(enabled = state.isLyricsFullScreen || state.isStatsExpanded) {
+        if (state.isLyricsFullScreen) viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen)
+        if (state.isStatsExpanded) viewModel.processIntent(DashboardIntent.ToggleStatsExpanded)
     }
 }

@@ -30,6 +30,7 @@ class Plugin(BasePlugin):
         self.discovery = SpeakerDiscovery()
 
     async def on_start(self):
+        self.loop = asyncio.get_running_loop()
         self._load_tokens()
         
         if not self.auth.has_token():
@@ -37,8 +38,14 @@ class Plugin(BasePlugin):
             asyncio.create_task(self.auth.start_qr_login())
 
         # Запускаем mDNS поиск для обновления IP адресов
-        self.zeroconf = Zeroconf()
-        self.browser = ServiceBrowser(self.zeroconf, "_yandexio._tcp.local.", self)
+        from .discovery import get_all_interfaces
+        interfaces = get_all_interfaces()
+        self.log(f"Initializing Zeroconf on interfaces: {interfaces}")
+        try:
+            self.zeroconf = Zeroconf(interfaces=interfaces)
+            self.browser = ServiceBrowser(self.zeroconf, "_yandexio._tcp.local.", self)
+        except Exception as e:
+            self.log(f"Failed to initialize Zeroconf: {e}", 40)
         
         # Подписываемся на изменения конфига, чтобы реагировать на смену режима (ПК/Планшет)
         event_bus.subscribe("ui_config_changed", self._on_config_changed)
@@ -48,13 +55,17 @@ class Plugin(BasePlugin):
     async def _on_config_changed(self, payload: dict):
         # Если изменился наш плагин или конфиг в целом
         if payload.get("plugin_id") == self.plugin_id or payload.get("plugin_id") is None:
-            self.log("Config changed on disk. Re-applying mode...")
-            await self.apply_mode()
+            sid = payload.get("sid")
+            self.log(f"Config changed or new client {sid}. Re-applying mode...")
+            await self.apply_mode(sid)
 
-    async def apply_mode(self):
+    async def apply_mode(self, sid: str = None):
         """Применяет текущий режим управления (Локально / Планшет)"""
         config = self.get_config()
         is_tablet = config.get("tablet_control", False)
+        
+        mode_str = "STANDALONE (Tablet)" if is_tablet else "PC CONTROL"
+        self.log(f"Mode applied: {mode_str}", 20)
 
         env = self.auth._read_env()
         env_selected = env.get("SELECTED_DEVICES", "")
@@ -62,29 +73,40 @@ class Plugin(BasePlugin):
         if not selected_ids:
             selected_ids = config.get("selected_device_ids", [])
 
-        # УПРАВЛЕНИЕ ВОРКЕРАМИ (Всегда работает для выбранных устройств)
-        
-        # Останавливаем воркеры тех устройств, которые теперь не выбраны
-        for d_id in list(self.workers.keys()):
-            if selected_ids and d_id not in selected_ids:
-                self.log(f"Stopping worker for unselected device: {d_id}")
+        # УПРАВЛЕНИЕ ВОРКЕРАМИ
+        if is_tablet:
+            # Если управление у планшета - серверу не нужно держать соединения
+            for d_id in list(self.workers.keys()):
+                self.log(f"Stopping worker (Standalone mode active): {d_id}")
                 self.workers[d_id].stop()
                 del self.workers[d_id]
                 if d_id in self.cmd_queues: del self.cmd_queues[d_id]
+        else:
+            # Режим управления с ПК - запускаем воркеры для выбранных устройств
+            for d_id in list(self.workers.keys()):
+                if selected_ids and d_id not in selected_ids:
+                    self.log(f"Stopping worker for unselected device: {d_id}")
+                    self.workers[d_id].stop()
+                    del self.workers[d_id]
+                    if d_id in self.cmd_queues: del self.cmd_queues[d_id]
 
-        # Запускаем воркеры для выбранных устройств
-        for d_id in selected_ids:
-            if d_id in self.devices and d_id not in self.workers:
-                self.log(f"Starting worker for: {d_id}")
-                self.cmd_queues[d_id] = asyncio.Queue()
-                self._force_broadcast_until[d_id] = 0
-                worker = DeviceWorker(self, d_id)
-                self.workers[d_id] = worker
-                worker.start()
+            for d_id in selected_ids:
+                if d_id in self.devices and d_id not in self.workers:
+                    self.log(f"Starting worker for: {d_id}")
+                    self.cmd_queues[d_id] = asyncio.Queue()
+                    self._force_broadcast_until[d_id] = 0
+                    worker = DeviceWorker(self, d_id)
+                    self.workers[d_id] = worker
+                    worker.start()
 
-        # Всегда уведомляем планшет о текущем режиме (даже если управление на ПК),
-        # чтобы планшет знал, нужно ли ему закрывать свои прямые соединения.
-        await self._broadcast_config_to_tablet()
+        # Если это новый клиент (есть sid), даем ему 0.5 сек на подписку
+        if sid:
+            async def delayed_broadcast():
+                await asyncio.sleep(0.5)
+                await self._broadcast_config_to_tablet(sid)
+            asyncio.create_task(delayed_broadcast())
+        else:
+            await self._broadcast_config_to_tablet()
 
         if not is_tablet:
             # Если управление перешло к ПК - принудительно уведомляем другие плагины (например, лирику)
@@ -120,7 +142,11 @@ class Plugin(BasePlugin):
             self.log(f"Error parsing glagol tokens from .env: {e}", 40)
             return
         
+        cached_ips = self.get_config().get("cached_ips", {})
         for d_id, d in self.devices.items():
+            if d_id in cached_ips:
+                d["ip"] = cached_ips[d_id]
+            
             self.states[d_id] = {
                 "name": d.get("name", "Колонка"), "platform": d.get("platform"),
                 "online": False, "volume": 0, "playing": False,
@@ -140,14 +166,14 @@ class Plugin(BasePlugin):
                 ip = addresses[0]
                 if d_id in self.devices:
                     if self.devices[d_id].get("ip") != ip:
-                        self.log(f"Updated IP for {d_id} ({self.devices[d_id].get('name')}): {ip}")
+                        self.log(f"mDNS: Updated IP for {d_id} ({self.devices[d_id].get('name')}): {ip}", 20)
                         self.devices[d_id]["ip"] = ip
-                        # Если воркера нет, но устройство выбрано - apply_mode его запустит (хотя он и так должен был быть)
-                        # Если воркер есть, он переподключится сам при ошибке.
-                else:
-                    # Новое устройство, которого нет в tokens.json? 
-                    # Мы его не сможем контролировать без glagol_token, но можем запомнить IP
-                    pass
+                        # Сохраняем IP в кэш конфига для быстрых перезапусков
+                        cached_ips = self.get_config().get("cached_ips", {})
+                        cached_ips[d_id] = ip
+                        self.update_config({"cached_ips": cached_ips})
+                        # Переотправляем конфиг планшету, так как появился IP
+                        asyncio.run_coroutine_threadsafe(self._broadcast_config_to_tablet(), self.loop)
 
     def update_service(self, zc, type, name):
         self.add_service(zc, type, name)
@@ -293,6 +319,7 @@ class Plugin(BasePlugin):
 
         configs = []
         if config.get("tablet_control", False):
+            self.log("Broadcast: Preparing Glagol API tokens for Tablet Standalone mode", 20)
             env = self.auth._read_env()
             env_selected = env.get("SELECTED_DEVICES", "")
             allowed_ids = [s.strip() for s in env_selected.split(",") if s.strip()]
@@ -301,11 +328,23 @@ class Plugin(BasePlugin):
 
             for d_id, d in self.devices.items():
                 if allowed_ids and d_id not in allowed_ids: continue
-                if d.get("ip") and d.get("glagol_token"):
-                    configs.append({"id": d_id, "glagol_token": d["glagol_token"], "name": d.get("name"), "ip": d["ip"]})
+                
+                if d.get("glagol_token"):
+                    self.log(f"Broadcast: Adding device {d_id} ({d.get('name')}) to config. IP: {d.get('ip') or 'mDNS pending'}", 20)
+                    configs.append({
+                        "id": d_id, 
+                        "glagol_token": d["glagol_token"], 
+                        "name": d.get("name", "Яндекс Станция"), 
+                        "ip": d.get("ip"),
+                        "port": d.get("port", 1961)
+                    })
         
         await self.emit_event("yandex_config", {
             "devices": configs, 
             "yandex_token": y_token, 
             "enabled": config.get("tablet_control", False)
         }, room=sid)
+        if sid:
+            self.log(f"Broadcast: Config sent to client {sid}. Devices: {len(configs)}", 20)
+        else:
+            self.log(f"Broadcast: Config sent to all clients. Devices: {len(configs)}", 20)

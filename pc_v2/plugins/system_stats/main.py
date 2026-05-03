@@ -50,6 +50,25 @@ class Plugin(BasePlugin):
             self._handle_wizard_selections(data)
             await self._update_and_emit()
 
+    async def check_admin_requirement(self) -> bool:
+        """
+        Проверяем, нужны ли нам права админа.
+        Если Afterburner запущен - мы можем работать без админа.
+        Если нет - для работы DLL драйвера (температуры) нужны права.
+        """
+        # Если мы уже админы - дополнительные права не нужны
+        if ctypes.windll.shell32.IsUserAnAdmin() != 0:
+            return False
+
+        # Проверяем Afterburner
+        ab_stats = get_afterburner_stats()
+        if ab_stats and ab_stats.get('cpu_temp', 0) > 0:
+            # Afterburner запущен и отдает температуру, админ не нужен
+            return False
+            
+        # Afterburner нет или он пуст -> нужны права для DLL драйвера
+        return True
+
     async def _stats_loop(self):
         try:
             while True:
@@ -92,6 +111,7 @@ class Plugin(BasePlugin):
         cpu_t = gpu_l = gpu_t = 0
         has_gpu = False
 
+        # 1. Сначала пробуем Afterburner (самый легкий способ)
         if ab_stats:
             cpu_t = ab_stats.get('cpu_temp', 0)
             gpu_l = ab_stats.get('gpu_load', 0)
@@ -99,10 +119,11 @@ class Plugin(BasePlugin):
             has_gpu = gpu_l > 0 or gpu_t > 0
             if not self._gpu_name: self._gpu_name = ab_stats.get('gpu_name')
 
-        if not ab_stats:
-            driver_stats = {}
+        # 2. Если что-то не нашли (температуры == 0) и мы Админ - пробуем драйвер (DLL)
+        if cpu_t == 0 or gpu_t == 0:
             is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
             if is_admin:
+                driver_stats = {}
                 try:
                     ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
                     if os.path.exists(ps_script):
@@ -115,22 +136,40 @@ class Plugin(BasePlugin):
                             if json_start != -1:
                                 driver_stats = json.loads(process.stdout[json_start:])
                 except Exception as e:
-                    self.log(f"PowerShell stats failed: {e}", 10) # DEBUG
+                    self.log(f"PowerShell stats failed: {e}", 10)
 
-            cpu_t = driver_stats.get('cpu_temp', cpu_t)
-            gpu_l = driver_stats.get('gpu_load', gpu_l)
-            gpu_t = driver_stats.get('gpu_temp', gpu_t)
-            if not self._cpu_name: self._cpu_name = driver_stats.get('cpu_name')
-            if not self._gpu_name: self._gpu_name = driver_stats.get('gpu_name')
+                # Дополняем данные из драйвера, если они там есть
+                if cpu_t == 0: cpu_t = driver_stats.get('cpu_temp', 0)
+                if gpu_l == 0: gpu_l = driver_stats.get('gpu_load', 0)
+                if gpu_t == 0: gpu_t = driver_stats.get('gpu_temp', 0)
+                if not self._cpu_name: self._cpu_name = driver_stats.get('cpu_name')
+                if not self._gpu_name: self._gpu_name = driver_stats.get('gpu_name')
+            else:
+                if cpu_t == 0:
+                    self.log("CPU temperature is 0 and no Admin rights for DLL driver.", 30)
+            
+            if cpu_t == 0 and not is_admin:
+                self.log("CPU temperature is 0. Please try running the server as Administrator for better sensor access.", 30) # WARNING
 
-        # WMI Fallback
-        if not ab_stats and cpu_t == 0:
+        # WMI Fallback (LibreHardwareMonitor or OpenHardwareMonitor namespace)
+        if cpu_t == 0:
             try:
-                w = wmi.WMI(namespace="root\\wmi")
-                t_infos = w.MSAcpi_ThermalZoneTemperature()
-                if t_infos:
-                    cpu_t = (t_infos[0].CurrentTemperature - 2732) / 10.0
-            except: pass
+                # Пытаемся найти через WMI-пространство LibreHardwareMonitor (если запущен)
+                w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
+                sensors = w.Sensor()
+                for s in sensors:
+                    if s.SensorType == "Temperature":
+                        if "CPU" in s.Name or "Package" in s.Name:
+                            if cpu_t == 0 or s.Value > cpu_t:
+                                cpu_t = s.Value
+            except: 
+                try:
+                    # Стандартный WMI ThermalZone (часто требует прав или специфичного BIOS)
+                    w = wmi.WMI(namespace="root\\wmi")
+                    t_infos = w.MSAcpi_ThermalZoneTemperature()
+                    if t_infos:
+                        cpu_t = (t_infos[0].CurrentTemperature - 2732) / 10.0
+                except: pass
 
         # GPUtil Fallback
         if not has_gpu:
@@ -169,6 +208,7 @@ class Plugin(BasePlugin):
             "cpu_temp": cpu_t, "display_cpu_temp": f"{int(cpu_t)}°C" if cpu_t else "N/A",
             "gpu_load": gpu_l, "display_gpu_load": f"{int(gpu_l)}%" if gpu_l else "0%",
             "gpu_temp": gpu_t, "display_gpu_temp": f"{int(gpu_t)}°C" if gpu_t else "N/A",
+            "disk_temps": driver_stats.get('disk_temps', []),
             "has_gpu": has_gpu,
             "cpu_name": self._cpu_name or "CPU",
             "gpu_name": self._gpu_name or "GPU"

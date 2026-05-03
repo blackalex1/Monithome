@@ -44,6 +44,8 @@ fun LyricsWidget(
     modifier: Modifier = Modifier,
     isFullScreen: Boolean = false,
     coverUrl: String = "",
+    title: String = "",
+    translations: Map<String, String> = emptyMap(),
     onClick: () -> Unit = {}
 ) {
     val syncUseCase: SyncLyricsUseCase = koinInject()
@@ -129,8 +131,20 @@ fun LyricsWidget(
         }
 
         // КОНТЕНТ (с отступами)
-        Box(modifier = Modifier.fillMaxSize().padding(if (isFullScreen) 32.dp else 16.dp), contentAlignment = Alignment.Center) {
-            if (lyrics.isEmpty()) {
+        Column(modifier = Modifier.fillMaxSize().padding(if (isFullScreen) 32.dp else 16.dp)) {
+            if (!isFullScreen && title.isNotEmpty()) {
+                Text(
+                    text = title,
+                    color = Color.White,
+                    fontSize = 18.sp,
+                    fontWeight = FontWeight.Bold,
+                    modifier = Modifier.padding(bottom = 16.dp).fillMaxWidth(),
+                    textAlign = TextAlign.Start
+                )
+            }
+
+            Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
+                if (lyrics.isEmpty()) {
                 // Если текста нет - показываем обложку в центре
                 if (decodedBackground != null) {
                     Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -149,7 +163,7 @@ fun LyricsWidget(
                         if (isFullScreen) {
                             Spacer(modifier = Modifier.height(24.dp))
                             Text(
-                                text = "Текст не найден",
+                                text = translations["lyrics_not_found"] ?: "Текст не найден",
                                 color = Color.Gray.copy(alpha = 0.5f),
                                 fontSize = 18.sp,
                                 fontWeight = FontWeight.Medium
@@ -212,4 +226,5 @@ fun LyricsWidget(
             }
         }
     }
+}
 }

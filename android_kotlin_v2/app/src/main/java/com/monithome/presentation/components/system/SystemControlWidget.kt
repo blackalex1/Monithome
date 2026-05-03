@@ -20,14 +20,20 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monithome.presentation.dashboard.DashboardIntent
 
+import com.monithome.presentation.dashboard.DashboardState
+import com.monithome.presentation.dashboard.util.t
+import androidx.compose.foundation.border
+import androidx.compose.ui.graphics.luminance
+
 @Composable
 fun SystemControlWidget(
+    state: DashboardState,
     onIntent: (DashboardIntent) -> Unit,
     modifier: Modifier = Modifier
 ) {
     // Состояние для диалога подтверждения
     var showConfirmDialog by remember { mutableStateOf(false) }
-    var pendingAction by remember { mutableStateOf<Pair<String, String>?>(null) } // actionId to label
+    var pendingAction by remember { mutableStateOf<Pair<String, String>?>(null) } // actionId to translationKey
 
     Card(
         modifier = modifier.fillMaxWidth(),
@@ -38,7 +44,7 @@ fun SystemControlWidget(
             modifier = Modifier.padding(20.dp)
         ) {
             Text(
-                text = "Управление ПК",
+                text = state.t("pc_control_title", "Управление ПК"),
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -50,37 +56,37 @@ fun SystemControlWidget(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 SystemButton(
-                    label = "Сон",
+                    label = state.t("Сон", "Сон"),
                     icon = Icons.Filled.NightsStay,
-                    color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    color = MaterialTheme.colorScheme.primary,
                     onClick = { 
-                        pendingAction = "sleep" to "Перевести ПК в режим сна?"
+                        pendingAction = "sleep" to "confirm_sleep"
                         showConfirmDialog = true
                     }
                 )
                 SystemButton(
-                    label = "Выкл",
+                    label = state.t("Выкл.", "Выкл"),
                     icon = Icons.Filled.PowerSettingsNew,
-                    color = MaterialTheme.colorScheme.primary, // Using primary accent
+                    color = MaterialTheme.colorScheme.primary,
                     onClick = { 
-                        pendingAction = "shutdown" to "Выключить компьютер?"
+                        pendingAction = "shutdown" to "confirm_shutdown"
                         showConfirmDialog = true
                     }
                 )
                 SystemButton(
-                    label = "Блок",
+                    label = state.t("Блок.", "Блок"),
                     icon = Icons.Filled.Lock,
-                    color = MaterialTheme.colorScheme.secondary,
+                    color = MaterialTheme.colorScheme.primary,
                     onClick = { 
                         onIntent(DashboardIntent.PluginCommand("pc_system", "lock"))
                     }
                 )
                 SystemButton(
-                    label = "Рестарт",
+                    label = state.t("Рестарт", "Рестарт"),
                     icon = Icons.Filled.Refresh,
-                    color = MaterialTheme.colorScheme.tertiary,
+                    color = MaterialTheme.colorScheme.primary,
                     onClick = { 
-                        pendingAction = "restart" to "Перезагрузить компьютер?"
+                        pendingAction = "restart" to "confirm_restart"
                         showConfirmDialog = true
                     }
                 )
@@ -95,8 +101,8 @@ fun SystemControlWidget(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            title = { Text("Подтверждение") },
-            text = { Text(pendingAction!!.second) },
+            title = { Text(state.t("confirm_title", "Подтверждение")) },
+            text = { Text(state.t(pendingAction!!.second, pendingAction!!.second)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -104,12 +110,12 @@ fun SystemControlWidget(
                         showConfirmDialog = false
                     }
                 ) {
-                    Text("Да", color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text(state.t("btn_yes", "Да"), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showConfirmDialog = false }) {
-                    Text("Отмена", color = Color.White)
+                    Text(state.t("btn_cancel", "Отмена"), color = Color.White)
                 }
             }
         )
@@ -127,24 +133,29 @@ fun SystemButton(
         horizontalAlignment = Alignment.CenterHorizontally,
         modifier = Modifier.padding(4.dp)
     ) {
+        // Если акцентный цвет слишком темный, используем onSurface для текста/иконки
+        val iconTint = if (color.luminance() < 0.2f) MaterialTheme.colorScheme.onSurface else color
+        
         IconButton(
             onClick = onClick,
             modifier = Modifier
                 .size(56.dp)
-                .background(color.copy(alpha = 0.1f), CircleShape)
+                .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f), CircleShape)
+                .border(1.dp, color.copy(alpha = 0.4f), CircleShape)
         ) {
             Icon(
                 imageVector = icon,
                 contentDescription = label,
-                tint = color,
+                tint = iconTint,
                 modifier = Modifier.size(28.dp)
             )
         }
         Spacer(modifier = Modifier.height(8.dp))
         Text(
             text = label,
-            color = Color.Gray,
-            fontSize = 12.sp
+            color = if (color.luminance() < 0.2f) Color.LightGray else color.copy(alpha = 0.8f),
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
         )
     }
 }

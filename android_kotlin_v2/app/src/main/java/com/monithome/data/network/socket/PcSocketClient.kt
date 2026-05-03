@@ -50,21 +50,29 @@ class PcSocketClient {
             return
         }
 
-        var finalUrl = url.trim()
-        if (!finalUrl.startsWith("http://") && !finalUrl.startsWith("https://")) {
+        var finalUrl = url.trim().replace(" ", "")
+        if (finalUrl.isNotEmpty() && !finalUrl.startsWith("http")) {
             finalUrl = "http://$finalUrl"
         }
-        if (finalUrl.indexOf(":", 8) == -1) {
-            finalUrl = "$finalUrl:5000"
+        
+        // Проверка порта (игнорируя http://)
+        val hasPort = if (finalUrl.startsWith("http")) {
+            finalUrl.substringAfter("://").contains(":")
+        } else {
+            finalUrl.contains(":")
+        }
+        
+        if (!hasPort && finalUrl.isNotEmpty()) {
+            finalUrl += ":5000"
         }
 
         try {
             _connectionState.value = SocketConnectionState.Connecting
             val opts = IO.Options().apply {
-                transports = arrayOf(WebSocket.NAME)
+                // Убираем принудительный WebSocket, даем Socket.IO выбрать лучший транспорт
                 reconnection = true
                 reconnectionDelay = 1000
-                timeout = 10000
+                timeout = 15000 // Немного увеличим таймаут
                 auth = if (token != null) {
                     mapOf("token" to token, "supports_encryption" to "true")
                 } else {
@@ -100,7 +108,7 @@ class PcSocketClient {
         }
 
         s.on("auth_required") {
-            Log.d("PcSocketClient", "Server requested AUTH")
+            Log.i("PcSocketClient", "Server requested AUTH")
             _events.tryEmit(SocketEvent.AuthRequired)
         }
 
@@ -123,24 +131,25 @@ class PcSocketClient {
         }
 
         s.on("authorized") {
-            Log.d("PcSocketClient", "Received 'authorized' event")
+            Log.i("PcSocketClient", "Received 'authorized' event")
         }
 
         s.on("ui_config") { args ->
+            Log.i("PcSocketClient", "Event received: ui_config")
             (JsonParser.safeParseJson(args, "ui_config") as? JSONObject)?.let {
                 val colorStr = it.optString("theme_color", "")
-                Log.d("PcSocketClient", "UI CONFIG raw: $it")
-                Log.d("PcSocketClient", "Extracted theme_color string: '$colorStr'")
+                Log.i("PcSocketClient", "UI CONFIG received: $it")
                 val color = parseHexColor(colorStr)
                 _events.tryEmit(SocketEvent.UiConfig(it, color))
             }
         }
 
         s.on("theme_update") { args ->
-            (JsonParser.safeParseJson(args) as? JSONObject)?.let {
+            Log.i("PcSocketClient", "Event received: theme_update")
+            (JsonParser.safeParseJson(args, "theme_update") as? JSONObject)?.let {
                 val colorStr = it.optString("theme_color", "")
                 val color = parseHexColor(colorStr)
-                Log.d("PcSocketClient", "THEME UPDATE received: '$colorStr', parsed: $color")
+                Log.i("PcSocketClient", "THEME UPDATE received: '$colorStr', parsed: $color")
                 if (color != null) {
                     _events.tryEmit(SocketEvent.ThemeUpdate(color))
                 }
@@ -169,15 +178,26 @@ class PcSocketClient {
 
         s.on("stats_json") { args ->
             Log.v("PcSocketClient", "Received JSON stats")
-            (args.getOrNull(0) as? JSONObject)?.let {
+            (JsonParser.safeParseJson(args, "stats_json") as? JSONObject)?.let {
                 _events.tryEmit(SocketEvent.StatsJson(it))
             }
         }
 
         s.on("yandex_config") { args ->
-            (JsonParser.safeParseJson(args) as? JSONObject)?.let {
+            Log.i("PcSocketClient", "Event received: yandex_config")
+            (JsonParser.safeParseJson(args, "yandex_config") as? JSONObject)?.let {
+                val masked = JSONObject(it.toString())
+                if (masked.has("yandex_token")) masked.put("yandex_token", "***")
+                if (masked.has("devices")) {
+                    val devices = masked.getJSONArray("devices")
+                    for (i in 0 until devices.length()) {
+                        val d = devices.getJSONObject(i)
+                        if (d.has("glagol_token")) d.put("glagol_token", "***")
+                    }
+                }
+                Log.i("PcSocketClient", "YANDEX CONFIG received (masked tokens): $masked")
                 _events.tryEmit(SocketEvent.YandexConfig(it))
-            }
+            } ?: Log.w("PcSocketClient", "Failed to parse yandex_config")
         }
     }
 

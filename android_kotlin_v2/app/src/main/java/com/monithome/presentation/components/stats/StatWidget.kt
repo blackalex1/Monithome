@@ -17,9 +17,12 @@ import androidx.compose.ui.unit.sp
 fun StatWidget(
     title: String,
     stats: Map<String, Any>,
+    translations: Map<String, String>,
+    onClick: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     Card(
+        onClick = onClick,
         modifier = modifier.fillMaxWidth(),
         shape = MaterialTheme.shapes.large,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
@@ -35,7 +38,8 @@ fun StatWidget(
 
             // CPU Load
             StatItem(
-                label = "CPU",
+                label = translations["cpu_usage"] ?: "CPU",
+                subLabel = stats["cpu_name"] as? String,
                 value = "${(stats["cpu"] as? Number)?.toInt() ?: 0}%",
                 temp = (stats["cpu_temp"] as? Number)?.toInt()?.let { "$it°C" },
                 progress = (stats["cpu"] as? Number)?.toFloat()?.div(100f) ?: 0f,
@@ -47,7 +51,8 @@ fun StatWidget(
             // GPU Load (if exists)
             if (stats["has_gpu"] == true) {
                 StatItem(
-                    label = "GPU",
+                    label = translations["gpu_usage"] ?: "GPU",
+                    subLabel = stats["gpu_name"] as? String,
                     value = "${(stats["gpu_load"] as? Number)?.toInt() ?: 0}%",
                     temp = (stats["gpu_temp"] as? Number)?.toInt()?.let { "$it°C" },
                     progress = (stats["gpu_load"] as? Number)?.toFloat()?.div(100f) ?: 0f,
@@ -58,7 +63,7 @@ fun StatWidget(
 
             // RAM Load
             StatItem(
-                label = "RAM",
+                label = translations["ram_label"] ?: "RAM",
                 value = "${(stats["ram_used"] as? Number)?.toDouble() ?: 0.0} / ${(stats["ram_total"] as? Number)?.toDouble() ?: 0.0} GB",
                 progress = (stats["ram_percent"] as? Number)?.toFloat()?.div(100f) ?: 0f,
                 color = Color(0xFFA78BFA)
@@ -73,7 +78,8 @@ fun StatItem(
     value: String,
     temp: String? = null,
     progress: Float,
-    color: Color
+    color: Color,
+    subLabel: String? = null
 ) {
     Column {
         Row(
@@ -89,7 +95,18 @@ fun StatItem(
                 Text(text = value, color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.Bold)
             }
         }
-        Spacer(modifier = Modifier.height(4.dp))
+        
+        if (subLabel != null) {
+            Text(
+                text = subLabel,
+                color = Color.Gray.copy(alpha = 0.5f),
+                fontSize = 11.sp,
+                modifier = Modifier.padding(top = 1.dp, bottom = 4.dp)
+            )
+        } else {
+            Spacer(modifier = Modifier.height(4.dp))
+        }
+
         Box(
             modifier = Modifier
                 .fillMaxWidth()

@@ -217,6 +217,8 @@ class YandexAuth:
                 if new_results:
                     self._write_env("GLAGOL_TOKENS", json.dumps(new_results, ensure_ascii=False))
                     self.plugin.devices = new_results
+                    # Принудительно применяем новый конфиг (запуск воркеров, рассылка на планшеты)
+                    await self.plugin.apply_mode()
                     return True
         except Exception as e: 
             self.log(f"Auto-refresh exception: {e}", 40)

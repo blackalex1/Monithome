@@ -21,6 +21,7 @@ session.json
 tokens.json
 secrets.json
 auth.json
+.gui_token
 **/config.json
 **/master_config.json
 **/*_tokens.json
@@ -93,3 +94,4 @@ pc_v2/plugins/pc_media/cover.jpg
 .ruff_cache/
 brain/
 old/
+scratch/

@@ -41,6 +41,15 @@ class DashboardViewModel(
             }
         }
 
+        // Подписка на переводы
+        viewModelScope.launch {
+            pluginRepository.translations.collect { trans ->
+                if (trans.isNotEmpty()) {
+                    _state.update { it.copy(translations = trans) }
+                }
+            }
+        }
+
         // Подписка на активные плагины UI
         viewModelScope.launch {
             pluginRepository.uiConfigs
@@ -153,7 +162,36 @@ class DashboardViewModel(
                 Log.v("DashboardVM", "Stats update: ${allStats.keys}")
                 allStats
             }.collect { allStats ->
-                _state.update { it.copy(stats = allStats) }
+                _state.update { s ->
+                    val systemStats = allStats["system_stats"]
+                    val newCpuHistory = if (systemStats != null) {
+                        val cpu = (systemStats["cpu"] as? Number)?.toFloat() ?: 0f
+                        (s.cpuHistory + cpu).takeLast(50)
+                    } else s.cpuHistory
+
+                    val newCpuTempHistory = if (systemStats != null) {
+                        val temp = (systemStats["cpu_temp"] as? Number)?.toFloat() ?: 0f
+                        (s.cpuTempHistory + temp).takeLast(50)
+                    } else s.cpuTempHistory
+
+                    val newGpuLoadHistory = if (systemStats != null) {
+                        val load = (systemStats["gpu_load"] as? Number)?.toFloat() ?: 0f
+                        (s.gpuLoadHistory + load).takeLast(50)
+                    } else s.gpuLoadHistory
+
+                    val newGpuTempHistory = if (systemStats != null) {
+                        val temp = (systemStats["gpu_temp"] as? Number)?.toFloat() ?: 0f
+                        (s.gpuTempHistory + temp).takeLast(50)
+                    } else s.gpuTempHistory
+
+                    s.copy(
+                        stats = allStats,
+                        cpuHistory = newCpuHistory,
+                        cpuTempHistory = newCpuTempHistory,
+                        gpuLoadHistory = newGpuLoadHistory,
+                        gpuTempHistory = newGpuTempHistory
+                    )
+                }
             }
         }
 
@@ -360,6 +398,9 @@ class DashboardViewModel(
             }
             DashboardIntent.StopReordering -> {
                 _state.update { it.copy(isReordering = false) }
+            }
+            DashboardIntent.ToggleStatsExpanded -> {
+                _state.update { it.copy(isStatsExpanded = !it.isStatsExpanded) }
             }
         }
     }

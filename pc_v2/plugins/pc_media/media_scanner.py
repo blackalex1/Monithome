@@ -80,12 +80,12 @@ async def save_cover_to_file(props, file_path):
     if not props or not props.thumbnail: return False
     for attempt in range(5):
         try:
-            stream = await props.thumbnail.open_read_async()
+            stream = await asyncio.wait_for(props.thumbnail.open_read_async(), timeout=5.0)
             if stream.size == 0: 
                 await asyncio.sleep(0.5)
                 continue
             reader = DataReader(stream.get_input_stream_at(0))
-            await reader.load_async(stream.size)
+            await asyncio.wait_for(reader.load_async(stream.size), timeout=5.0)
             raw_data = bytes(reader.read_buffer(stream.size))
             
             # Сохраняем во временный файл
@@ -103,6 +103,7 @@ async def main_loop():
     is_first_run = True
     last_base_p_sec = -1.0
     last_poll_time = time.time()
+    last_manager_refresh = time.time()
     
     print(json.dumps({"log": "Entering main_loop"}), flush=True)
     vol_manager = SystemVolume()
@@ -116,6 +117,14 @@ async def main_loop():
 
     while True:
         try:
+            # Периодическое обновление SessionManager (раз в 5 минут)
+            if (time.time() - last_manager_refresh) > 300:
+                try:
+                    manager = await SessionManager.request_async()
+                    last_manager_refresh = time.time()
+                    print(json.dumps({"log": "SessionManager refreshed"}), flush=True)
+                except: pass
+
             # 1. Громкость
             cur_vol, cur_mute = vol_manager.get_info()
 
@@ -164,7 +173,12 @@ async def main_loop():
             if session:
                 try:
                     pb = session.get_playback_info()
-                    props = await session.try_get_media_properties_async()
+                    try:
+                        props = await asyncio.wait_for(session.try_get_media_properties_async(), timeout=2.0)
+                    except asyncio.TimeoutError:
+                        props = None
+                        print(json.dumps({"log": "Media properties fetch timeout"}), flush=True)
+                    
                     timeline = session.get_timeline_properties()
                     
                     if props:

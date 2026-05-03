@@ -49,6 +49,7 @@ class YandexStationClient(context: Context) {
     }
 
     fun updateConfigs(configs: List<StationConfig>) {
+        Log.i(TAG, "updateConfigs called with ${configs.size} devices")
         val newIds = configs.map { it.deviceId }.toSet()
 
         // 1. Remove obsolete
@@ -65,7 +66,10 @@ class YandexStationClient(context: Context) {
         configs.forEach { config ->
             val old = stationConfigs[config.deviceId]
             val hasConnection = activeConnections.containsKey(config.deviceId)
+            Log.i(TAG, "Checking config for ${config.deviceId}: hasOld=${old != null}, hasConn=$hasConnection")
+            
             if (old == null || old.token != config.token || old.ip != config.ip || !hasConnection) {
+                Log.i(TAG, "Config changed or missing for ${config.deviceId}. Triggering reconnect.")
                 stationConfigs[config.deviceId] = config
                 reconnect(config.deviceId)
             }
@@ -80,20 +84,22 @@ class YandexStationClient(context: Context) {
     }
 
     private fun reconnect(deviceId: String) {
-        activeConnections[deviceId]?.close(1000, "Reconnecting")
         val config = stationConfigs[deviceId] ?: return
+        activeConnections[deviceId]?.close(1000, "Reconnecting")
         
         val ip = config.ip
-        if (ip == null) {
+        if (ip.isNullOrBlank()) {
+            Log.w(TAG, "Cannot connect to $deviceId: IP is empty. Starting discovery...")
             discovery.discover(config)
             return
         }
 
-        Log.d(TAG, "Connecting to ${config.name} at wss://$ip:${config.port}")
+        Log.i(TAG, ">>> Connecting to ${config.name} ($deviceId) at wss://$ip:${config.port}")
         val request = Request.Builder().url("wss://$ip:${config.port}").build()
 
         val listener = object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                Log.i(TAG, "Successfully opened socket for $deviceId")
                 activeConnections[deviceId] = webSocket
                 _events.tryEmit(YandexStationEvent.ConnectionChanged(deviceId, true))
                 sendAuthPing(webSocket, config.token, deviceId)
@@ -102,25 +108,48 @@ class YandexStationClient(context: Context) {
             override fun onMessage(webSocket: WebSocket, text: String) {
                 try {
                     val json = JSONObject(text)
+                    var state: JSONObject? = null
+                    
                     if (json.has("state")) {
-                        _events.tryEmit(YandexStationEvent.StateUpdated(deviceId, json.getJSONObject("state")))
+                        state = json.optJSONObject("state")
+                    } else if (json.has("payload")) {
+                        val payload = json.optJSONObject("payload")
+                        if (payload != null && payload.has("state")) {
+                            state = payload.optJSONObject("state")
+                        }
+                    }
+
+                    if (state != null) {
+                        Log.v(TAG, "State received for $deviceId: ${state.optJSONObject("playerState")?.optString("title") ?: "no title"}")
+                        _events.tryEmit(YandexStationEvent.StateUpdated(deviceId, state))
+                    } else {
+                        Log.d(TAG, "Message from $deviceId received but no state found: $text")
                     }
                 } catch (e: Exception) {
-                    Log.e(TAG, "Parse error for $deviceId", e)
+                    Log.e(TAG, "Parse error for $deviceId: ${e.message}")
                 }
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                Log.e(TAG, "!!! Socket failure for $deviceId: ${t.message}", t)
                 activeConnections.remove(deviceId)
                 _events.tryEmit(YandexStationEvent.ConnectionChanged(deviceId, false))
                 _events.tryEmit(YandexStationEvent.Error(deviceId, t.message ?: "Unknown socket error"))
-                scope.launch {
-                    delay(10000)
-                    if (stationConfigs.containsKey(deviceId)) reconnect(deviceId)
+                
+                // Retry only if config still exists
+                if (stationConfigs.containsKey(deviceId)) {
+                    scope.launch {
+                        delay(10000)
+                        if (stationConfigs.containsKey(deviceId)) {
+                            Log.d(TAG, "Retrying connection for $deviceId...")
+                            reconnect(deviceId)
+                        }
+                    }
                 }
             }
             
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
+                Log.w(TAG, "Socket closed for $deviceId: $reason ($code)")
                 activeConnections.remove(deviceId)
                 _events.tryEmit(YandexStationEvent.ConnectionChanged(deviceId, false))
             }
@@ -130,6 +159,7 @@ class YandexStationClient(context: Context) {
     }
 
     private fun sendAuthPing(ws: WebSocket, token: String, deviceId: String) {
+        Log.i(TAG, "Sending initial AUTH PING to $deviceId")
         val payload = JSONObject().apply {
             put("conversationToken", token)
             put("id", UUID.randomUUID().toString())
@@ -139,12 +169,18 @@ class YandexStationClient(context: Context) {
         ws.send(payload.toString())
         
         scope.launch {
-            delay(300)
-            sendCommand(deviceId, "getState")
+            delay(500)
+            Log.i(TAG, "Starting getState loop for $deviceId")
             while (activeConnections[deviceId] == ws) {
-                delay(1000) // Опрашиваем раз в секунду для плавности
-                if (activeConnections[deviceId] == ws) sendCommand(deviceId, "getState")
+                try {
+                    sendCommand(deviceId, "getState")
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in getState loop for $deviceId: ${e.message}")
+                    break
+                }
+                delay(3000) // Increase delay to avoid flooding
             }
+            Log.d(TAG, "Exited getState loop for $deviceId")
         }
     }
 
@@ -152,21 +188,22 @@ class YandexStationClient(context: Context) {
         val config = stationConfigs[deviceId] ?: return
         val ws = activeConnections[deviceId] ?: return
 
-        val finalPayload = commandPayload ?: JSONObject()
-
         val payload = JSONObject().apply {
             put("conversationToken", config.token)
             put("id", UUID.randomUUID().toString())
             put("sentTime", System.currentTimeMillis())
             put("payload", JSONObject().apply { 
                 put("command", command)
-                val keys = finalPayload.keys()
-                while (keys.hasNext()) {
-                    val key = keys.next()
-                    put(key, finalPayload.get(key))
+                if (commandPayload != null) {
+                    val keys = commandPayload.keys()
+                    while (keys.hasNext()) {
+                        val key = keys.next()
+                        put(key, commandPayload.get(key))
+                    }
                 }
             })
         }
+        Log.v(TAG, "Sending command $command to $deviceId: $payload")
         ws.send(payload.toString())
 
         // Сразу запрашиваем стейт после команды для мгновенного обновления

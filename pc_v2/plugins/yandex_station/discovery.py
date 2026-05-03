@@ -29,15 +29,30 @@ class SpeakerDiscovery:
             pass
 
 def get_all_interfaces():
-    """Возвращает список всех IPv4 адресов локальных интерфейсов"""
+    """Возвращает список всех IPv4 адресов локальных интерфейсов, исключая проблемные"""
     interfaces = []
     try:
         # Пытаемся получить все адреса через socket
         hostname = socket.gethostname()
         for info in socket.getaddrinfo(hostname, None):
-            ip = info[4][0]
-            if "." in ip and not ip.startswith("127."): # Только IPv4 и не loopback
+            if info[0] == socket.AF_INET: # Только IPv4
+                ip = info[4][0]
+                if ip.startswith("127."): continue
+                # Исключаем типичные Docker/vEthernet подсети, которые часто вызывают WinError 59
+                if ip.startswith("172.17.") or ip.startswith("172.18.") or ip.startswith("172.19."):
+                    continue
                 interfaces.append(ip)
     except:
         pass
+    
+    # Если ничего не нашли, попробуем стандартный способ
+    if not interfaces:
+        try:
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            interfaces.append(s.getsockname()[0])
+            s.close()
+        except:
+            pass
+            
     return list(set(interfaces))

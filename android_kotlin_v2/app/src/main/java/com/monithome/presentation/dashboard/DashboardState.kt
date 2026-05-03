@@ -17,7 +17,15 @@ data class DashboardState(
     val stats: Map<String, Map<String, Any>> = emptyMap(),
     val lyrics: List<com.monithome.domain.models.LyricLine> = emptyList(),
     val isLyricsFullScreen: Boolean = false,
-    val widgetOrder: List<String> = listOf("media", "pc_system", "yandex_lyrics", "system_stats", "pc_disks")
+    val translations: Map<String, String> = emptyMap(),
+    val widgetOrder: List<String> = listOf("media", "pc_system", "yandex_lyrics", "system_stats", "pc_disks"),
+    
+    // Stats History
+    val isStatsExpanded: Boolean = false,
+    val cpuHistory: List<Float> = emptyList(),
+    val cpuTempHistory: List<Float> = emptyList(),
+    val gpuLoadHistory: List<Float> = emptyList(),
+    val gpuTempHistory: List<Float> = emptyList()
 )
 
 data class MediaUIState(
@@ -63,6 +71,7 @@ sealed class DashboardIntent {
     object PrevTrack : DashboardIntent()
     data class SetVolume(val volume: Int) : DashboardIntent()
     object ToggleLyricsFullScreen : DashboardIntent()
+    object ToggleStatsExpanded : DashboardIntent()
     data class PluginCommand(
         val pluginId: String, 
         val action: String, 

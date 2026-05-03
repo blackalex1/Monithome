@@ -19,8 +19,12 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 
+import com.monithome.presentation.dashboard.DashboardState
+import com.monithome.presentation.dashboard.util.t
+
 @Composable
 fun ThemeColorPicker(
+    state: DashboardState,
     selectedColor: Long,
     onColorSelect: (Long) -> Unit,
     onClose: () -> Unit,
@@ -47,7 +51,7 @@ fun ThemeColorPicker(
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
         Text(
-            "Выберите акцентный цвет",
+            state.t("theme_picker_title", "Выберите акцентный цвет"),
             color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
             fontSize = 14.sp,
             modifier = Modifier.padding(bottom = 12.dp)
@@ -93,7 +97,7 @@ fun ThemeColorPicker(
             ) {
                 Icon(
                     imageVector = Icons.Default.Check,
-                    contentDescription = "Done",
+                    contentDescription = state.t("btn_done", "Done"),
                     tint = Color.White
                 )
             }

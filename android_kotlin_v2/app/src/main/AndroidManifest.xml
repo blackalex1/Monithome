@@ -7,7 +7,7 @@
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
-        android:label="MonitHome v2"
+        android:label="MonitHome"
         android:supportsRtl="true"
         android:largeHeap="true"
         android:theme="@android:style/Theme.DeviceDefault.NoActionBar"

@@ -48,14 +48,18 @@ def get_afterburner_stats():
                 
                 if value > 3e38: continue
 
-                if name == "GPU temperature" or name == "GPU2 temperature":
+                name_lower = name.lower()
+                if "gpu" in name_lower and "temperature" in name_lower:
                     stats['gpu_temp'] = value
-                elif name == "GPU usage" or name == "GPU2 usage":
+                elif "gpu" in name_lower and ("usage" in name_lower or "load" in name_lower):
                     stats['gpu_load'] = value
-                elif name == "CPU temperature":
-                    stats['cpu_temp'] = value
-                elif name == "CPU usage":
-                    stats['cpu_load'] = value
+                elif "cpu" in name_lower and "temperature" in name_lower:
+                    # Если есть несколько ядер, берем максимальную или первую попавшуюся
+                    if 'cpu_temp' not in stats or value > stats['cpu_temp']:
+                        stats['cpu_temp'] = value
+                elif "cpu" in name_lower and ("usage" in name_lower or "load" in name_lower):
+                    if 'cpu_load' not in stats or value > stats['cpu_load']:
+                        stats['cpu_load'] = value
                 elif name == "RAM usage":
                     stats['ram_used'] = value / 1024 if value > 1000 else value
                 elif name == "Framerate":

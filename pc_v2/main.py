@@ -15,25 +15,44 @@ import socketio
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
 logger = logging.getLogger("Main")
 
+import time
+
 class SocketIOHandler(logging.Handler):
+    _last_msg = None
+
     def emit(self, record):
-        log_entry = self.format(record)
         try:
-            # Отправляем логи только если есть event loop
+            # Ручная сборка строки во избежание любых побочных эффектов форматтеров
+            t = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime(record.created))
+            msg = f"{t} [{record.levelname}] {record.name}: {record.getMessage()}"
+            
+            if msg == SocketIOHandler._last_msg:
+                return
+            
+            SocketIOHandler._last_msg = msg
+            
             loop = asyncio.get_running_loop()
-            loop.create_task(sio.emit("server_log", {"message": log_entry}, room="authorized"))
-        except RuntimeError:
+            loop.create_task(sio.emit("server_log", {"message": msg}, room="authorized"))
+        except:
             pass
 
-socket_log_handler = SocketIOHandler()
-socket_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
-# Добавляем хендлер к корневому логгеру, чтобы ловить всё
-logging.getLogger().addHandler(socket_log_handler)
+# Singleton-инициализация
+if not hasattr(logging, "_monithome_handler_initialized"):
+    socket_log_handler = SocketIOHandler()
+    socket_log_handler.setFormatter(logging.Formatter("%(asctime)s [%(levelname)s] %(name)s: %(message)s"))
+    socket_log_handler.name = "MonitHomeSocketHandler"
+    
+    root_logger = logging.getLogger()
+    # Удаляем вообще ВСЁ, что может дублировать логи в сокет
+    root_logger.handlers = [h for h in root_logger.handlers if getattr(h, "name", "") != "MonitHomeSocketHandler" and h.__class__.__name__ != "SocketIOHandler"]
+            
+    root_logger.addHandler(socket_log_handler)
+    logging._monithome_handler_initialized = True
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Startup ---
-    logger.info("Starting MonitHome PC v2 (Async)...")
+    logger.info("Starting MonitHome PC...")
     
     # 1. Запускаем Socket-менеджер (подписки на шину)
     await socket_manager.initialize()
@@ -64,9 +83,11 @@ if not os.path.exists(web_dir):
 
 app.mount("/static", StaticFiles(directory=web_dir), name="static")
 
+from fastapi.responses import RedirectResponse, FileResponse
+
 @app.get("/")
 async def root():
-    return RedirectResponse(url="/static/index.html")
+    return FileResponse(os.path.join(web_dir, "index.html"))
 
 from pydantic import BaseModel
 import json

@@ -31,6 +31,9 @@ class PluginRepositoryImpl(
     private val _uiConfigs = MutableStateFlow<List<PluginInfo>>(emptyList())
     override val uiConfigs: StateFlow<List<PluginInfo>> = _uiConfigs.asStateFlow()
 
+    private val _translations = MutableStateFlow<Map<String, String>>(emptyMap())
+    override val translations: StateFlow<Map<String, String>> = _translations.asStateFlow()
+
     private val statsFlows = ConcurrentHashMap<String, MutableStateFlow<Map<String, Any>>>()
     
     private var encryptionKey: String? = null
@@ -66,7 +69,7 @@ class PluginRepositoryImpl(
                     val devices = currentStats["devices"] as? List<Map<String, Any>>
                     val device = devices?.find { it["id"] == target }
                     val isPlaying = device?.get("playing") as? Boolean ?: false
-                    if (isPlaying) "pause" else "play"
+                    if (isPlaying) "stop" else "play"
                 }
                 "next_track" -> "next"
                 "prev_track" -> "prev"
@@ -98,35 +101,34 @@ class PluginRepositoryImpl(
     }
 
     private fun handlePcEvent(event: SocketEvent) {
-        when (event) {
-            is SocketEvent.AuthSuccess -> {
-                encryptionKey = event.encryptionKey
-            }
-            is SocketEvent.UiConfig -> {
-                parseUiConfig(event.config)
-            }
-            is SocketEvent.ManagerDataObj -> {
-                handleManagerData(event.data)
-            }
-            is SocketEvent.ManagerDataArr -> {
-                // handle logic if array is used
-            }
-            is SocketEvent.StatsJson -> {
-                val stats = event.data.optJSONObject("stats")
-                if (stats != null) {
-                    val map = jsonToMap(stats)
-                    bulkUpdate(map)
+        try {
+            when (event) {
+                is SocketEvent.AuthSuccess -> {
+                    encryptionKey = event.encryptionKey
+                    Log.i("PluginRepo", "AuthSuccess: Key set")
                 }
+                is SocketEvent.UiConfig -> {
+                    parseUiConfig(event.config)
+                }
+                is SocketEvent.ManagerDataObj -> {
+                    handleManagerData(event.data)
+                }
+                is SocketEvent.StatsJson -> {
+                    val stats = event.data.optJSONObject("stats")
+                    if (stats != null) bulkUpdate(jsonToMap(stats))
+                }
+                is SocketEvent.StatsBinary -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val stats = event.map["stats"] as? Map<String, Any>
+                    if (stats != null) bulkUpdate(stats)
+                }
+                is SocketEvent.YandexConfig -> {
+                    handleYandexConfig(event.data)
+                }
+                else -> {}
             }
-            is SocketEvent.StatsBinary -> {
-                @Suppress("UNCHECKED_CAST")
-                val stats = event.map["stats"] as? Map<String, Any>
-                if (stats != null) bulkUpdate(stats)
-            }
-            is SocketEvent.YandexConfig -> {
-                handleYandexConfig(event.data)
-            }
-            else -> {}
+        } catch (e: Exception) {
+            Log.e("PluginRepo", "Error handling PC event: ${e.message}", e)
         }
     }
 
@@ -137,7 +139,19 @@ class PluginRepositoryImpl(
                 processYandexState(event.deviceId, event.state)
             }
             is YandexStationEvent.ConnectionChanged -> {
-                Log.d("PluginRepo", "Yandex device ${event.deviceId} connected: ${event.isConnected}")
+                Log.i("PluginRepo", "Yandex device ${event.deviceId} connection status changed: ${event.isConnected}")
+                // Update local stats to reflect online status
+                val currentFlow = statsFlows.getOrPut("yandex_station") { MutableStateFlow(emptyMap()) }
+                @Suppress("UNCHECKED_CAST")
+                val devices = (currentFlow.value["devices"] as? List<Map<String, Any>>)?.toMutableList() ?: mutableListOf()
+                val index = devices.indexOfFirst { it["id"] == event.deviceId }
+                if (index >= 0) {
+                    val updated = devices[index].toMutableMap()
+                    updated["online"] = event.isConnected
+                    updated["status"] = if (event.isConnected) "direct" else "connecting"
+                    devices[index] = updated
+                    currentFlow.value = currentFlow.value.toMutableMap().apply { put("devices", devices) }
+                }
             }
             is YandexStationEvent.Error -> {
                 Log.e("PluginRepo", "Yandex error on ${event.deviceId}: ${event.error}")
@@ -163,6 +177,18 @@ class PluginRepositoryImpl(
     }
 
     private fun parseUiConfig(config: JSONObject) {
+        // Parse Translations
+        val transObj = config.optJSONObject("translations")
+        if (transObj != null) {
+            val map = mutableMapOf<String, String>()
+            val keys = transObj.keys()
+            while (keys.hasNext()) {
+                val key = keys.next()
+                map[key] = transObj.optString(key)
+            }
+            _translations.value = map
+        }
+
         val pluginsArr = config.optJSONArray("plugins") ?: return
         val list = mutableListOf<PluginInfo>()
         for (i in 0 until pluginsArr.length()) {
@@ -171,6 +197,7 @@ class PluginRepositoryImpl(
                 PluginInfo(
                     id = obj.optString("id"),
                     name = obj.optString("name", "Unknown"),
+                    description = obj.optString("description", ""),
                     type = obj.optString("type", "unknown"),
                     active = obj.optBoolean("active", false)
                 )
@@ -180,6 +207,9 @@ class PluginRepositoryImpl(
     }
 
     private fun handleYandexConfig(raw: JSONObject) {
+        val masked = JSONObject(raw.toString())
+        if (masked.has("yandex_token")) masked.put("yandex_token", "***")
+        Log.i("PluginRepo", "handleYandexConfig: $masked")
         var data = raw
         if (data.has("encrypted") && encryptionKey != null) {
             val decrypted = CryptoUtils.decrypt(data.getString("encrypted"), encryptionKey!!)
@@ -192,7 +222,7 @@ class PluginRepositoryImpl(
         isYandexStandalone = data.optBoolean("enabled", true)
         yandexToken = data.optString("yandex_token", null)
         
-        Log.d("PluginRepository", "Yandex Config received. Standalone: $isYandexStandalone, Token present: ${!yandexToken.isNullOrEmpty()}")
+        Log.i("PluginRepository", "Yandex Config received. Standalone: $isYandexStandalone, Token present: ${!yandexToken.isNullOrEmpty()}")
         
         if (data.has("devices")) {
             val arr = data.getJSONArray("devices")
@@ -202,8 +232,12 @@ class PluginRepositoryImpl(
                 val id = obj.optString("id")
                 val ip = obj.optString("ip", "")
                 val token = obj.optString("glagol_token", "")
+                val port = obj.optInt("port", 1961)
                 if (id.isNotEmpty() && token.isNotEmpty()) {
-                    configs.add(StationConfig(id, ip, token, obj.optString("name", "Яндекс Станция")))
+                    Log.i("PluginRepo", "Adding station: $id, IP: $ip, Token: ${token.take(5)}...")
+                    configs.add(StationConfig(id, ip, token, obj.optString("name", "Яндекс Станция"), port))
+                } else {
+                    Log.w("PluginRepo", "Invalid station config: id=$id, token=${token.take(5)}...")
                 }
             }
             allowedDeviceIds = configs.map { it.deviceId }.toSet()
@@ -215,14 +249,14 @@ class PluginRepositoryImpl(
                 statsFlows["yandex_lyrics"]?.value = emptyMap()
             }
             if (isYandexStandalone) {
-                Log.d("PluginRepository", "Starting Standalone mode with ${configs.size} devices")
+                Log.i("PluginRepo", "Starting Standalone mode with ${configs.size} devices")
                 val initialDevices = configs.map { 
-                    mapOf("id" to it.deviceId, "name" to it.name, "status" to "connecting", "title" to "Синхронизация...") 
+                    mapOf("id" to it.deviceId, "name" to it.name, "status" to "connecting", "title" to "Синхронизация...", "online" to false) 
                 }
                 statsFlows.getOrPut("yandex_station") { MutableStateFlow(emptyMap()) }.value = mapOf("devices" to initialDevices)
                 yandexClient.updateConfigs(configs)
             } else {
-                Log.d("PluginRepository", "Stopping Standalone mode (PC control)")
+                Log.i("PluginRepository", "Stopping Standalone mode (Switching to PC control)")
                 yandexClient.stopAll()
             }
         }

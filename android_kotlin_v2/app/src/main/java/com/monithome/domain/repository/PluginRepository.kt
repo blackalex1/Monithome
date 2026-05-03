@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 
 interface PluginRepository {
     val uiConfigs: StateFlow<List<PluginInfo>>
+    val translations: StateFlow<Map<String, String>>
     
     fun getPluginStats(pluginId: String): StateFlow<Map<String, Any>>
     

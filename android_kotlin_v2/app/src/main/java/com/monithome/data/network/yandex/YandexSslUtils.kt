@@ -20,7 +20,7 @@ object YandexSslUtils {
     }
 
     fun createSSLSocketFactory(): SSLSocketFactory {
-        val sslContext = SSLContext.getInstance("SSL")
+        val sslContext = SSLContext.getInstance("TLS")
         sslContext.init(null, arrayOf(trustManager), SecureRandom())
         return sslContext.socketFactory
     }

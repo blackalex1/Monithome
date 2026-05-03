@@ -15,6 +15,7 @@ import androidx.compose.ui.unit.sp
 
 @Composable
 fun DisksWidget(
+    title: String,
     disks: List<Map<String, Any>>,
     modifier: Modifier = Modifier
 ) {
@@ -25,7 +26,7 @@ fun DisksWidget(
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
-                text = "Диски",
+                text = title,
                 color = Color.White,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold

@@ -14,27 +14,29 @@ import com.monithome.presentation.dashboard.DashboardIntent
 import com.monithome.presentation.dashboard.DashboardState
 import com.monithome.presentation.dashboard.DashboardViewModel
 
+import com.monithome.presentation.dashboard.util.t
+
 @Composable
 fun AuthDialog(state: DashboardState, viewModel: DashboardViewModel) {
     val password = remember { mutableStateOf("") }
     AlertDialog(
         onDismissRequest = {},
-        title = { Text("Авторизация") },
+        title = { Text(state.t("auth_title", "Авторизация")) },
         text = {
             Column {
-                Text("Введите код доступа для MonitHome:")
+                Text(state.t("auth_desc", "Введите код доступа для MonitHome:"))
                 Spacer(modifier = Modifier.height(8.dp))
                 TextField(
                     value = password.value,
                     onValueChange = { password.value = it },
-                    placeholder = { Text("Пароль") },
+                    placeholder = { Text(state.t("auth_placeholder", "Пароль")) },
                     singleLine = true
                 )
             }
         },
         confirmButton = {
             Button(onClick = { viewModel.processIntent(DashboardIntent.Auth(password.value)) }) {
-                Text("Войти")
+                Text(state.t("btn_login", "Войти"))
             }
         }
     )

@@ -9,6 +9,7 @@ try:
     from PySide6.QtWidgets import QApplication, QMainWindow, QVBoxLayout, QWidget, QMessageBox
     from PySide6.QtWebEngineWidgets import QWebEngineView
     from PySide6.QtCore import QUrl, Signal, QObject, Slot
+    from PySide6.QtGui import QIcon
 except ImportError:
     print("PySide6 is not installed. Please run: pip install PySide6")
     sys.exit(1)
@@ -40,7 +41,8 @@ class PairingBridge(QObject):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("MonitHome Dashboard v2")
+        self.setWindowTitle("MonitHome Dashboard")
+        self.setWindowIcon(QIcon(os.path.join(os.path.dirname(__file__), "web", "favicon.png")))
         self.resize(1280, 800)
         
         self.browser = QWebEngineView()
@@ -66,10 +68,50 @@ class MainWindow(QMainWindow):
         msg.setStandardButtons(QMessageBox.Ok)
         msg.exec()
 
+def kill_process_on_port(port):
+    """Пытается найти и убить все процессы, занимающие порт, и ждет освобождения"""
+    if sys.platform != "win32": return
+    import subprocess
+    import socket
+    import time
+    
+    def is_port_in_use():
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(0.5)
+            return s.connect_ex(('127.0.0.1', port)) == 0
+
+    for attempt in range(5):
+        if not is_port_in_use(): 
+            if attempt > 0: logger.info(f"Port {port} is now free.")
+            return
+        
+        try:
+            # Ищем PID процесса по порту
+            result = subprocess.check_output(f'netstat -aon | findstr :{port}', shell=True).decode()
+            for line in result.strip().split('\n'):
+                # Ищем именно LISTENING или любые активные соединения если порт всё еще занят
+                if 'LISTENING' in line or (attempt > 0 and f':{port}' in line):
+                    parts = line.strip().split()
+                    pid = parts[-1]
+                    if pid.isdigit() and pid != '0' and int(pid) != os.getpid():
+                        logger.info(f"Killing process {pid} on port {port} (attempt {attempt+1})...")
+                        subprocess.run(f'taskkill /F /PID {pid}', shell=True, capture_output=True)
+            time.sleep(1.0)
+        except Exception:
+            time.sleep(1.0)
+    
+    if is_port_in_use():
+        logger.warning(f"Could not free port {port} after several attempts.")
+
 def run_uvicorn():
     logger.info("Starting Async FastAPI Server in background thread...")
-    # Запускаем uvicorn без автоперезагрузки в фоновом потоке
-    uvicorn.run(socket_app, host="0.0.0.0", port=5000, log_level="warning")
+    # Даем небольшой зазор перед стартом uvicorn
+    time.sleep(0.5)
+    try:
+        # Запускаем uvicorn без автоперезагрузки в фоновом потоке
+        uvicorn.run(socket_app, host="0.0.0.0", port=5000, log_level="warning")
+    except Exception as e:
+        logger.error(f"Failed to start server: {e}")
 
 def hide_console():
     """Скрывает окно консоли на Windows (если не запущено через pythonw)"""
@@ -86,6 +128,9 @@ def hide_console():
 def main():
     hide_console()
     
+    # Пытаемся освободить порт, если он занят старым процессом
+    kill_process_on_port(5000)
+    
     # В будущем здесь можно добавить проверку прав администратора (ctypes.windll.shell32.IsUserAnAdmin)
     
     # 1. Запуск асинхронного сервера в отдельном потоке
@@ -98,7 +143,7 @@ def main():
     # 3. Запуск Qt GUI в главном потоке
     logger.info("Starting Desktop GUI...")
     qt_app = QApplication(sys.argv)
-    qt_app.setApplicationName("MonitHome v2")
+    qt_app.setApplicationName("MonitHome")
     
     bridge = PairingBridge()
     window = MainWindow()

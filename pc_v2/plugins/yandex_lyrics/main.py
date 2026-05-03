@@ -25,8 +25,9 @@ class Plugin(BasePlugin):
     async def on_start(self):
         self._session = aiohttp.ClientSession()
         
-        # Подписываемся на события изменения трека всегда
+        # Подписываемся на события
         event_bus.subscribe("plugin_custom_event", self._on_event)
+        event_bus.subscribe("ui_config_changed", self._on_config_changed)
         
         if self._is_tablet_control():
             self.log("MODE NOTICE: Tablet control is enabled. PC lyrics will be disabled.")
@@ -41,7 +42,33 @@ class Plugin(BasePlugin):
         if self._session:
             await self._session.close()
         event_bus.unsubscribe("plugin_custom_event", self._on_event)
-        self.log("yandex_lyrics stopped.")
+        event_bus.unsubscribe("ui_config_changed", self._on_config_changed)
+    async def _on_config_changed(self, payload: dict):
+        # Реагируем на любые изменения конфига, так как статус станции мог измениться
+        await self._check_and_apply_mode()
+
+    async def _check_and_apply_mode(self):
+        is_station_active = self._is_station_enabled()
+        is_tablet = self._is_tablet_control()
+        
+        if not is_station_active or is_tablet:
+            if self._lyrics_cache:
+                reason = "Station disabled" if not is_station_active else "Tablet control active"
+                self.log(f"Lyrics suspension: {reason}. Clearing cache.")
+                self._lyrics_cache = {}
+                await self.emit_state({"devices": {}})
+        else:
+            # Если всё в порядке - пушим текущее состояние
+            await self.emit_state({"devices": self._lyrics_cache})
+
+    def _is_station_enabled(self):
+        try:
+            cfg_mgr = sys.modules.get('core.config')
+            if cfg_mgr:
+                active_plugins = getattr(cfg_mgr.config_manager.get(), "active_plugins", [])
+                return "yandex_station" in active_plugins
+        except: pass
+        return True # По умолчанию считаем включенным, если не смогли проверить
 
     def _is_tablet_control(self):
         try:
@@ -54,18 +81,12 @@ class Plugin(BasePlugin):
         return self.get_config().get("tablet_control", False)
 
     async def _on_event(self, event_payload: dict):
-        event_name = event_payload.get("event")
-        
-        if self._is_tablet_control():
-            # Если управление у планшета - очищаем кэш на сервере и выходим
-            if self._lyrics_cache:
-                self._lyrics_cache = {}
-                await self.emit_state({"devices": {}})
-            
-            # Но если это смена трека, нам всё равно нужно логгировать это (для отладки)
-            if event_name == "track_changed":
-                self.log(f"Track change ignored (tablet control active): {event_payload.get('data', {}).get('track_id')}")
+        # Если управление у планшета или плагин станции выключен - полностью игнорируем любые события
+        if not self._is_station_enabled() or self._is_tablet_control():
+            # На уровне DEBUG можно оставить, но на INFO - тишина
             return
+
+        event_name = event_payload.get("event")
 
         # event_payload: {"plugin_id": "yandex_station", "event": "track_changed", "data": {"device_id": "...", "track_id": "..."}}
         if event_name == "track_changed":
@@ -114,7 +135,7 @@ class Plugin(BasePlugin):
             return
 
         if lyrics_data:
-            self.log(f"Lyrics found for {track_id}")
+            self.log(f"Lyrics: Found synced lyrics for track {track_id}", 20)
             lyrics_entry = {
                 "track_id": track_id, 
                 "lyrics": lyrics_data.get("full"),

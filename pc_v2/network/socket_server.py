@@ -259,6 +259,19 @@ async def handle_get_ui_config(sid):
     if sid is not None and not await check_auth(sid): return
     # Отправляем конфигурацию плагинов для построения UI на Android
     cfg = config_manager.get()
+    lang = cfg.language or "ru"
+    
+    # Загружаем переводы
+    translations = {}
+    lang_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "web", "languages", f"{lang}.json")
+    if os.path.exists(lang_path):
+        try:
+            with open(lang_path, "r", encoding="utf-8") as f:
+                import json
+                translations = json.load(f)
+        except Exception as e:
+            logger.error(f"Error loading translation for {lang}: {e}")
+
     plugins_configs = []
     
     # Получаем список всех доступных плагинов
@@ -280,13 +293,21 @@ async def handle_get_ui_config(sid):
                 
                 if p_cfg:
                     p_cfg["active"] = d in plugin_manager.active_plugins
+                    
+                    # Применяем локализацию
+                    p_id = p_cfg.get("id", d)
+                    p_cfg["name"] = translations.get(f"plugin_name_{p_id}", p_cfg.get("name", p_id))
+                    p_cfg["description"] = translations.get(f"plugin_desc_{p_id}", p_cfg.get("description", ""))
+                    
                     plugins_configs.append(p_cfg)
     
     color = cfg.theme_color if hasattr(cfg, 'theme_color') else "0xFF22C55E"
-    logger.info(f"Emitting ui_config. Theme color: {color}, Room: {sid or 'authorized'}")
+    logger.info(f"Emitting ui_config. Theme color: {color}, Lang: {lang}, Room: {sid or 'authorized'}")
     await sio.emit("ui_config", {
         "plugins": plugins_configs,
-        "theme_color": color
+        "theme_color": color,
+        "translations": translations,
+        "language": lang
     }, room=sid or 'authorized')
 
 @sio.on("get_manager_data")

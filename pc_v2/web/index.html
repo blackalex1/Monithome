@@ -1,16 +1,22 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>MonitHome PC Settings</title>
+    <link rel="icon" type="image/png" href="/static/favicon.png">
     <!-- Google Fonts -->
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&display=swap" rel="stylesheet">
-    <!-- Socket.IO -->
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;600;800&display=swap"
+        rel="stylesheet">
+    <!-- Socket.IO & Chart.js -->
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Custom Styles -->
     <link rel="stylesheet" href="/static/css/style.css">
 </head>
+
 <body>
     <div class="app-container">
         <!-- Sidebar Navigation -->
@@ -20,7 +26,8 @@
                 <h1>MonitHome</h1>
             </div>
             <ul class="nav-links">
-                <li class="active"><a href="#" data-target="plugins-section" data-i18n="nav_plugins">Plugin Manager</a></li>
+                <li class="active"><a href="#" data-target="plugins-section" data-i18n="nav_plugins">Plugin Manager</a>
+                </li>
                 <li><a href="#" data-target="logs-section" data-i18n="nav_logs">Server Logs</a></li>
                 <li><a href="#" data-target="settings-section" data-i18n="nav_settings">Global Settings</a></li>
                 <li><a href="#" data-target="about-section" data-i18n="nav_about">About</a></li>
@@ -33,12 +40,17 @@
 
         <!-- Main Content Area -->
         <main class="main-content">
-            
+            <div class="top-bar">
+                <div class="stat-chip" id="top-cpu">CPU: <span id="cpu-val">--%</span></div>
+                <div class="stat-chip" id="top-ram">RAM: <span id="ram-val">--%</span></div>
+                <div class="stat-chip" id="top-temp">TEMP: <span id="temp-val">--°C</span></div>
+            </div>
+
             <!-- Plugins Section -->
             <section id="plugins-section" class="content-section active">
                 <header class="section-header">
                     <h2 data-i18n="nav_plugins">Plugin Manager</h2>
-                    <p>Enable or disable modules for monitoring and control.</p>
+                    <p data-i18n="plugins_desc">Enable or disable modules for monitoring and control.</p>
                 </header>
 
                 <div class="plugins-grid" id="plugins-list">
@@ -50,7 +62,7 @@
             <section id="logs-section" class="content-section">
                 <header class="section-header">
                     <h2 data-i18n="nav_logs">Server Logs</h2>
-                    <p>Real-time system and plugin activity.</p>
+                    <p data-i18n="logs_desc">Real-time system and plugin activity.</p>
                 </header>
                 <div class="glass-panel logs-container">
                     <pre id="log-output"></pre>
@@ -69,7 +81,7 @@
                             <label for="server-hostname" data-i18n="server_name">Server Name</label>
                             <input type="text" id="server-hostname" class="form-input" placeholder="MonitHome PC">
                         </div>
-                        
+
                         <div class="form-group">
                             <label for="server-language" data-i18n="interface_lang">Interface Language</label>
                             <select id="server-language" class="form-input">
@@ -77,17 +89,20 @@
                                 <option value="en">English (EN)</option>
                             </select>
                         </div>
-                        
+
                         <div class="form-group">
-                            <label for="server-theme-color" data-i18n="accent_color">Accent Color (Suggestions for Tablet)</label>
+                            <label for="server-theme-color" data-i18n="accent_color">Accent Color (Suggestions for
+                                Tablet)</label>
                             <div class="color-picker-container">
                                 <input type="color" id="server-theme-picker" class="form-input color-picker">
-                                <input type="text" id="server-theme-hex" class="form-input color-hex" placeholder="0xFF22C55E">
+                                <input type="text" id="server-theme-hex" class="form-input color-hex"
+                                    placeholder="0xFF22C55E">
                             </div>
                         </div>
-                        
+
                         <div class="form-actions mt-4">
-                            <button type="submit" class="btn btn-primary" id="save-config-btn" data-i18n="save_config">Save Configuration</button>
+                            <button type="submit" class="btn btn-primary" id="save-config-btn"
+                                data-i18n="save_config">Save Configuration</button>
                         </div>
                     </form>
                 </div>
@@ -96,10 +111,10 @@
             <!-- About Section -->
             <section id="about-section" class="content-section">
                 <header class="section-header">
-                    <h2>About</h2>
+                    <h2 data-i18n="nav_about">About</h2>
                 </header>
                 <div class="glass-panel p-4">
-                    <p>MonitHome V2 Desktop Backend.</p>
+                    <p data-i18n="about_desc">MonitHome Desktop Backend.</p>
                 </div>
             </section>
 
@@ -108,7 +123,7 @@
 
     <!-- Modal for Plugin Specific Settings (e.g. QR Code) -->
     <div class="modal-overlay hidden" id="action-modal">
-        <div class="modal glass-panel">
+        <div class="modal glass-panel" id="modal-container">
             <div class="modal-header">
                 <h3 id="modal-title">Action Required</h3>
                 <button id="modal-close">&times;</button>
@@ -119,6 +134,8 @@
         </div>
     </div>
 
+    <script src="/static/js/charts_ui.js"></script>
     <script src="/static/js/app.js"></script>
 </body>
+
 </html>

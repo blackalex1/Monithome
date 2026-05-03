@@ -28,9 +28,28 @@ class ConfigManager:
         self.config = self._load()
         self._load_secrets()
         
-        # Генерируем один токен на весь сеанс работы приложения
+        # Пытаемся прочитать существующий токен сессии или генерируем новый
+        self.gui_token = self._setup_gui_token()
+
+    def _setup_gui_token(self) -> str:
         import secrets
-        self.gui_token = secrets.token_hex(16)
+        token_path = os.path.join(BASE_DIR, ".gui_token")
+        
+        # Читаем существующий токен, если он есть
+        if os.path.exists(token_path):
+            try:
+                with open(token_path, "r") as f:
+                    token = f.read().strip()
+                    if token: return token
+            except: pass
+            
+        # Генерируем новый
+        new_token = secrets.token_hex(16)
+        try:
+            with open(token_path, "w") as f:
+                f.write(new_token)
+        except: pass
+        return new_token
 
     def _load(self) -> MasterConfig:
         if os.path.exists(self.config_path):

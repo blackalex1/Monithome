@@ -19,6 +19,7 @@ class YandexLyricsClient {
     private val client = OkHttpClient()
 
     suspend fun fetchLyrics(trackId: String, token: String): List<LyricLine> = withContext(Dispatchers.IO) {
+        Log.i(TAG, "Fetching lyrics for track: $trackId")
         val rawId = trackId.split(":").first()
         val headers = mapOf(
             "Authorization" to "OAuth $token",
