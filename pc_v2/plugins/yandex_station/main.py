@@ -47,17 +47,13 @@ class Plugin(BasePlugin):
         config = self.get_config()
         is_tablet = config.get("tablet_control", False)
 
-        if is_tablet:
-            self.log("CONTROL MODE: TABLET. Suspending local workers.")
-            # Останавливаем воркеры, если они запущены
-            for d_id, worker in self.workers.items():
-                worker.stop()
-            self.workers.clear()
-            self.cmd_queues.clear()
-            await self._broadcast_config_to_tablet()
-        else:
+        env = self.auth._read_env()
+        env_selected = env.get("SELECTED_DEVICES", "")
+        selected_ids = [s.strip() for s in env_selected.split(",") if s.strip()]
+        if not selected_ids:
             selected_ids = config.get("selected_device_ids", [])
-            self.log(f"CONTROL MODE: LOCAL PC. Target devices: {len(selected_ids)}")
+
+        if is_tablet:
             
             # Останавливаем воркеры тех устройств, которые теперь не выбраны
             for d_id in list(self.workers.keys()):
@@ -148,18 +144,27 @@ class Plugin(BasePlugin):
             for d_id, d in self.devices.items():
                 devices_list.append({"id": d_id, "name": d.get("name", d_id)})
             
+            env = self.auth._read_env()
+            env_selected = env.get("SELECTED_DEVICES", "")
+            selected_ids = [s.strip() for s in env_selected.split(",") if s.strip()]
+            if not selected_ids:
+                selected_ids = config.get("selected_device_ids", [])
+
             await self.emit_event("wizard_data", {
                 "devices": devices_list,
                 "tablet_control": config.get("tablet_control", False),
-                "selected_device_ids": config.get("selected_device_ids", [])
+                "selected_device_ids": selected_ids
             })
             return
         elif action == "handle_wizard":
             # Сохранение настроек мастера
             self.save_config({
-                "selected_device_ids": data.get("selected_device_ids", []),
                 "tablet_control": data.get("tablet_control", False)
             })
+            # Сохраняем выбранные ID в .env
+            ids = data.get("selected_device_ids", [])
+            self.auth._write_env("SELECTED_DEVICES", ",".join(ids))
+            
             # Мгновенно применяем новый режим
             await self.apply_mode()
             return
@@ -223,7 +228,11 @@ class Plugin(BasePlugin):
 
     async def _push_state(self):
         config = self.get_config()
-        allowed_ids = config.get("selected_device_ids", [])
+        env = self.auth._read_env()
+        env_selected = env.get("SELECTED_DEVICES", "")
+        allowed_ids = [s.strip() for s in env_selected.split(",") if s.strip()]
+        if not allowed_ids:
+            allowed_ids = config.get("selected_device_ids", [])
         
         if config.get("tablet_control", False):
             minimal_devices = []
@@ -262,7 +271,12 @@ class Plugin(BasePlugin):
 
         configs = []
         if config.get("tablet_control", False):
-            allowed_ids = config.get("selected_device_ids", [])
+            env = self.auth._read_env()
+            env_selected = env.get("SELECTED_DEVICES", "")
+            allowed_ids = [s.strip() for s in env_selected.split(",") if s.strip()]
+            if not allowed_ids:
+                allowed_ids = config.get("selected_device_ids", [])
+
             for d_id, d in self.devices.items():
                 if allowed_ids and d_id not in allowed_ids: continue
                 if d.get("ip") and d.get("glagol_token"):

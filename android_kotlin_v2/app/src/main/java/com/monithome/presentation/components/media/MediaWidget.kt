@@ -45,8 +45,8 @@ fun MediaWidget(
 
     Card(
         modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(24.dp),
-        colors = CardDefaults.cardColors(containerColor = Color(0xFF1E1E1E))
+        shape = MaterialTheme.shapes.large,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surface)
     ) {
         Column(modifier = Modifier.padding(16.dp)) {
             // Source Selector
@@ -68,7 +68,7 @@ fun MediaWidget(
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = state.title.ifEmpty { "..." },
-                        color = Color.White,
+                        color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1
@@ -116,8 +116,8 @@ fun MediaSourceSelector(sources: List<MediaSource>, selectedId: String?, onSelec
             val isSelected = id == selectedId
             Surface(
                 onClick = { onSelect(id) },
-                shape = RoundedCornerShape(12.dp),
-                color = if (isSelected) Color(0xFF4CAF50) else Color(0xFF2C2C2C),
+                shape = MaterialTheme.shapes.small,
+                color = if (isSelected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 modifier = Modifier.height(32.dp)
             ) {
                 Box(contentAlignment = Alignment.Center, modifier = Modifier.padding(horizontal = 12.dp)) {
@@ -160,8 +160,8 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
         modifier = modifier
             .height(80.dp) // Фиксированная высота
             .aspectRatio(aspectRatio) // Адаптивная ширина на основе пропорций
-            .clip(RoundedCornerShape(12.dp))
-            .background(Color(0xFF2C2C2C)),
+            .clip(MaterialTheme.shapes.small)
+            .background(MaterialTheme.colorScheme.outline),
         contentAlignment = Alignment.Center
     ) {
         if (decodedModel != null) {
@@ -189,21 +189,21 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
 @Composable
 fun MediaControls(isPlaying: Boolean, onPlayPause: () -> Unit, onPrev: () -> Unit, onNext: () -> Unit) {
     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        IconButton(onClick = onPrev, modifier = Modifier.size(40.dp).background(Color(0xFF2C2C2C), RoundedCornerShape(12.dp))) {
-            Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = Color.White)
+        IconButton(onClick = onPrev, modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)) {
+            Icon(Icons.Default.SkipPrevious, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
         }
         Surface(
             onClick = onPlayPause,
-            shape = RoundedCornerShape(16.dp),
-            color = Color(0xFF4CAF50),
+            shape = MaterialTheme.shapes.medium,
+            color = MaterialTheme.colorScheme.primary,
             modifier = Modifier.size(48.dp)
         ) {
             Box(contentAlignment = Alignment.Center) {
-                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = Color.White)
+                Icon(if (isPlaying) Icons.Default.Pause else Icons.Default.PlayArrow, contentDescription = null, tint = MaterialTheme.colorScheme.onPrimary)
             }
         }
-        IconButton(onClick = onNext, modifier = Modifier.size(40.dp).background(Color(0xFF2C2C2C), RoundedCornerShape(12.dp))) {
-            Icon(Icons.Default.SkipNext, contentDescription = null, tint = Color.White)
+        IconButton(onClick = onNext, modifier = Modifier.size(40.dp).background(MaterialTheme.colorScheme.outline, MaterialTheme.shapes.small)) {
+            Icon(Icons.Default.SkipNext, contentDescription = null, tint = MaterialTheme.colorScheme.onSurface)
         }
     }
 }
@@ -215,12 +215,12 @@ fun SmoothProgressBar(baseProgress: Double, duration: Double, lastUpdateUnixTime
         .collectAsState(initial = if (duration > 0) (baseProgress / duration).toFloat() else 0f)
 
     Column {
-        Box(modifier = Modifier.fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF2C2C2C))) {
+        Box(modifier = Modifier.fillMaxWidth().height(4.dp).clip(MaterialTheme.shapes.small).background(MaterialTheme.colorScheme.outline)) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(progressRatio)
                     .fillMaxHeight()
-                    .background(Color(0xFF4CAF50))
+                    .background(MaterialTheme.colorScheme.primary)
             )
         }
         Row(modifier = Modifier.fillMaxWidth().padding(top = 4.dp), horizontalArrangement = Arrangement.SpaceBetween) {
@@ -242,9 +242,9 @@ fun VolumeControl(volume: Int, onVolumeChange: (Int) -> Unit) {
             onValueChangeFinished = { onVolumeChange(localVolume.toInt()) },
             valueRange = 0f..100f,
             colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = Color(0xFF4CAF50),
-                inactiveTrackColor = Color(0xFF2C2C2C)
+                thumbColor = MaterialTheme.colorScheme.onSurface,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.outline
             ),
             modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
         )

@@ -10,13 +10,15 @@ import com.monithome.data.network.socket.SocketEvent
 import com.monithome.data.network.socket.SocketConnectionState
 import com.monithome.domain.models.PluginInfo
 import com.monithome.domain.repository.PluginRepository
+import com.monithome.domain.repository.SettingsRepository
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class DashboardViewModel(
     private val socketClient: PcSocketClient,
     private val pcDiscovery: PcDiscovery,
-    private val pluginRepository: PluginRepository
+    private val pluginRepository: PluginRepository,
+    private val settingsRepository: SettingsRepository
 ) : ViewModel() {
 
     private val _state = MutableStateFlow(DashboardState())
@@ -65,6 +67,12 @@ class DashboardViewModel(
                     _state.update { it.copy(isAuthRequired = false) }
                 }
             }
+        }
+        
+        // Загрузка сохраненного порядка виджетов
+        val savedOrder = settingsRepository.getWidgetOrder()
+        if (savedOrder != null) {
+            _state.update { it.copy(widgetOrder = savedOrder) }
         }
         
         // Автоматический поиск серверов
@@ -293,6 +301,18 @@ class DashboardViewModel(
             }
             is DashboardIntent.ToggleLyricsFullScreen -> {
                 _state.update { it.copy(isLyricsFullScreen = !it.isLyricsFullScreen) }
+            }
+            is DashboardIntent.PluginCommand -> {
+                pluginRepository.sendCommand(intent.pluginId, intent.action, intent.target, intent.data)
+            }
+            is DashboardIntent.MoveWidget -> {
+                val newList = _state.value.widgetOrder.toMutableList()
+                if (intent.fromIndex in newList.indices && intent.toIndex in newList.indices) {
+                    val item = newList.removeAt(intent.fromIndex)
+                    newList.add(intent.toIndex, item)
+                    _state.update { it.copy(widgetOrder = newList) }
+                    settingsRepository.saveWidgetOrder(newList)
+                }
             }
         }
     }

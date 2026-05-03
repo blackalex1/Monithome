@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -90,19 +91,22 @@ fun LyricsWidget(
         }
     }
 
+    val shape = if (isFullScreen) RoundedCornerShape(0.dp) else MaterialTheme.shapes.large
+
     Box(
         modifier = modifier
             .fillMaxWidth()
             .then(if (isFullScreen) Modifier.fillMaxHeight() else Modifier.height(400.dp))
             .background(
-                color = if (isFullScreen) Color.Black else Color(0xFF121212).copy(alpha = 0.6f),
-                shape = if (isFullScreen) RoundedCornerShape(0.dp) else RoundedCornerShape(24.dp)
+                color = if (isFullScreen) Color.Black else MaterialTheme.colorScheme.surface,
+                shape = shape
             )
+            .clip(shape)
             .clickable { onClick() },
         contentAlignment = Alignment.Center
     ) {
         // ФОНОВАЯ ОБЛОЖКА
-        if (isFullScreen && decodedBackground != null) {
+        if (decodedBackground != null) {
             AsyncImage(
                 model = ImageRequest.Builder(context)
                     .data(decodedBackground)
@@ -110,12 +114,16 @@ fun LyricsWidget(
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = 0.4f }
+                modifier = Modifier.fillMaxSize().graphicsLayer { alpha = if (isFullScreen) 0.4f else 0.3f }
             )
             // Затемняющий градиент поверх
             Box(modifier = Modifier.fillMaxSize().background(
                 Brush.verticalGradient(
-                    colors = listOf(Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.9f))
+                    colors = if (isFullScreen) {
+                        listOf(Color.Black.copy(alpha = 0.7f), Color.Black.copy(alpha = 0.9f))
+                    } else {
+                        listOf(Color.Black.copy(alpha = 0.6f), Color.Black.copy(alpha = 0.8f))
+                    }
                 )
             ))
         }
@@ -177,7 +185,7 @@ fun LyricsWidget(
                     )
 
                     val scale by animateFloatAsState(
-                        targetValue = if (isActive) 1.2f else 1.0f,
+                        targetValue = if (isActive) (if (isFullScreen) 1.2f else 1.1f) else 1.0f,
                         animationSpec = tween(300),
                         label = "scale"
                     )
@@ -185,12 +193,15 @@ fun LyricsWidget(
                     Text(
                         text = line.text,
                         color = Color.White,
-                        fontSize = if (isFullScreen) 32.sp else 20.sp,
+                        fontSize = if (isFullScreen) 32.sp else 17.sp,
                         fontWeight = if (isActive) FontWeight.Bold else FontWeight.Normal,
                         textAlign = TextAlign.Center,
-                        lineHeight = if (isFullScreen) 40.sp else 28.sp,
+                        lineHeight = if (isFullScreen) 40.sp else 24.sp,
+                        softWrap = true,
                         modifier = Modifier
-                            .padding(vertical = if (isFullScreen) 20.dp else 12.dp)
+                            .fillMaxWidth()
+                            .padding(vertical = if (isFullScreen) 20.dp else 10.dp)
+                            .padding(horizontal = if (isFullScreen) 32.dp else 24.dp)
                             .graphicsLayer {
                                 this.alpha = alpha
                                 this.scaleX = scale

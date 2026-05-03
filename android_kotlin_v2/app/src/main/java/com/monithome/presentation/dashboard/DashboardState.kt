@@ -13,7 +13,8 @@ data class DashboardState(
     val isAuthRequired: Boolean = false,
     val stats: Map<String, Map<String, Any>> = emptyMap(),
     val lyrics: List<com.monithome.domain.models.LyricLine> = emptyList(),
-    val isLyricsFullScreen: Boolean = false
+    val isLyricsFullScreen: Boolean = false,
+    val widgetOrder: List<String> = listOf("media", "pc_system", "yandex_lyrics", "system_stats", "pc_disks")
 )
 
 data class MediaUIState(
@@ -59,4 +60,12 @@ sealed class DashboardIntent {
     object PrevTrack : DashboardIntent()
     data class SetVolume(val volume: Int) : DashboardIntent()
     object ToggleLyricsFullScreen : DashboardIntent()
+    data class PluginCommand(
+        val pluginId: String, 
+        val action: String, 
+        val target: String? = null, 
+        val data: Map<String, Any> = emptyMap()
+    ) : DashboardIntent()
+    
+    data class MoveWidget(val fromIndex: Int, val toIndex: Int) : DashboardIntent()
 }

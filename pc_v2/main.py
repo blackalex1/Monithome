@@ -85,25 +85,29 @@ async def get_plugins():
     result = []
     if os.path.exists(plugins_dir):
         for p_id in os.listdir(plugins_dir):
-            if os.path.isdir(os.path.join(plugins_dir, p_id)) and not p_id.startswith("__"):
-                plugin_info = {
-                    "id": p_id,
-                    "active": p_id in active_plugins,
-                    "name": p_id.replace("_", " ").title(),
-                    "description": ""
-                }
+            p_path = os.path.join(plugins_dir, p_id)
+            if not os.path.isdir(p_path) or p_id.startswith("__"):
+                continue
                 
-                # Попробуем прочитать config.json плагина, если есть
-                p_cfg_path = os.path.join(plugins_dir, p_id, "config.json")
-                if os.path.exists(p_cfg_path):
-                    try:
-                        with open(p_cfg_path, "r", encoding="utf-8") as f:
-                            p_cfg = json.load(f)
-                            plugin_info["name"] = p_cfg.get("name", plugin_info["name"])
-                            plugin_info["description"] = p_cfg.get("description", "")
-                    except: pass
-                
-                result.append(plugin_info)
+            p_cfg_path = os.path.join(p_path, "config.json")
+            if os.path.exists(p_cfg_path):
+                try:
+                    with open(p_cfg_path, "r", encoding="utf-8") as f:
+                        p_cfg = json.load(f)
+                        
+                        # Пропускаем скрытые плагины
+                        if p_cfg.get("hidden", False):
+                            continue
+                            
+                        result.append({
+                            "id": p_id,
+                            "active": p_id in active_plugins,
+                            "name": p_cfg.get("name", p_id.replace("_", " ").title()),
+                            "description": p_cfg.get("description", ""),
+                            "version": p_cfg.get("version", "1.0.0")
+                        })
+                except Exception as e:
+                    print(f"[Main] Error reading config for {p_id}: {e}")
     return {"plugins": result}
 
 @app.post("/api/plugins/toggle")
