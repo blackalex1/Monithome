@@ -5,6 +5,7 @@ import com.monithome.core.crypto.CryptoUtils
 import com.monithome.data.network.socket.PcSocketClient
 import com.monithome.data.network.socket.SocketEvent
 import com.monithome.data.network.yandex.YandexStationClient
+import com.monithome.data.network.yandex.YandexLyricsClient
 import com.monithome.data.network.yandex.YandexStationEvent
 import com.monithome.domain.models.PluginInfo
 import com.monithome.domain.models.StationConfig
@@ -21,7 +22,8 @@ import java.util.concurrent.ConcurrentHashMap
 
 class PluginRepositoryImpl(
     private val pcSocketClient: PcSocketClient,
-    private val yandexClient: YandexStationClient
+    private val yandexClient: YandexStationClient,
+    private val yandexLyricsClient: YandexLyricsClient
 ) : PluginRepository {
 
     private val scope = CoroutineScope(Dispatchers.Default)
@@ -33,6 +35,8 @@ class PluginRepositoryImpl(
     
     private var encryptionKey: String? = null
     private var isYandexStandalone = false
+    private var yandexToken: String? = null
+    private var allowedDeviceIds = emptySet<String>()
 
     init {
         scope.launch {
@@ -52,12 +56,20 @@ class PluginRepositoryImpl(
         return statsFlows.getOrPut(pluginId) { MutableStateFlow(emptyMap()) }.asStateFlow()
     }
 
+    override fun isStandaloneMode(): Boolean = isYandexStandalone
+
     override fun sendCommand(pluginId: String, action: String, target: String?, data: Any?) {
         if (pluginId == "yandex_station" && target != null && isYandexStandalone) {
             val yandexCommand = when (action) {
-                "play_pause" -> "play_pause"
-                "next_track" -> "next_track"
-                "prev_track" -> "prev_track"
+                "play_pause" -> {
+                    val currentStats = statsFlows["yandex_station"]?.value ?: emptyMap()
+                    val devices = currentStats["devices"] as? List<Map<String, Any>>
+                    val device = devices?.find { it["id"] == target }
+                    val isPlaying = device?.get("playing") as? Boolean ?: false
+                    if (isPlaying) "pause" else "play"
+                }
+                "next_track" -> "next"
+                "prev_track" -> "prev"
                 else -> if (action.startsWith("set_volume:")) "setVolume" else null
             }
             
@@ -119,6 +131,7 @@ class PluginRepositoryImpl(
     }
 
     private fun handleYandexEvent(event: YandexStationEvent) {
+        if (!isYandexStandalone) return
         when (event) {
             is YandexStationEvent.StateUpdated -> {
                 processYandexState(event.deviceId, event.state)
@@ -134,10 +147,15 @@ class PluginRepositoryImpl(
 
     private fun bulkUpdate(updates: Map<String, Any>) {
         updates.forEach { (pluginId, pluginData) ->
+            // Если мы в автономном режиме Яндекса, игнорируем статы Яндекса от ПК, 
+            // чтобы они не затирали локальные данные от прямого подключения.
+            if ((pluginId == "yandex_station" || pluginId == "yandex_lyrics") && isYandexStandalone) return@forEach
+
             if (pluginData is Map<*, *>) {
                 val currentFlow = statsFlows.getOrPut(pluginId) { MutableStateFlow(emptyMap()) }
                 @Suppress("UNCHECKED_CAST")
-                val newData = pluginData as Map<String, Any>
+                val newData = (pluginData as Map<String, Any>).toMutableMap()
+                newData["local_last_update"] = System.currentTimeMillis() / 1000.0
                 currentFlow.value = mergeMaps(currentFlow.value, newData)
             }
         }
@@ -169,7 +187,11 @@ class PluginRepositoryImpl(
             }
         }
 
+        val oldMode = isYandexStandalone
         isYandexStandalone = data.optBoolean("enabled", true)
+        yandexToken = data.optString("yandex_token", null)
+        
+        Log.d("PluginRepository", "Yandex Config received. Standalone: $isYandexStandalone, Token present: ${!yandexToken.isNullOrEmpty()}")
         
         if (data.has("devices")) {
             val arr = data.getJSONArray("devices")
@@ -183,9 +205,23 @@ class PluginRepositoryImpl(
                     configs.add(StationConfig(id, ip, token, obj.optString("name", "Яндекс Станция")))
                 }
             }
+            allowedDeviceIds = configs.map { it.deviceId }.toSet()
+            
+            if (isYandexStandalone != oldMode) {
+                Log.i("PluginRepository", "MODE SWITCH: ${if (oldMode) "Standalone -> PC" else "PC -> Standalone"}")
+                // При смене режима очищаем старые данные, чтобы убрать "фантомные" устройства предыдущего режима
+                statsFlows["yandex_station"]?.value = emptyMap()
+                statsFlows["yandex_lyrics"]?.value = emptyMap()
+            }
             if (isYandexStandalone) {
+                Log.d("PluginRepository", "Starting Standalone mode with ${configs.size} devices")
+                val initialDevices = configs.map { 
+                    mapOf("id" to it.deviceId, "name" to it.name, "status" to "connecting", "title" to "Синхронизация...") 
+                }
+                statsFlows.getOrPut("yandex_station") { MutableStateFlow(emptyMap()) }.value = mapOf("devices" to initialDevices)
                 yandexClient.updateConfigs(configs)
             } else {
+                Log.d("PluginRepository", "Stopping Standalone mode (PC control)")
                 yandexClient.stopAll()
             }
         }
@@ -197,16 +233,24 @@ class PluginRepositoryImpl(
     }
 
     private fun processYandexState(deviceId: String, state: JSONObject) {
+        if (!allowedDeviceIds.contains(deviceId)) {
+            Log.w("PluginRepository", "Ignored state for unknown device: $deviceId")
+            return
+        }
+        Log.v("PluginRepository", "Processing state for $deviceId: ${state.optJSONObject("playerState")?.optString("title")}")
+
+        val playerState = state.optJSONObject("playerState")
+        val isPlaying = state.optBoolean("playing") || playerState?.optString("status") == "playing"
         val mappedData = mutableMapOf<String, Any>()
-        mappedData["playing"] = state.optBoolean("playing", false)
+        mappedData["playing"] = isPlaying
         mappedData["volume"] = (state.optDouble("volume", 0.0) * 100).toInt()
         
-        val playerState = state.optJSONObject("playerState")
         if (playerState != null) {
             val extra = playerState.optJSONObject("extra")
             mappedData["title"] = playerState.optString("title").ifEmpty { extra?.optString("title") ?: "" }
             mappedData["artist"] = playerState.optString("subtitle").ifEmpty { extra?.optString("artist") ?: "" }
-            mappedData["track_id"] = playerState.optString("id")
+            val trackId = playerState.optString("id").split(":").first()
+            mappedData["track_id"] = trackId
             
             extra?.optString("coverURI")?.let { uri ->
                 val cleanUri = uri.replace("%%", "400x400")
@@ -215,22 +259,82 @@ class PluginRepositoryImpl(
 
             var progress = state.optDouble("progress", -1.0)
             if (progress < 0) progress = playerState.optDouble("progress", 0.0)
+            
+            var duration = state.optDouble("duration", playerState.optDouble("duration", 0.0))
+            
+            // Нормализация: если > 10000, то это миллисекунды
+            if (progress > 10000) progress /= 1000.0
+            if (duration > 10000) duration /= 1000.0
+
             mappedData["progress"] = progress
-            mappedData["duration"] = state.optDouble("duration", playerState.optDouble("duration", 0.0))
+            mappedData["duration"] = duration
             mappedData["local_last_update"] = System.currentTimeMillis() / 1000.0
         }
 
-        val deviceUpdate = mappedData + mapOf("id" to deviceId, "status" to "direct")
-        
         val currentFlow = statsFlows.getOrPut("yandex_station") { MutableStateFlow(emptyMap()) }
         val currentStats = currentFlow.value
+
+        // Трэк-чекинг для лирики
+        val trackId = mappedData["track_id"] as? String
+        val oldTrackId = currentStats["track_id"] as? String ?: ""
+        
+        if (!trackId.isNullOrEmpty() && trackId != oldTrackId) {
+            Log.i("PluginRepository", "TRACK CHANGE detected: $oldTrackId -> $trackId")
+            // Сразу очищаем старый текст для этого устройства, чтобы он не висел при смене трека
+            val lyricsFlow = statsFlows.getOrPut("yandex_lyrics") { MutableStateFlow(emptyMap()) }
+            @Suppress("UNCHECKED_CAST")
+            val currentLyricsDevices = (lyricsFlow.value["devices"] as? Map<String, Any>)?.toMutableMap() ?: mutableMapOf()
+            if (currentLyricsDevices.containsKey(deviceId)) {
+                currentLyricsDevices.remove(deviceId)
+                lyricsFlow.value = mapOf("devices" to currentLyricsDevices)
+            }
+
+            if (isYandexStandalone && yandexToken != null) {
+                scope.launch {
+                    val lyrics = yandexLyricsClient.fetchLyrics(trackId, yandexToken!!)
+                    if (lyrics.isNotEmpty()) {
+                        Log.d("PluginRepository", "Lyrics found for track $trackId: ${lyrics.size} lines")
+                        val lyricsFlow = statsFlows.getOrPut("yandex_lyrics") { MutableStateFlow(emptyMap()) }
+                        @Suppress("UNCHECKED_CAST")
+                        val lyricsDevices = (lyricsFlow.value["devices"] as? Map<String, Any>)?.toMutableMap() ?: mutableMapOf()
+                        
+                        lyricsDevices[deviceId] = mapOf(
+                            "timings" to lyrics.map { line ->
+                                mapOf("time" to line.timeMs, "text" to line.text)
+                            },
+                            "track_id" to trackId
+                        )
+                        
+                        lyricsFlow.value = mapOf("devices" to lyricsDevices)
+                    } else {
+                        Log.w("PluginRepository", "Lyrics NOT found for track $trackId")
+                    }
+                }
+            } else {
+                // Если не автономно - просим ПК синхронизировать трек для лирики
+                pcSocketClient.sendCommand("yandex_station", "sync_track", deviceId, JSONObject().put("track_id", trackId))
+            }
+        }
+
+        val deviceUpdate: Map<String, Any> = mappedData.toMutableMap().apply {
+            put("id", deviceId)
+            put("status", "direct")
+            put("track_id", trackId ?: "")
+        }
+        
         @Suppress("UNCHECKED_CAST")
         val devices = (currentStats["devices"] as? List<Map<String, Any>>)?.toMutableList() ?: mutableListOf()
-        
         val index = devices.indexOfFirst { it["id"] == deviceId }
-        if (index >= 0) devices[index] = mergeMaps(devices[index], deviceUpdate) else devices.add(deviceUpdate)
+        if (index >= 0) {
+            devices[index] = mergeMaps(devices[index], deviceUpdate)
+        } else {
+            devices.add(deviceUpdate)
+        }
         
-        currentFlow.value = currentStats + mapOf("devices" to devices)
+        currentFlow.value = currentStats.toMutableMap().apply {
+            put("devices", devices)
+            put("track_id", trackId ?: "")
+        }
     }
 
     private fun jsonToMap(json: JSONObject): Map<String, Any> {

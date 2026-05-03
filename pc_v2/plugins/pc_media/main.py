@@ -102,7 +102,7 @@ class Plugin(BasePlugin):
             await asyncio.sleep(2.0)
 
     async def _emit_stats(self):
-        stats = {k: v for k, v in self._media_info.items() if k != "cover"}
+        stats = {k: v for k, v in self._media_info.items()}
         stats["duration"] = float(stats.get("duration", 0.0))
         stats["progress"] = float(stats.get("progress", 0.0))
         stats["volume"] = int(stats.get("volume", 0))
@@ -120,8 +120,9 @@ class Plugin(BasePlugin):
                 
                 cover_base64 = await asyncio.to_thread(read_file)
                 self._media_info["cover"] = cover_base64
-                self.log(f"Sending cover for: {title}")
+                self.log(f"Sending cover for: {title} (size: {len(cover_base64)})")
                 await self.emit_event("cover", {"cover": cover_base64, "title": title})
+                await self._emit_stats()
         except Exception as e:
             self.log(f"Cover error: {e}", 40)
 

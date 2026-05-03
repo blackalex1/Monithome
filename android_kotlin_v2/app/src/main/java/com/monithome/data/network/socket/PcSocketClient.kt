@@ -83,6 +83,7 @@ class PcSocketClient {
         val s = socket ?: return
 
         s.on(Socket.EVENT_CONNECT) {
+            Log.i("PcSocketClient", "Socket CONNECTED to server")
             _connectionState.value = SocketConnectionState.Connected
             val authObj = JSONObject().apply {
                 put("token", token)
@@ -92,19 +93,23 @@ class PcSocketClient {
         }
 
         s.on(Socket.EVENT_DISCONNECT) {
+            Log.w("PcSocketClient", "Socket DISCONNECTED from server")
             _connectionState.value = SocketConnectionState.Disconnected
         }
 
         s.on(Socket.EVENT_CONNECT_ERROR) { args ->
             val err = if (args != null && args.isNotEmpty()) args[0]?.toString() ?: "Unknown" else "Unknown"
+            Log.e("PcSocketClient", "Connection ERROR: $err")
             _connectionState.value = SocketConnectionState.Error(err)
         }
 
         s.on("auth_required") {
+            Log.d("PcSocketClient", "Server requested AUTH")
             _events.tryEmit(SocketEvent.AuthRequired)
         }
 
         s.on("auth_success") { args ->
+            Log.i("PcSocketClient", "AUTH SUCCESSFUL")
             val rawData = args.getOrNull(0)
             if (rawData is JSONObject) {
                 val t = rawData.optString("token", "")
@@ -120,6 +125,7 @@ class PcSocketClient {
         }
 
         s.on("authorized") {
+            Log.d("PcSocketClient", "Received 'authorized' event")
             s.emit("get_yandex_config")
             s.emit("get_manager_data")
         }

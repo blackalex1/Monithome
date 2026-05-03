@@ -4,10 +4,12 @@ import time
 import uuid
 import os
 from plugin_engine.base_plugin import BasePlugin
-from .const import TOKENS_FILE, AUTH_FILE
+from .const import AUTH_FILE
 from .auth import YandexAuth
 from .worker import DeviceWorker, monitor_request_state
 from core.event_bus import event_bus
+from zeroconf import ServiceBrowser, Zeroconf
+from .discovery import SpeakerDiscovery
 
 class Plugin(BasePlugin):
     """
@@ -24,6 +26,8 @@ class Plugin(BasePlugin):
         self.workers = {}
         self._force_broadcast_until = {}
         self.auth = YandexAuth(self)
+        self.zeroconf = None
+        self.discovery = SpeakerDiscovery()
 
     async def on_start(self):
         self._load_tokens()
@@ -32,41 +36,70 @@ class Plugin(BasePlugin):
             self.log("Yandex token missing. Starting QR login flow...", 30) # WARNING
             asyncio.create_task(self.auth.start_qr_login())
 
-        config = self.get_config()
-        if config.get("tablet_control", False):
-            self.log("CONTROL MODE: TABLET. PC local workers suspended.", 20)
-            await self._broadcast_config_to_tablet()
-            return
+        # Запускаем mDNS поиск для обновления IP адресов
+        self.zeroconf = Zeroconf()
+        self.browser = ServiceBrowser(self.zeroconf, "_yandexio._tcp.local.", self)
+        
+        await self.apply_mode()
 
-        self.log(f"Starting local workers for {len(self.devices)} devices...")
-        for d_id in self.devices:
-            name = self.devices[d_id].get("name", d_id)
-            self.log(f"Spawning worker for: {name} ({d_id})")
+    async def apply_mode(self):
+        """Применяет текущий режим управления (Локально / Планшет)"""
+        config = self.get_config()
+        is_tablet = config.get("tablet_control", False)
+
+        if is_tablet:
+            self.log("CONTROL MODE: TABLET. Suspending local workers.")
+            # Останавливаем воркеры, если они запущены
+            for d_id, worker in self.workers.items():
+                worker.stop()
+            self.workers.clear()
+            self.cmd_queues.clear()
+            await self._broadcast_config_to_tablet()
+        else:
+            selected_ids = config.get("selected_device_ids", [])
+            self.log(f"CONTROL MODE: LOCAL PC. Target devices: {len(selected_ids)}")
             
-            self.cmd_queues[d_id] = asyncio.Queue()
-            self._force_broadcast_until[d_id] = 0
-            
-            worker = DeviceWorker(self, d_id)
-            self.workers[d_id] = worker
-            worker.start() # запускает таски в текущем event loop
+            # Останавливаем воркеры тех устройств, которые теперь не выбраны
+            for d_id in list(self.workers.keys()):
+                if d_id not in selected_ids:
+                    self.log(f"Stopping worker for unselected device: {d_id}")
+                    self.workers[d_id].stop()
+                    del self.workers[d_id]
+                    if d_id in self.cmd_queues: del self.cmd_queues[d_id]
+
+            # Запускаем воркеры только для выбранных устройств
+            for d_id in selected_ids:
+                if d_id in self.devices and d_id not in self.workers:
+                    self.log(f"Starting worker for: {d_id}")
+                    self.cmd_queues[d_id] = asyncio.Queue()
+                    self._force_broadcast_until[d_id] = 0
+                    worker = DeviceWorker(self, d_id)
+                    self.workers[d_id] = worker
+                    worker.start()
+            await self._broadcast_config_to_tablet()
+        await self._push_state()
 
     async def on_stop(self):
         self.log("Stopping Yandex Station plugin...")
+        if self.zeroconf:
+            self.zeroconf.close()
         for d_id, worker in self.workers.items():
             worker.stop()
 
     def _load_tokens(self):
-        if not TOKENS_FILE.exists():
+        env = self.auth._read_env()
+        raw_glagol = env.get("GLAGOL_TOKENS")
+        
+        if not raw_glagol:
             if self.auth.has_token():
-                self.log("Tokens file not found. Auto-refreshing...", 20)
+                self.log("Glagol tokens missing in .env. Auto-refreshing...", 20)
                 asyncio.create_task(self.auth.refresh_tokens_sync())
             return
 
         try:
-            with open(TOKENS_FILE, "r", encoding="utf-8") as f:
-                self.devices = json.load(f)
+            self.devices = json.loads(raw_glagol)
         except Exception as e:
-            self.log(f"Error loading tokens: {e}", 40)
+            self.log(f"Error parsing glagol tokens from .env: {e}", 40)
             return
         
         for d_id, d in self.devices.items():
@@ -77,9 +110,49 @@ class Plugin(BasePlugin):
                 "track_id": "", "alice_state": "IDLE"
             }
 
+    # --- mDNS Handlers ---
+    def add_service(self, zc, type, name):
+        info = zc.get_service_info(type, name)
+        if info:
+            import ipaddress
+            addresses = [str(ipaddress.ip_address(addr)) for addr in info.addresses if len(addr) == 4]
+            props = {k.decode(): v.decode() if isinstance(v, bytes) else v for k, v in info.properties.items()}
+            d_id = props.get("deviceId")
+            if d_id and addresses:
+                ip = addresses[0]
+                if d_id in self.devices:
+                    if self.devices[d_id].get("ip") != ip:
+                        self.log(f"Updated IP for {d_id} ({self.devices[d_id].get('name')}): {ip}")
+                        self.devices[d_id]["ip"] = ip
+                        # Если воркера нет, но устройство выбрано - apply_mode его запустит (хотя он и так должен был быть)
+                        # Если воркер есть, он переподключится сам при ошибке.
+                else:
+                    # Новое устройство, которого нет в tokens.json? 
+                    # Мы его не сможем контролировать без glagol_token, но можем запомнить IP
+                    pass
+
+    def update_service(self, zc, type, name):
+        self.add_service(zc, type, name)
+
+    def remove_service(self, zc, type, name):
+        pass
+
     async def handle_command(self, action: str, data: any):
         if action == "get_yandex_config":
-            await self._broadcast_config_to_tablet()
+            sid = data.get("sid") if isinstance(data, dict) else None
+            await self._broadcast_config_to_tablet(sid)
+            return
+        elif action == "get_wizard_data":
+            config = self.get_config()
+            devices_list = []
+            for d_id, d in self.devices.items():
+                devices_list.append({"id": d_id, "name": d.get("name", d_id)})
+            
+            await self.emit_event("wizard_data", {
+                "devices": devices_list,
+                "tablet_control": config.get("tablet_control", False),
+                "selected_device_ids": config.get("selected_device_ids", [])
+            })
             return
         elif action == "handle_wizard":
             # Сохранение настроек мастера
@@ -87,11 +160,16 @@ class Plugin(BasePlugin):
                 "selected_device_ids": data.get("selected_device_ids", []),
                 "tablet_control": data.get("tablet_control", False)
             })
+            # Мгновенно применяем новый режим
+            await self.apply_mode()
             return
         elif action == "start_qr_login":
             asyncio.create_task(self.auth.start_qr_login())
             return
             
+        if not isinstance(data, dict):
+            data = {}
+
         target = data.get("device_id")
         if not target or target not in self.cmd_queues:
             return
@@ -162,22 +240,25 @@ class Plugin(BasePlugin):
                 "id": d_id, "name": s.get("name", ""), "online": s.get("online", False),
                 "playing": s.get("playing", False), "volume": s.get("volume", 0),
                 "title": s.get("title", ""), "subtitle": s.get("artist", ""),
+                "artist": s.get("artist", ""),
                 "alice_state": s.get("alice_state", "IDLE"),
                 "track_id": s.get("track_id", ""),
+                "cover": s.get("cover", ""),
                 "progress": s.get("progress", 0),
                 "duration": s.get("duration", 0),
                 "last_update": s.get("last_update", time.time())
             })
         await self.emit_state({"devices": devices_list})
+        if devices_list:
+            covers_found = sum(1 for d in devices_list if d.get("cover"))
+            self.log(f"Pushed state for {len(devices_list)} devices. Covers found: {covers_found}")
 
-    async def _broadcast_config_to_tablet(self):
+    async def _broadcast_config_to_tablet(self, sid=None):
         config = self.get_config()
-        y_token = None
-        if AUTH_FILE.exists():
-            with open(AUTH_FILE, "r") as f:
-                for line in f:
-                    if line.startswith("YANDEX_TOKEN="):
-                        y_token = line.split("=")[1].strip()
+        print(f"[YandexStation] Sending config to {'all' if not sid else sid}. Standalone: {config.get('tablet_control', False)}")
+        
+        env = self.auth._read_env()
+        y_token = env.get("YANDEX_TOKEN")
 
         configs = []
         if config.get("tablet_control", False):
@@ -191,4 +272,4 @@ class Plugin(BasePlugin):
             "devices": configs, 
             "yandex_token": y_token, 
             "enabled": config.get("tablet_control", False)
-        })
+        }, room=sid)

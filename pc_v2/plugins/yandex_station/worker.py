@@ -10,7 +10,6 @@ class DeviceWorker:
         self.plugin = plugin
         self.device_id = device_id
         self.log = plugin.log
-        self.manager = plugin.manager
         self.loop = None
 
     def start(self):
@@ -44,38 +43,61 @@ class DeviceWorker:
             t.cancel()
 
     async def _monitor_loop(self):
-        ip = self.plugin.devices[self.device_id].get("ip")
+        device_info = self.plugin.devices.get(self.device_id)
+        if not device_info:
+            self.log(f"No device info for {self.device_id} in monitor loop. Waiting...", 30)
+            await asyncio.sleep(5)
+            return
+
+        ip = device_info.get("ip")
+        if not ip:
+            self.log(f"No IP for {self.device_id}. Waiting for discovery...", 30)
+            await asyncio.sleep(5)
+            return
+
         ssl_ctx = get_ssl_ctx()
-        async with websockets.connect(f"wss://{ip}:1961", ssl=ssl_ctx, ping_interval=10) as ws:
-            self.plugin.connections[self.device_id] = ws
-            self.plugin.states[self.device_id]["online"] = True
-            self.log(f"Connected to speaker {self.device_id} at {ip}")
-            await self.plugin._push_state()
-            
-            async def heartbeat():
-                while True:
-                    try:
-                        is_forcing = time.time() < self.plugin._force_broadcast_until.get(self.device_id, 0)
-                        await asyncio.sleep(0.5 if is_forcing else 3.0)
-                        await ws.send(json.dumps({
-                            "conversationToken": self.plugin.devices[self.device_id]["glagol_token"],
-                            "id": str(uuid.uuid4()),
-                            "sentTime": int(round(time.time() * 1000)),
-                            "payload": {"command": "getState"}
-                        }))
-                    except: break
-            
-            hb_task = asyncio.create_task(heartbeat())
-            try:
-                async for message in ws:
-                    data = json.loads(message)
-                    if "state" in data:
-                        if self._internal_parse_state(data["state"]):
-                            await self.plugin._push_state()
-            finally: hb_task.cancel()
+        try:
+            async with websockets.connect(f"wss://{ip}:1961", ssl=ssl_ctx, ping_interval=10) as ws:
+                self.plugin.connections[self.device_id] = ws
+                self.plugin.states[self.device_id]["online"] = True
+                self.log(f"Connected to speaker {self.device_id} at {ip}")
+                await self.plugin._push_state()
+                
+                async def heartbeat():
+                    while True:
+                        try:
+                            # Проверяем наличие токена перед каждым алертом
+                            dev = self.plugin.devices.get(self.device_id)
+                            if not dev or "glagol_token" not in dev: break
+                            
+                            is_forcing = time.time() < self.plugin._force_broadcast_until.get(self.device_id, 0)
+                            await asyncio.sleep(0.5 if is_forcing else 3.0)
+                            await ws.send(json.dumps({
+                                "conversationToken": dev["glagol_token"],
+                                "id": str(uuid.uuid4()),
+                                "sentTime": int(round(time.time() * 1000)),
+                                "payload": {"command": "getState"}
+                            }))
+                        except: break
+                
+                hb_task = asyncio.create_task(heartbeat())
+                try:
+                    async for message in ws:
+                        data = json.loads(message)
+                        if "state" in data:
+                            if await self._internal_parse_state(data["state"]):
+                                await self.plugin._push_state()
+                finally: hb_task.cancel()
+        except Exception as e:
+            raise e # Пробрасываем выше для обработки в run()
 
     async def _control_loop(self):
-        ip = self.plugin.devices[self.device_id].get("ip")
+        device_info = self.plugin.devices.get(self.device_id)
+        if not device_info or not device_info.get("ip"):
+            await asyncio.sleep(5)
+            return
+
+        ip = device_info.get("ip")
         ssl_ctx = get_ssl_ctx()
         async with websockets.connect(f"wss://{ip}:1961", ssl=ssl_ctx, ping_interval=3, ping_timeout=2) as ws:
             self.plugin.control_conns[self.device_id] = ws
@@ -95,7 +117,7 @@ class DeviceWorker:
                     queue.task_done()
             finally: tc_task.cancel()
 
-    def _internal_parse_state(self, s):
+    async def _internal_parse_state(self, s):
         new_vals = parse_state(s)
         core_changed = False
         core_keys = ["playing", "title", "artist", "volume", "track_id", "progress"]
@@ -112,15 +134,16 @@ class DeviceWorker:
         self.plugin.states[self.device_id]["last_update"] = time.time()
 
         if is_new_track:
-            self.manager.emit_event("track_changed", {"device_id": self.device_id, "track_id": new_vals["track_id"]})
+            await self.plugin.emit_event("track_changed", {"device_id": self.device_id, "track_id": new_vals["track_id"]})
 
         old_cover = self.plugin.states[self.device_id].get("_sent_cover", "")
         if new_cover and new_cover != old_cover:
             self.plugin.states[self.device_id]["_sent_cover"] = new_cover
-            self.manager.emit_to_plugin_ui(
-                self.plugin.p_id, "cover",
-                {"cover": new_cover, "device_id": self.device_id, "title": new_vals.get("title", "")}
-            )
+            await self.plugin.emit_event("cover", {
+                "device_id": self.device_id,
+                "cover": new_cover,
+                "title": new_vals.get("title", "")
+            })
 
         now = time.time()
         last_broadcast = getattr(self.plugin, "_last_broadcast_time", 0)
@@ -131,8 +154,11 @@ class DeviceWorker:
 
 async def monitor_request_state(plugin, device_id):
     if device_id in plugin.cmd_queues:
+        dev = plugin.devices.get(device_id)
+        if not dev or "glagol_token" not in dev: return
+        
         await plugin.cmd_queues[device_id].put({
-            "conversationToken": plugin.devices[device_id]["glagol_token"],
+            "conversationToken": dev["glagol_token"],
             "id": str(uuid.uuid4()),
             "sentTime": int(round(time.time() * 1000)),
             "payload": {"command": "getState"}

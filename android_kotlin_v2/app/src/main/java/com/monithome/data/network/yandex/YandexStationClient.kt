@@ -139,10 +139,10 @@ class YandexStationClient(context: Context) {
         ws.send(payload.toString())
         
         scope.launch {
-            delay(500)
+            delay(300)
             sendCommand(deviceId, "getState")
             while (activeConnections[deviceId] == ws) {
-                delay(3000)
+                delay(1000) // Опрашиваем раз в секунду для плавности
                 if (activeConnections[deviceId] == ws) sendCommand(deviceId, "getState")
             }
         }
@@ -168,5 +168,13 @@ class YandexStationClient(context: Context) {
             })
         }
         ws.send(payload.toString())
+
+        // Сразу запрашиваем стейт после команды для мгновенного обновления
+        if (command != "getState") {
+            scope.launch {
+                delay(300)
+                sendCommand(deviceId, "getState")
+            }
+        }
     }
 }

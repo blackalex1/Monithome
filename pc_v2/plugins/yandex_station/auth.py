@@ -4,26 +4,42 @@ import json
 import asyncio
 import aiohttp
 from zeroconf import ServiceBrowser, Zeroconf
-from .const import TOKENS_FILE, AUTH_FILE, CLIENT_ID, CLIENT_SECRET
+from .const import AUTH_FILE, CLIENT_ID, CLIENT_SECRET
 from .discovery import SpeakerDiscovery, get_all_interfaces
 
 class YandexAuth:
     def __init__(self, plugin):
         self.plugin = plugin
         self.log = plugin.log
-        self.manager = plugin.manager
+
+    def _read_env(self):
+        """Читает все ключи из .env файла"""
+        if not AUTH_FILE.exists(): return {}
+        data = {}
+        try:
+            with open(AUTH_FILE, "r", encoding="utf-8") as f:
+                for line in f:
+                    if "=" in line:
+                        k, v = line.split("=", 1)
+                        data[k.strip()] = v.strip()
+        except: pass
+        return data
+
+    def _write_env(self, key, value):
+        """Записывает/обновляет ключ в .env, сохраняя остальные"""
+        data = self._read_env()
+        data[key] = value
+        try:
+            with open(AUTH_FILE, "w", encoding="utf-8") as f:
+                for k, v in data.items():
+                    f.write(f"{k}={v}\n")
+        except Exception as e:
+            self.log(f"Failed to write to .env: {e}", 40)
 
     def has_token(self):
-        if not AUTH_FILE.exists():
-            return False
-        try:
-            with open(AUTH_FILE, "r") as f:
-                for line in f:
-                    if line.startswith("YANDEX_TOKEN="):
-                        val = line.split("=")[1].strip()
-                        return len(val) > 10
-        except: pass
-        return False
+        env = self._read_env()
+        token = env.get("YANDEX_TOKEN", "")
+        return len(token) > 10
 
     async def start_qr_login(self):
         if getattr(self.plugin, "_qr_status", "") in ["getting_url", "waiting"]:
@@ -120,8 +136,8 @@ class YandexAuth:
                                                     timeout=10) as token_r:
                                     x_token = (await token_r.json()).get("access_token")
                                     if x_token:
-                                        with open(AUTH_FILE, "w") as f: f.write(f"YANDEX_TOKEN={x_token}\n")
-                                        self.log("Yandex token saved successfully.")
+                                        self._write_env("YANDEX_TOKEN", x_token)
+                                        self.log("Yandex token saved successfully to .env.")
                                         self.plugin._qr_status = "success"
                                         await self._emit_qr_status()
                                         await self.plugin._broadcast_config_to_tablet()
@@ -150,12 +166,8 @@ class YandexAuth:
         self.log("Starting automatic token refresh cycle...")
         
         try:
-            x_token = None
-            if AUTH_FILE.exists():
-                with open(AUTH_FILE, "r") as f:
-                    for line in f:
-                        if line.startswith("YANDEX_TOKEN="):
-                            x_token = line.split("=")[1].strip()
+            env = self._read_env()
+            x_token = env.get("YANDEX_TOKEN")
             if not x_token: return False
 
             # Zeroconf поиск делаем в пуле потоков, так как библиотека синхронная
@@ -203,8 +215,7 @@ class YandexAuth:
                         new_results[d_id] = {"name": q_dev.get("name", "Колонка").strip(), "glagol_token": g_token, "platform": q_dev.get("platform"), "ip": ip}
                 
                 if new_results:
-                    with open(TOKENS_FILE, "w", encoding="utf-8") as f: 
-                        json.dump(new_results, f, ensure_ascii=False, indent=2)
+                    self._write_env("GLAGOL_TOKENS", json.dumps(new_results, ensure_ascii=False))
                     self.plugin.devices = new_results
                     return True
         except Exception as e: 

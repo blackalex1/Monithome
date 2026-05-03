@@ -5,25 +5,32 @@ __pycache__/
 venv/
 env/
 .venv/
-.env
-*.env
 .pytest_cache/
 .python-version
 
 # API Keys, Tokens and Credentials
+.env
+.env*
+*.env
+**/.env
+**/.env*
 glagol_tokens.json
-*glagol_tokens.json
-pc/plugins/yandex_station/.env
-pc/plugins/yandex_station/glagol_tokens.json
-yandex-station-Api/
-yandex_test/
 yandex_tokens.json
+yandex_session.json
+session.json
+tokens.json
+secrets.json
+auth.json
+**/config.json
+**/master_config.json
+**/*_tokens.json
+**/*_session.json
+**/*_secrets.json
+**/*_auth.json
 *.keystore
-android/app/*.keystore
-android/local.properties
-android/android/local.properties
-android/gradle.properties
-android/android/gradle.properties
+*.jks
+*.pem
+*.key
 
 # Node.js & Build Artifacts
 node_modules/
@@ -31,10 +38,6 @@ dist/
 build/
 out/
 .next/
-pc_gui/dist/
-android/.expo/
-android/android/build/
-android/android/.gradle/
 *.log
 npm-debug.log*
 yarn-debug.log*
@@ -44,6 +47,7 @@ web-build/
 
 # Build scripts
 build_scripts/
+
 # IDEs & System Files
 .idea/
 .vscode/
@@ -55,26 +59,30 @@ Thumbs.db
 .antigravity/
 
 # Project Specific
-scratch/
-pc/scratch/
 test_*.py
 current_cover.png
 test_out.png
-!pc/plugins/system_stats/LibreHardwareMonitorLib.dll
-!pc/plugins/system_stats/get_stats.ps1
 
-# Android Kotlin specific
-android_kotlin/.gradle/
-android_kotlin/build/
-android_kotlin/*/build/
-android_kotlin/local.properties
-android_kotlin/.idea/
-android_kotlin/*.iml
-android_kotlin/.cxx/
-android_kotlin/captures/
-android_kotlin/**/*.jks
-android_kotlin/**/*.ap_
-android_kotlin/**/google-services.json
+# Android Kotlin V2
+android_kotlin_v2/.gradle/
+android_kotlin_v2/build/
+android_kotlin_v2/*/build/
+android_kotlin_v2/local.properties
+android_kotlin_v2/.idea/
+android_kotlin_v2/*.iml
+android_kotlin_v2/.cxx/
+android_kotlin_v2/captures/
+android_kotlin_v2/**/*.jks
+android_kotlin_v2/**/*.ap_
+android_kotlin_v2/**/google-services.json
+
+# PC V2
+pc_v2/__pycache__/
+pc_v2/venv/
+pc_v2/.venv/
+pc_v2/plugins/pc_media/cover.jpg
+!pc_v2/plugins/system_stats/LibreHardwareMonitorLib.dll
+!pc_v2/plugins/system_stats/get_stats.ps1
 
 # Temporary & Cache
 *.bak
@@ -83,5 +91,5 @@ android_kotlin/**/google-services.json
 .cache/
 .mypy_cache/
 .ruff_cache/
-b r a i n /  
+brain/
 old/

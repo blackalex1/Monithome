@@ -22,6 +22,13 @@ def parse_state(s):
     if cover_raw:
         cover = "https://" + cover_raw.replace("%%", "400x400")
 
+    progress = p.get("progress", 0)
+    duration = p.get("duration", 0)
+    
+    # Нормализация: если значение > 10000, это скорее всего миллисекунды
+    if progress > 10000: progress /= 1000.0
+    if duration > 10000: duration /= 1000.0
+
     return {
         "volume": round(s.get("volume", 0) * 100),
         "playing": s.get("playing", False) or p.get("status") == "playing",
@@ -29,8 +36,8 @@ def parse_state(s):
         "artist": artist,
         "cover": cover,
         "track_id": track_id,
-        "progress": p.get("progress", 0),
-        "duration": p.get("duration", 0),
+        "progress": progress,
+        "duration": duration,
         "last_update": time.time(),
         "alice_state": s.get("aliceState", "IDLE")
     }

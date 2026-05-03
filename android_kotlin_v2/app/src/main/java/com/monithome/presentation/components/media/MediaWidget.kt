@@ -13,6 +13,8 @@ import androidx.compose.material.icons.automirrored.filled.VolumeDown
 import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -59,7 +61,7 @@ fun MediaWidget(
 
             // Track Info & Controls
             Row(verticalAlignment = Alignment.CenterVertically) {
-                MediaCover(coverUrl = state.coverUrl, modifier = Modifier.size(80.dp))
+                MediaCover(coverUrl = state.coverUrl, modifier = Modifier)
                 
                 Spacer(modifier = Modifier.width(16.dp))
                 
@@ -135,10 +137,12 @@ fun MediaSourceSelector(sources: List<MediaSource>, selectedId: String?, onSelec
 fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
     val context = LocalContext.current
     var decodedModel by remember { mutableStateOf<Any?>(null) }
+    var aspectRatio by remember { mutableFloatStateOf(1f) } // По умолчанию квадрат
 
     LaunchedEffect(coverUrl) {
         if (coverUrl.isEmpty()) {
             decodedModel = null
+            aspectRatio = 1f
             return@LaunchedEffect
         }
         decodedModel = withContext(Dispatchers.Default) {
@@ -154,7 +158,9 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
 
     Box(
         modifier = modifier
-            .clip(RoundedCornerShape(16.dp))
+            .height(80.dp) // Фиксированная высота
+            .aspectRatio(aspectRatio) // Адаптивная ширина на основе пропорций
+            .clip(RoundedCornerShape(12.dp))
             .background(Color(0xFF2C2C2C)),
         contentAlignment = Alignment.Center
     ) {
@@ -166,6 +172,12 @@ fun MediaCover(coverUrl: String, modifier: Modifier = Modifier) {
                     .build(),
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
+                onSuccess = { state ->
+                    val drawable = state.result.drawable
+                    if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
+                        aspectRatio = drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight.toFloat()
+                    }
+                },
                 modifier = Modifier.fillMaxSize()
             )
         } else {

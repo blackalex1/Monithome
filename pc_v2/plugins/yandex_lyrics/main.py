@@ -24,19 +24,23 @@ class Plugin(BasePlugin):
 
     async def on_start(self):
         self._session = aiohttp.ClientSession()
-        # Проверяем, не перехвачено ли управление планшетом
+        
+        # Подписываемся на события изменения трека всегда
+        event_bus.subscribe("plugin_custom_event", self._on_event)
+        
         if self._is_tablet_control():
-            self.log("MODE CHANGE: Tablet handles lyrics. PC fetching suspended.")
-            return
-            
-        # Подписываемся на события изменения трека
-        self.manager.subscribe("plugin_custom_event", self._on_event)
+            self.log("MODE NOTICE: Tablet control is enabled. PC lyrics will be disabled.")
+            await self.emit_state({"devices": {}})
+        else:
+            # Сразу пушим пустой/текущий кэш, чтобы планшет знал об активности плагина
+            await self.emit_state({"devices": self._lyrics_cache})
+        
         self.log("yandex_lyrics started.")
 
     async def on_stop(self):
         if self._session:
             await self._session.close()
-        self.manager.unsubscribe("plugin_custom_event", self._on_event)
+        event_bus.unsubscribe("plugin_custom_event", self._on_event)
         self.log("yandex_lyrics stopped.")
 
     def _is_tablet_control(self):
@@ -50,10 +54,28 @@ class Plugin(BasePlugin):
         return self.get_config().get("tablet_control", False)
 
     async def _on_event(self, event_payload: dict):
+        event_name = event_payload.get("event")
+        
+        if self._is_tablet_control():
+            # Если управление у планшета - очищаем кэш на сервере и выходим
+            if self._lyrics_cache:
+                self._lyrics_cache = {}
+                await self.emit_state({"devices": {}})
+            
+            # Но если это смена трека, нам всё равно нужно логгировать это (для отладки)
+            if event_name == "track_changed":
+                self.log(f"Track change ignored (tablet control active): {event_payload.get('data', {}).get('track_id')}")
+            return
+
         # event_payload: {"plugin_id": "yandex_station", "event": "track_changed", "data": {"device_id": "...", "track_id": "..."}}
-        if event_payload.get("event") == "track_changed":
+        if event_name == "track_changed":
             data = event_payload.get("data", {})
             await self._handle_track_change(data.get("device_id"), data.get("track_id"))
+        elif event_name == "yandex_config":
+            # Принудительно проверяем режим при получении конфига
+            if self._is_tablet_control():
+                self._lyrics_cache = {}
+                await self.emit_state({"devices": {}})
 
     async def _handle_track_change(self, device_id: str, track_id: str):
         if not device_id: return
@@ -112,6 +134,23 @@ class Plugin(BasePlugin):
         hmac_hash = hmac.new(secret, msg, hashlib.sha256).digest()
         return base64.b64encode(hmac_hash).decode()
 
+    def _parse_lrc(self, lrc_text):
+        """Парсит LRC формат в список timings"""
+        if not lrc_text: return []
+        import re
+        lines = []
+        # Регулярка для [mm:ss.xx] или [mm:ss]
+        pattern = re.compile(r'\[(\d+):(\d+)(?:\.(\d+))?\](.*)')
+        for line in lrc_text.splitlines():
+            match = pattern.search(line)
+            if match:
+                m, s, ms, text = match.groups()
+                ms = int(ms) if ms else 0
+                if len(str(ms)) == 2: ms *= 10 # 0.12 -> 120ms
+                total_ms = (int(m) * 60 + int(s)) * 1000 + ms
+                lines.append({"time": total_ms, "text": text.strip()})
+        return lines
+
     async def _fetch_from_yandex_supplement(self, raw_track_id, headers):
         try:
             async with self._session.get(f"https://api.music.yandex.net/tracks/{raw_track_id}/supplement", headers=headers, timeout=3) as r:
@@ -148,16 +187,25 @@ class Plugin(BasePlugin):
         try:
             async with self._session.get(f"https://api.music.yandex.net/tracks/{raw_track_id}", headers=headers, timeout=3) as r:
                 if r.status == 200:
-                    tr = (await r.json()).get("result", [{}])[0]
-                    title, artist = tr.get("title"), tr.get("artists", [{}])[0].get("name")
-                    async with self._session.get(f"https://lrclib.net/api/get?artist_name={artist}&track_name={title}", timeout=3) as r_lrc:
+                    result = (await r.json()).get("result")
+                    if isinstance(result, list): result = result[0]
+                    if not result: return None
+                    
+                    title = result.get("title")
+                    artists = result.get("artists", [])
+                    artist = artists[0].get("name") if artists else ""
+                    
+                    if not title: return None
+                    params = {"artist_name": artist, "track_name": title}
+                    async with self._session.get("https://lrclib.net/api/get", params=params, timeout=3) as r_lrc:
                         if r_lrc.status == 200:
                             lrc_json = await r_lrc.json()
                             synced = lrc_json.get("syncedLyrics")
                             if synced:
                                 return {"full": synced, "is_lrc": True}
                             return {"full": lrc_json.get("plainLyrics"), "is_lrc": False}
-        except: pass
+        except Exception as e:
+            self.log(f"LRCLIB error ({type(e).__name__}): {str(e)}", 30)
         return None
 
     async def _fetch_lyrics_parallel(self, track_id):
@@ -171,28 +219,25 @@ class Plugin(BasePlugin):
         raw_id = str(track_id).split(":")[0] if ":" in str(track_id) else str(track_id)
         headers = {"Authorization": f"OAuth {x_token}", "X-Yandex-Music-Client": "YandexMusicAndroid/24023621"}
 
-        results = await asyncio.gather(
-            self._fetch_from_yandex_supplement(raw_id, headers),
-            self._fetch_from_yandex_lrc(raw_id, headers),
-            self._fetch_from_lrclib(raw_id, headers),
-            return_exceptions=True
-        )
+        # 1. Сначала пробуем Yandex Supplement (лучшее качество таймингов)
+        res = await self._fetch_from_yandex_supplement(raw_id, headers)
+        if res and res.get("timings"):
+            return res
 
-        best_result = {"full": None, "is_lrc": False, "timings": []}
-        
-        for res in results:
-            if isinstance(res, dict) and res:
-                if res.get("is_lrc") and res.get("full"):
-                    best_result["full"] = res["full"]
-                    best_result["is_lrc"] = True
-                    break
-                elif res.get("timings") and not best_result["is_lrc"]:
-                    best_result["timings"] = res["timings"]
-                    best_result["full"] = res.get("full")
-                elif res.get("full") and not best_result["full"]:
-                    best_result["full"] = res["full"]
+        # 2. Затем пробуем Yandex LRC
+        res = await self._fetch_from_yandex_lrc(raw_id, headers)
+        if res and res.get("full"):
+            res["timings"] = self._parse_lrc(res["full"])
+            return res
 
-        return best_result if best_result["full"] or best_result["timings"] else None
+        # 3. И только в самом конце - LRCLIB
+        res = await self._fetch_from_lrclib(raw_id, headers)
+        if res:
+            if res.get("is_lrc") and res.get("full"):
+                res["timings"] = self._parse_lrc(res["full"])
+            return res
+
+        return None
 
     async def handle_command(self, action: str, data: any):
         pass

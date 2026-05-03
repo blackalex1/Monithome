@@ -1,13 +1,19 @@
 package com.monithome.presentation.dashboard
 
+import com.monithome.data.network.socket.DiscoveredServer
 import com.monithome.domain.models.PluginInfo
 
 data class DashboardState(
-    val isLoading: Boolean = true,
+    val isLoading: Boolean = false,
     val isConnected: Boolean = false,
     val pcError: String? = null,
     val mediaState: MediaUIState = MediaUIState.Empty,
-    val activePlugins: List<PluginInfo> = emptyList()
+    val activePlugins: List<PluginInfo> = emptyList(),
+    val discoveredServers: List<DiscoveredServer> = emptyList(),
+    val isAuthRequired: Boolean = false,
+    val stats: Map<String, Map<String, Any>> = emptyMap(),
+    val lyrics: List<com.monithome.domain.models.LyricLine> = emptyList(),
+    val isLyricsFullScreen: Boolean = false
 )
 
 data class MediaUIState(
@@ -23,6 +29,13 @@ data class MediaUIState(
     val volume: Int = 0,
     val isLyricsActive: Boolean = false
 ) {
+    val currentProgress: Double
+        get() {
+            if (!isPlaying) return baseProgress
+            val delta = (System.currentTimeMillis() / 1000.0) - lastUpdateUnixTime
+            return (baseProgress + delta).coerceIn(0.0, duration)
+        }
+
     companion object {
         val Empty = MediaUIState()
     }
@@ -35,7 +48,7 @@ data class MediaSource(
 )
 
 sealed class DashboardIntent {
-    object Connect : DashboardIntent()
+    data class Connect(val url: String? = null) : DashboardIntent()
     object Disconnect : DashboardIntent()
     data class Auth(val token: String) : DashboardIntent()
     
@@ -45,4 +58,5 @@ sealed class DashboardIntent {
     object NextTrack : DashboardIntent()
     object PrevTrack : DashboardIntent()
     data class SetVolume(val volume: Int) : DashboardIntent()
+    object ToggleLyricsFullScreen : DashboardIntent()
 }

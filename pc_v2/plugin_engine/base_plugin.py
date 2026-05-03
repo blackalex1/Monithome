@@ -2,6 +2,7 @@ import asyncio
 from abc import ABC, abstractmethod
 from typing import Any, Dict
 import logging
+import sys
 from core.event_bus import event_bus
 
 class BasePlugin(ABC):
@@ -58,12 +59,13 @@ class BasePlugin(ABC):
             "state": state
         })
 
-    async def emit_event(self, event_name: str, data: Any):
+    async def emit_event(self, event_name: str, data: Any, room: str = None):
         """Отправка специфичного события плагина."""
         await event_bus.emit("plugin_custom_event", {
             "plugin_id": self.plugin_id,
             "event": event_name,
-            "data": data
+            "data": data,
+            "room": room
         })
 
     def get_config(self) -> Dict[str, Any]:

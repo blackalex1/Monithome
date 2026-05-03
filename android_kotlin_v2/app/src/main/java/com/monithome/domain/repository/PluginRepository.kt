@@ -9,4 +9,5 @@ interface PluginRepository {
     fun getPluginStats(pluginId: String): StateFlow<Map<String, Any>>
     
     fun sendCommand(pluginId: String, action: String, target: String? = null, data: Any? = null)
+    fun isStandaloneMode(): Boolean
 }
