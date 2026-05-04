@@ -20,14 +20,18 @@ class DeviceWorker:
                     if self.device_id not in self.plugin.cmd_queues: 
                         self.plugin.cmd_queues[self.device_id] = asyncio.Queue()
                     
+                    if self.device_id not in self.plugin.states:
+                        self.plugin.states[self.device_id] = {"online": False}
+                    
                     await asyncio.gather(
                         self._monitor_loop(), 
                         self._control_loop()
                     )
                 except Exception as e:
                     self.log(f"Connection error for {self.device_id}: {e}", 40)
-                    self.plugin.states[self.device_id]["online"] = False
-                    await self.plugin._push_state()
+                    if self.device_id in self.plugin.states:
+                        self.plugin.states[self.device_id]["online"] = False
+                    await self.plugin.broadcaster.push_state()
                     
                     if "4000" in str(e) or "Invalid token" in str(e):
                         if await self.plugin.auth.refresh_tokens_sync():
@@ -61,17 +65,21 @@ class DeviceWorker:
                 self.plugin.connections[self.device_id] = ws
                 self.plugin.states[self.device_id]["online"] = True
                 self.log(f"Connected to speaker {self.device_id} at {ip}")
-                await self.plugin._push_state()
+                await self.plugin.broadcaster.push_state()
                 
                 async def heartbeat():
                     while True:
                         try:
-                            # Проверяем наличие токена перед каждым алертом
                             dev = self.plugin.devices.get(self.device_id)
                             if not dev or "glagol_token" not in dev: break
                             
                             is_forcing = time.time() < self.plugin._force_broadcast_until.get(self.device_id, 0)
-                            await asyncio.sleep(0.5 if is_forcing else 3.0)
+                            is_playing = self.plugin.states[self.device_id].get("playing", False)
+                            
+                            # Стабильный опрос раз в 2 секунды при игре
+                            sleep_time = 0.5 if is_forcing else (2.0 if is_playing else 4.0)
+                            await asyncio.sleep(sleep_time)
+                            
                             await ws.send(json.dumps({
                                 "conversationToken": dev["glagol_token"],
                                 "id": str(uuid.uuid4()),
@@ -86,10 +94,10 @@ class DeviceWorker:
                         data = json.loads(message)
                         if "state" in data:
                             if await self._internal_parse_state(data["state"]):
-                                await self.plugin._push_state()
+                                await self.plugin.broadcaster.push_state()
                 finally: hb_task.cancel()
         except Exception as e:
-            raise e # Пробрасываем выше для обработки в run()
+            raise e 
 
     async def _control_loop(self):
         device_info = self.plugin.devices.get(self.device_id)
@@ -129,13 +137,18 @@ class DeviceWorker:
         old_track = self.plugin.states[self.device_id].get("track_id")
         is_new_track = bool(new_vals.get("track_id")) and new_vals.get("track_id") != old_track
 
-        new_cover = new_vals.get("cover", "")
         self.plugin.states[self.device_id].update(new_vals)
         self.plugin.states[self.device_id]["last_update"] = time.time()
 
         if is_new_track:
-            await self.plugin.emit_event("track_changed", {"device_id": self.device_id, "track_id": new_vals["track_id"]})
+            await self.plugin.emit_event("track_changed", {
+                "device_id": self.device_id, 
+                "track_id": new_vals["track_id"],
+                "title": new_vals.get("title"),
+                "artist": new_vals.get("artist")
+            })
 
+        new_cover = new_vals.get("cover", "")
         old_cover = self.plugin.states[self.device_id].get("_sent_cover", "")
         if new_cover and new_cover != old_cover:
             self.plugin.states[self.device_id]["_sent_cover"] = new_cover

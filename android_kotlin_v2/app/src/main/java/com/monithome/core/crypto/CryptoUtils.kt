@@ -39,8 +39,8 @@ object CryptoUtils {
         }
     }
 
-    fun decrypt(encryptedBase64: String, keyHex: String): String? {
-        if (keyHex.isEmpty()) return encryptedBase64
+    fun decryptToBytes(encryptedBase64: String, keyHex: String): ByteArray? {
+        if (keyHex.isEmpty()) return null
         return try {
             val keyBytes = hexToBytes(keyHex)
             val combined = Base64.decode(encryptedBase64, Base64.DEFAULT)
@@ -58,12 +58,16 @@ object CryptoUtils {
             val spec = GCMParameterSpec(TAG_SIZE * 8, nonce)
             cipher.init(Cipher.DECRYPT_MODE, secretKey, spec)
             
-            val decrypted = cipher.doFinal(ciphertextWithTag)
-            String(decrypted, Charsets.UTF_8)
+            cipher.doFinal(ciphertextWithTag)
         } catch (e: Exception) {
             e.printStackTrace()
             null
         }
+    }
+
+    fun decrypt(encryptedBase64: String, keyHex: String): String? {
+        val decrypted = decryptToBytes(encryptedBase64, keyHex) ?: return null
+        return String(decrypted, Charsets.UTF_8)
     }
 
     private fun hexToBytes(hex: String): ByteArray {

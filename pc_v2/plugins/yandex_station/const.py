@@ -1,7 +1,6 @@
 from pathlib import Path
 
 PLUGIN_DIR = Path(__file__).parent
-AUTH_FILE = PLUGIN_DIR / ".env"
 CONFIG_FILE = PLUGIN_DIR / "config.json"
 
 # Thanks to https://github.com/MarshalX/yandex-music-api/

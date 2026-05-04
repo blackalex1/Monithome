@@ -14,7 +14,7 @@ class Plugin(BasePlugin):
         super().__init__(plugin_id)
         self._loop_task: asyncio.Task | None = None
         self._state = {"disks": []}
-        self.env_path = Path(__file__).parent / ".env"
+        self._state = {"disks": []}
 
     async def on_start(self):
         self.log("Starting pc_disks monitoring...")
@@ -34,21 +34,20 @@ class Plugin(BasePlugin):
     async def handle_command(self, action: str, data: any):
         if action == "get_disks_for_settings":
             all_disks = await asyncio.to_thread(self._get_all_physical_disks)
-            env = self._read_env()
-            monitored = env.get("MONITORED_DISKS", "").split(",")
-            show_new = env.get("SHOW_NEW_DISKS", "true").lower() == "true"
+            p_cfg = self.get_config()
+            monitored = p_cfg.get("monitored_disks", [])
+            show_new = p_cfg.get("show_new_disks", True)
             
             await self.emit_event("disks_for_settings", {
                 "all_disks": all_disks,
-                "monitored_disks": [m for m in monitored if m],
+                "monitored_disks": monitored,
                 "show_new_disks": show_new
             })
         elif action == "update_settings":
-            monitored = ",".join(data.get("monitored_disks", []))
-            show_new = str(data.get("show_new_disks", True)).lower()
-            
-            self._write_env("MONITORED_DISKS", monitored)
-            self._write_env("SHOW_NEW_DISKS", show_new)
+            self.save_config({
+                "monitored_disks": data.get("monitored_disks", []),
+                "show_new_disks": data.get("show_new_disks", True)
+            })
             
             await self._update_disks_state()
             from core.event_bus import event_bus
@@ -93,10 +92,9 @@ class Plugin(BasePlugin):
         return disks
 
     def _get_disks(self):
-        env = self._read_env()
-        selected_raw = env.get("MONITORED_DISKS", "")
-        selected = [s.strip() for s in selected_raw.split(",") if s.strip()]
-        show_new = env.get("SHOW_NEW_DISKS", "true").lower() == "true"
+        p_cfg = self.get_config()
+        selected = p_cfg.get("monitored_disks", [])
+        show_new = p_cfg.get("show_new_disks", True)
         
         disks = []
         for part in psutil.disk_partitions(all=False):
@@ -114,9 +112,8 @@ class Plugin(BasePlugin):
 
                 # Логика фильтрации
                 is_selected = device in selected
-                if not is_selected:
-                    if not show_new: continue
-                    if not is_removable: continue
+                if not is_selected and not show_new:
+                    continue
 
                 label = ""
                 if os.name == 'nt':
@@ -142,23 +139,3 @@ class Plugin(BasePlugin):
             except: pass
         return disks
 
-    def _read_env(self):
-        res = {}
-        if not self.env_path.exists(): return res
-        try:
-            with open(self.env_path, "r", encoding="utf-8") as f:
-                for line in f:
-                    if "=" in line:
-                        k, v = line.strip().split("=", 1)
-                        res[k] = v
-        except: pass
-        return res
-
-    def _write_env(self, key, value):
-        env = self._read_env()
-        env[key] = value
-        try:
-            with open(self.env_path, "w", encoding="utf-8") as f:
-                for k, v in env.items():
-                    f.write(f"{k}={v}\n")
-        except: pass

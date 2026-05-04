@@ -167,7 +167,9 @@ fun DashboardScreen(
             ) {
                 LyricsWidget(
                     lyrics = state.lyrics,
-                    currentTimeMs = (state.mediaState.currentProgress * 1000).toLong(),
+                    baseProgressMs = (state.mediaState.baseProgress * 1000).toLong(),
+                    lastUpdateUnixTime = state.mediaState.lastUpdateUnixTime,
+                    isPlaying = state.mediaState.isPlaying,
                     isFullScreen = true,
                     coverUrl = state.mediaState.coverUrl,
                     onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) },

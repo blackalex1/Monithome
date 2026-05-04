@@ -36,28 +36,30 @@ fun StatWidget(
             )
             Spacer(modifier = Modifier.height(16.dp))
 
-            // CPU Load (if exists)
-            if (stats.containsKey("cpu")) {
+            // CPU Section
+            if (stats.containsKey("cpu") || stats.containsKey("cpu_temp")) {
                 StatItem(
                     label = translations["cpu_usage"] ?: "CPU",
                     subLabel = stats["cpu_name"] as? String,
-                    value = "${(stats["cpu"] as? Number)?.toInt() ?: 0}%",
+                    value = stats["cpu"]?.let { "${(it as? Number)?.toInt() ?: 0}%" } ?: "",
                     temp = (stats["cpu_temp"] as? Number)?.toInt()?.let { "$it°C" },
                     progress = (stats["cpu"] as? Number)?.toFloat()?.div(100f) ?: 0f,
-                    color = Color(0xFF38BDF8)
+                    color = Color(0xFF38BDF8),
+                    showProgress = stats.containsKey("cpu")
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
 
-            // GPU Load (if exists)
-            if (stats["has_gpu"] == true && stats.containsKey("gpu_load")) {
+            // GPU Section
+            if (stats["has_gpu"] == true && (stats.containsKey("gpu_load") || stats.containsKey("gpu_temp"))) {
                 StatItem(
                     label = translations["gpu_usage"] ?: "GPU",
                     subLabel = stats["gpu_name"] as? String,
-                    value = "${(stats["gpu_load"] as? Number)?.toInt() ?: 0}%",
+                    value = stats["gpu_load"]?.let { "${(it as? Number)?.toInt() ?: 0}%" } ?: "",
                     temp = (stats["gpu_temp"] as? Number)?.toInt()?.let { "$it°C" },
                     progress = (stats["gpu_load"] as? Number)?.toFloat()?.div(100f) ?: 0f,
-                    color = Color(0xFFFBBF24)
+                    color = Color(0xFFFBBF24),
+                    showProgress = stats.containsKey("gpu_load")
                 )
                 Spacer(modifier = Modifier.height(12.dp))
             }
@@ -68,7 +70,8 @@ fun StatWidget(
                     label = translations["ram_label"] ?: "RAM",
                     value = "${(stats["ram_used"] as? Number)?.toDouble() ?: 0.0} / ${(stats["ram_total"] as? Number)?.toDouble() ?: 0.0} GB",
                     progress = (stats["ram_percent"] as? Number)?.toFloat()?.div(100f) ?: 0f,
-                    color = Color(0xFFA78BFA)
+                    color = Color(0xFFA78BFA),
+                    showProgress = stats.containsKey("ram_percent")
                 )
             }
         }
@@ -82,7 +85,8 @@ fun StatItem(
     temp: String? = null,
     progress: Float,
     color: Color,
-    subLabel: String? = null
+    subLabel: String? = null,
+    showProgress: Boolean = true
 ) {
     Column {
         Row(
@@ -106,23 +110,25 @@ fun StatItem(
                 fontSize = 11.sp,
                 modifier = Modifier.padding(top = 1.dp, bottom = 4.dp)
             )
-        } else {
+        } else if (showProgress) {
             Spacer(modifier = Modifier.height(4.dp))
         }
 
-        Box(
-            modifier = Modifier
-                .fillMaxWidth()
-                .height(8.dp)
-                .clip(RoundedCornerShape(4.dp))
-                .background(Color(0xFF2C2C2C))
-        ) {
+        if (showProgress) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(progress.coerceIn(0f, 1f))
-                    .fillMaxHeight()
-                    .background(color)
-            )
+                    .fillMaxWidth()
+                    .height(8.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(Color(0xFF2C2C2C))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(progress.coerceIn(0f, 1f))
+                        .fillMaxHeight()
+                        .background(color)
+                )
+            }
         }
     }
 }

@@ -126,17 +126,21 @@ class Plugin(BasePlugin):
             new_state.update(hw_stats)
 
         self._state = new_state
+        self.log(f"Emitting state with {len(self._state)} keys", 10) # DEBUG
         await self.emit_state(self._state)
 
     def _fetch_hardware_stats(self) -> Dict[str, Any]:
-        """Синхронный блокирующий метод сбора аппаратной статы"""
+        """Синхронный блокирующий метод сбора аппаратной статы с защитой от зависаний"""
         hw = {}
-        ab_stats = get_afterburner_stats()
+        try:
+            ab_stats = get_afterburner_stats()
+        except:
+            ab_stats = None
         
         cpu_t = gpu_l = gpu_t = 0
         has_gpu = False
 
-        # 1. Сначала пробуем Afterburner (самый легкий способ)
+        # 1. Afterburner
         if ab_stats:
             cpu_t = ab_stats.get('cpu_temp', 0)
             gpu_l = ab_stats.get('gpu_load', 0)
@@ -144,57 +148,65 @@ class Plugin(BasePlugin):
             has_gpu = gpu_l > 0 or gpu_t > 0
             if not self._gpu_name: self._gpu_name = ab_stats.get('gpu_name')
 
-        # 2. Если что-то не нашли (температуры == 0) и мы Админ - пробуем драйвер (DLL)
+        # 2. PowerShell / DLL (только если админ)
         if cpu_t == 0 or gpu_t == 0:
-            is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-            if is_admin:
-                driver_stats = {}
-                try:
+            try:
+                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
+                if is_admin:
                     ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
                     if os.path.exists(ps_script):
+                        # Ограничиваем время выполнения PowerShell 2 секундами
                         process = subprocess.run(
                             ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps_script],
-                            capture_output=True, text=True, encoding='utf-8', errors='ignore'
+                            capture_output=True, text=True, encoding='utf-8', errors='ignore',
+                            timeout=2.0
                         )
                         if process.returncode == 0:
                             json_start = process.stdout.find('{')
                             if json_start != -1:
                                 driver_stats = json.loads(process.stdout[json_start:])
-                except Exception as e:
-                    self.log(f"PowerShell stats failed: {e}", 10)
+                                if cpu_t == 0: cpu_t = driver_stats.get('cpu_temp', 0)
+                                if gpu_l == 0: gpu_l = driver_stats.get('gpu_load', 0)
+                                if gpu_t == 0: gpu_t = driver_stats.get('gpu_temp', 0)
+                                if not self._cpu_name: self._cpu_name = driver_stats.get('cpu_name')
+                                if not self._gpu_name: self._gpu_name = driver_stats.get('gpu_name')
+            except Exception as e:
+                self.log(f"PowerShell/DLL stats collection failed or timed out: {e}", 10)
 
-                # Дополняем данные из драйвера, если они там есть
-                if cpu_t == 0: cpu_t = driver_stats.get('cpu_temp', 0)
-                if gpu_l == 0: gpu_l = driver_stats.get('gpu_load', 0)
-                if gpu_t == 0: gpu_t = driver_stats.get('gpu_temp', 0)
-                if not self._cpu_name: self._cpu_name = driver_stats.get('cpu_name')
-                if not self._gpu_name: self._gpu_name = driver_stats.get('gpu_name')
-            else:
-                if cpu_t == 0:
-                    self.log("CPU temperature is 0 and no Admin rights for DLL driver.", 30)
-            
-            if cpu_t == 0 and not is_admin:
-                self.log("CPU temperature is 0. Please try running the server as Administrator for better sensor access.", 30) # WARNING
-
-        # WMI Fallback (LibreHardwareMonitor or OpenHardwareMonitor namespace)
+        # 3. WMI Fallback (Самое опасное место, может вешать поток)
         if cpu_t == 0:
             try:
-                # Пытаемся найти через WMI-пространство LibreHardwareMonitor (если запущен)
+                # Используем очень осторожный опрос WMI
+                import pythoncom
+                pythoncom.CoInitialize() # Важно для WMI в доп. потоках
                 w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
-                sensors = w.Sensor()
+                sensors = w.Sensor(SensorType="Temperature")
                 for s in sensors:
-                    if s.SensorType == "Temperature":
-                        if "CPU" in s.Name or "Package" in s.Name:
-                            if cpu_t == 0 or s.Value > cpu_t:
-                                cpu_t = s.Value
+                    if "CPU" in s.Name or "Package" in s.Name:
+                        cpu_t = s.Value
+                        break
             except: 
-                try:
-                    # Стандартный WMI ThermalZone (часто требует прав или специфичного BIOS)
-                    w = wmi.WMI(namespace="root\\wmi")
-                    t_infos = w.MSAcpi_ThermalZoneTemperature()
-                    if t_infos:
-                        cpu_t = (t_infos[0].CurrentTemperature - 2732) / 10.0
-                except: pass
+                pass
+
+        # 4. GPUtil
+        if not has_gpu:
+            try:
+                gpus = GPUtil.getGPUs()
+                if gpus:
+                    gpu_l, gpu_t = round(gpus[0].load * 100, 1), gpus[0].temperature
+                    if not self._gpu_name: self._gpu_name = gpus[0].name
+                    has_gpu = True
+            except: pass
+
+        hw.update({
+            "cpu_temp": cpu_t, "display_cpu_temp": f"{int(cpu_t)}°C" if cpu_t else "N/A",
+            "gpu_load": gpu_l, "display_gpu_load": f"{int(gpu_l)}%" if gpu_l else "0%",
+            "gpu_temp": gpu_t, "display_gpu_temp": f"{int(gpu_t)}°C" if gpu_t else "N/A",
+            "has_gpu": has_gpu,
+            "cpu_name": self._cpu_name or "CPU",
+            "gpu_name": self._gpu_name or "GPU"
+        })
+        return hw
 
         # GPUtil Fallback
         if not has_gpu:

@@ -35,7 +35,9 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                     title = state.t("yandex_lyrics_label", "Текст песни"),
                     translations = state.translations,
                     lyrics = state.lyrics,
-                    currentTimeMs = (state.mediaState.currentProgress * 1000).toLong(),
+                    baseProgressMs = (state.mediaState.baseProgress * 1000).toLong(),
+                    lastUpdateUnixTime = state.mediaState.lastUpdateUnixTime,
+                    isPlaying = state.mediaState.isPlaying,
                     coverUrl = state.mediaState.coverUrl,
                     onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) }
                 )

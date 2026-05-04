@@ -16,7 +16,13 @@ import javax.crypto.spec.SecretKeySpec
 
 class YandexLyricsClient {
     private val TAG = "YandexLyricsClient"
-    private val client = OkHttpClient()
+    private val client = OkHttpClient.Builder()
+        .hostnameVerifier { _, _ -> true }
+        .sslSocketFactory(
+            YandexSslUtils.createSSLSocketFactory(),
+            YandexSslUtils.trustManager
+        )
+        .build()
 
     suspend fun fetchLyrics(trackId: String, token: String): List<LyricLine> = withContext(Dispatchers.IO) {
         Log.i(TAG, "Fetching lyrics for track: $trackId")
@@ -41,7 +47,7 @@ class YandexLyricsClient {
                 return@withContext parseLrc(lrc)
             }
 
-            // 3. Fallback to LRCLIB
+            // 3. Fallback to LRCLIB (via Yandex track info)
             val trackInfo = fetchTrackInfo(rawId, headers)
             if (trackInfo != null) {
                 val (artist, title) = trackInfo
@@ -56,6 +62,12 @@ class YandexLyricsClient {
         }
         
         return@withContext emptyList()
+    }
+
+    suspend fun fetchLyricsBySearch(artist: String, title: String): List<LyricLine> = withContext(Dispatchers.IO) {
+        if (artist.isEmpty() || title.isEmpty()) return@withContext emptyList()
+        Log.i(TAG, "Fetching lyrics by search: $artist - $title")
+        return@withContext fetchFromLrcLib(artist, title) ?: emptyList()
     }
 
     private fun fetchFromSupplement(trackId: String, headers: Map<String, String>): List<LyricLine>? {
@@ -209,6 +221,7 @@ class YandexLyricsClient {
                 }
             }
         } catch (e: Exception) {
+            Log.w(TAG, "LRCLIB error (${e.javaClass.simpleName}): ${e.message}")
             return null
         }
         return null

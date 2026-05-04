@@ -76,31 +76,47 @@ class BasePlugin(ABC):
         })
 
     def get_config(self) -> Dict[str, Any]:
-        """Возвращает конфигурацию плагина из config.json"""
+        """Возвращает конфигурацию плагина: Базовый JSON + Оверрайды из БД"""
         import os
         import json
-        config_path = os.path.join(os.path.dirname(sys.modules[self.__module__].__file__), "config.json")
+        from core.config import config_manager
+        
+        # 1. Загружаем дефолты из JSON (шаблон)
+        # Находим путь к файлу плагина
+        plugin_dir = os.path.dirname(sys.modules[self.__module__].__file__)
+        config_path = os.path.join(plugin_dir, "config.json")
+        
+        default_config = {}
         if os.path.exists(config_path):
             try:
                 with open(config_path, "r", encoding="utf-8") as f:
-                    return json.load(f)
+                    default_config = json.load(f)
             except Exception as e:
-                self.log(f"Error reading config: {e}", level=logging.ERROR)
-        return {}
+                self.log(f"Error reading base config.json: {e}", level=logging.ERROR)
+        
+        # 2. Получаем финальный конфиг (дефолт + оверрайды из БД) через ConfigManager
+        return config_manager.get_plugin_config(self.plugin_id, default_config)
 
     def save_config(self, new_config: Dict[str, Any]):
-        """Сохраняет конфигурацию плагина и применяет изменения (перезапись)"""
-        import os
-        import json
-        config_path = os.path.join(os.path.dirname(sys.modules[self.__module__].__file__), "config.json")
-        current = self.get_config()
-        current.update(new_config)
+        """Сохраняет настройки плагина в базу данных"""
+        from core.config import config_manager
+        
+        # Мы сохраняем переданный конфиг полностью как оверрайд в БД
         try:
-            with open(config_path, "w", encoding="utf-8") as f:
-                json.dump(current, f, indent=4, ensure_ascii=False)
-            self.log("Config saved.")
+            config_manager.save_plugin_config(self.plugin_id, new_config)
+            self.log("Config saved to Database.")
         except Exception as e:
-            self.log(f"Error saving config: {e}", level=logging.ERROR)
+            self.log(f"Error saving config to DB: {e}", level=logging.ERROR)
+
+    def get_secret(self, key: str, default: Any = None) -> Any:
+        """Получить зашифрованный секрет из БД"""
+        from core.config import config_manager
+        return config_manager.get_secret(key, default)
+
+    def set_secret(self, key: str, value: Any):
+        """Зашифровать и сохранить секрет в БД"""
+        from core.config import config_manager
+        config_manager.set_secret(key, value)
 
     def i18n(self, key: str, default: str = None) -> str:
         """Полноценная локализация на основе глобального конфига."""

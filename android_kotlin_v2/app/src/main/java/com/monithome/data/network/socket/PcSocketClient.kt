@@ -1,11 +1,11 @@
 package com.monithome.data.network.socket
 
 import android.util.Log
+import com.monithome.core.crypto.CryptoUtils
 import com.monithome.core.network.JsonParser
 import com.monithome.core.network.MessagePackDecoder
 import io.socket.client.IO
 import io.socket.client.Socket
-import io.socket.engineio.client.transports.WebSocket
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -37,11 +37,12 @@ sealed class SocketEvent {
 
 class PcSocketClient {
     private var socket: Socket? = null
+    @Volatile
+    private var encryptionKey: String? = null
     
     private val _connectionState = MutableStateFlow<SocketConnectionState>(SocketConnectionState.Disconnected)
     val connectionState: StateFlow<SocketConnectionState> = _connectionState.asStateFlow()
 
-    // Используем SharedFlow для событий, чтобы репозитории могли на них подписаться
     private val _events = MutableSharedFlow<SocketEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SocketEvent> = _events.asSharedFlow()
 
@@ -55,7 +56,6 @@ class PcSocketClient {
             finalUrl = "http://$finalUrl"
         }
         
-        // Проверка порта (игнорируя http://)
         val hasPort = if (finalUrl.startsWith("http")) {
             finalUrl.substringAfter("://").contains(":")
         } else {
@@ -69,10 +69,9 @@ class PcSocketClient {
         try {
             _connectionState.value = SocketConnectionState.Connecting
             val opts = IO.Options().apply {
-                // Убираем принудительный WebSocket, даем Socket.IO выбрать лучший транспорт
                 reconnection = true
                 reconnectionDelay = 1000
-                timeout = 15000 // Немного увеличим таймаут
+                timeout = 15000
                 auth = if (token != null) {
                     mapOf("token" to token, "supports_encryption" to "true")
                 } else {
@@ -81,14 +80,14 @@ class PcSocketClient {
             }
 
             socket = IO.socket(finalUrl, opts)
-            setupListeners(token)
+            setupListeners()
             socket?.connect()
         } catch (e: URISyntaxException) {
             _connectionState.value = SocketConnectionState.Error("Invalid URL: $url")
         }
     }
 
-    private fun setupListeners(token: String?) {
+    private fun setupListeners() {
         val s = socket ?: return
 
         s.on(Socket.EVENT_CONNECT) {
@@ -107,66 +106,87 @@ class PcSocketClient {
             _connectionState.value = SocketConnectionState.Error(err)
         }
 
-        s.on("auth_required") {
+        onData(s, "auth_required") {
             Log.i("PcSocketClient", "Server requested AUTH")
             _events.tryEmit(SocketEvent.AuthRequired)
         }
 
-        s.on("auth_success") { args ->
-            Log.i("PcSocketClient", "AUTH SUCCESSFUL")
-            val rawData = args.getOrNull(0)
-            if (rawData is JSONObject) {
-                val t = rawData.optString("token", "")
-                val key = rawData.optString("encryption_key", "")
-                val colorStr = rawData.optString("theme_color", "")
-                val color = parseHexColor(colorStr)
-                _events.tryEmit(SocketEvent.AuthSuccess(t, key, color))
-            } else if (rawData is Map<*, *>) {
-                val t = rawData["token"]?.toString() ?: ""
-                val key = rawData["encryption_key"]?.toString() ?: ""
-                val colorStr = rawData["theme_color"]?.toString() ?: ""
-                val color = parseHexColor(colorStr)
-                _events.tryEmit(SocketEvent.AuthSuccess(t, key, color))
+        onData(s, "auth_success") { data ->
+            Log.i("PcSocketClient", "AUTH SUCCESSFUL. Type: ${data.javaClass.simpleName}")
+            try {
+                val obj = when(data) {
+                    is JSONObject -> data
+                    is Map<*, *> -> JSONObject(data)
+                    is String -> JSONObject(data)
+                    else -> null
+                }
+                
+                obj?.let {
+                    val t = it.optString("token", "")
+                    val key = it.optString("encryption_key", "")
+                    encryptionKey = key
+                    Log.i("PcSocketClient", "AuthSuccess: Key set, length: ${key.length}")
+                    val colorStr = it.optString("theme_color", "")
+                    val color = parseHexColor(colorStr)
+                    _events.tryEmit(SocketEvent.AuthSuccess(t, key, color))
+                }
+            } catch (e: Exception) {
+                Log.e("PcSocketClient", "Auth parsing error", e)
             }
         }
 
-        s.on("authorized") {
+        onData(s, "authorized") {
             Log.i("PcSocketClient", "Received 'authorized' event")
         }
 
-        s.on("ui_config") { args ->
-            Log.i("PcSocketClient", "Event received: ui_config")
-            (JsonParser.safeParseJson(args, "ui_config") as? JSONObject)?.let {
+        onData(s, "ui_config") { data ->
+            Log.i("PcSocketClient", "UI CONFIG received. Type: ${data.javaClass.simpleName}")
+            val obj = when(data) {
+                is JSONObject -> data
+                is String -> try { JSONObject(data) } catch(e: Exception) { null }
+                else -> null
+            }
+            obj?.let {
                 val colorStr = it.optString("theme_color", "")
-                Log.i("PcSocketClient", "UI CONFIG received: $it")
                 val color = parseHexColor(colorStr)
                 _events.tryEmit(SocketEvent.UiConfig(it, color))
             }
         }
 
-        s.on("theme_update") { args ->
-            Log.i("PcSocketClient", "Event received: theme_update")
-            (JsonParser.safeParseJson(args, "theme_update") as? JSONObject)?.let {
+        onData(s, "theme_update") { data ->
+            val obj = when(data) {
+                is JSONObject -> data
+                is String -> try { JSONObject(data) } catch(e: Exception) { null }
+                else -> null
+            }
+            obj?.let {
                 val colorStr = it.optString("theme_color", "")
                 val color = parseHexColor(colorStr)
-                Log.i("PcSocketClient", "THEME UPDATE received: '$colorStr', parsed: $color")
                 if (color != null) {
                     _events.tryEmit(SocketEvent.ThemeUpdate(color))
                 }
             }
         }
 
-        s.on("manager_data") { args ->
-            when (val data = JsonParser.safeParseJson(args, "manager_data")) {
+        onData(s, "manager_data") { data ->
+            when (data) {
                 is JSONObject -> _events.tryEmit(SocketEvent.ManagerDataObj(data))
                 is JSONArray -> _events.tryEmit(SocketEvent.ManagerDataArr(data))
+                is String -> try {
+                    if (data.startsWith("{")) _events.tryEmit(SocketEvent.ManagerDataObj(JSONObject(data)))
+                    else if (data.startsWith("[")) _events.tryEmit(SocketEvent.ManagerDataArr(JSONArray(data)))
+                } catch(e: Exception) {}
             }
         }
 
-        s.on("stats") { args ->
-            val rawData = if (args.size > 1 && args[0] == "stats") args[1] else args[0]
-            Log.v("PcSocketClient", "Received BINARY stats, size: ${if (rawData is ByteArray) rawData.size else "unknown"}")
-            (rawData as? ByteArray)?.let { bytes ->
+        onData(s, "stats") { data ->
+            val bytes = when (data) {
+                is ByteArray -> data
+                is String -> encryptionKey?.let { key -> CryptoUtils.decryptToBytes(data, key) }
+                else -> null
+            }
+
+            if (bytes != null) {
                 try {
                     val map = MessagePackDecoder.decode(bytes)
                     _events.tryEmit(SocketEvent.StatsBinary(map))
@@ -176,28 +196,42 @@ class PcSocketClient {
             }
         }
 
-        s.on("stats_json") { args ->
-            Log.v("PcSocketClient", "Received JSON stats")
-            (JsonParser.safeParseJson(args, "stats_json") as? JSONObject)?.let {
+        onData(s, "stats_json") { data ->
+            val obj = when(data) {
+                is JSONObject -> data
+                is String -> try { JSONObject(data) } catch(e: Exception) { null }
+                else -> null
+            }
+            obj?.let {
                 _events.tryEmit(SocketEvent.StatsJson(it))
             }
         }
 
-        s.on("yandex_config") { args ->
-            Log.i("PcSocketClient", "Event received: yandex_config")
-            (JsonParser.safeParseJson(args, "yandex_config") as? JSONObject)?.let {
-                val masked = JSONObject(it.toString())
-                if (masked.has("yandex_token")) masked.put("yandex_token", "***")
-                if (masked.has("devices")) {
-                    val devices = masked.getJSONArray("devices")
-                    for (i in 0 until devices.length()) {
-                        val d = devices.getJSONObject(i)
-                        if (d.has("glagol_token")) d.put("glagol_token", "***")
-                    }
-                }
-                Log.i("PcSocketClient", "YANDEX CONFIG received (masked tokens): $masked")
+        onData(s, "yandex_config") { data ->
+            Log.i("PcSocketClient", "YANDEX CONFIG received. Type: ${data.javaClass.simpleName}")
+            val obj = when(data) {
+                is JSONObject -> data
+                is String -> try { JSONObject(data) } catch(e: Exception) { null }
+                else -> null
+            }
+            obj?.let {
                 _events.tryEmit(SocketEvent.YandexConfig(it))
-            } ?: Log.w("PcSocketClient", "Failed to parse yandex_config")
+            }
+        }
+    }
+
+    private fun onData(s: Socket, event: String, callback: (Any) -> Unit) {
+        s.on(event) { args ->
+            if (args != null && args.isNotEmpty()) {
+                val data = if (args.size > 1 && args[0] is String && args[0] == event) {
+                    args[1]
+                } else {
+                    args[0]
+                }
+                if (data != null) {
+                    callback(data)
+                }
+            }
         }
     }
 

@@ -128,10 +128,13 @@ def hide_console():
 def main():
     hide_console()
     
+    # 0. Предварительная проверка прав (до запуска сервера и открытия окон)
+    import asyncio
+    from plugin_engine.manager import plugin_manager
+    asyncio.run(plugin_manager.pre_check_elevation())
+    
     # Пытаемся освободить порт, если он занят старым процессом
     kill_process_on_port(5000)
-    
-    # В будущем здесь можно добавить проверку прав администратора (ctypes.windll.shell32.IsUserAnAdmin)
     
     # 1. Запуск асинхронного сервера в отдельном потоке
     server_thread = threading.Thread(target=run_uvicorn, daemon=True)
@@ -154,4 +157,13 @@ def main():
     sys.exit(qt_app.exec())
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except Exception as e:
+        import traceback
+        with open("crash.log", "a", encoding="utf-8") as f:
+            f.write(f"\n--- CRASH AT {time.strftime('%Y-%m-%d %H:%M:%S')} ---\n")
+            f.write(str(e) + "\n")
+            f.write(traceback.format_exc())
+        print(f"CRITICAL ERROR: {e}. See crash.log for details.")
+        input("Press Enter to exit...") # Не даем окну закрыться, если это консоль

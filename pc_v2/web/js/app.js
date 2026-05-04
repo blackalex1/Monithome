@@ -171,7 +171,7 @@ async function loadPlugins() {
 
             card.innerHTML = `
                 <div class="plugin-header">
-                    <div>
+                    <div class="plugin-info-left">
                         <h3 class="plugin-title">${name}</h3>
                         <p class="plugin-desc">${desc}</p>
                     </div>

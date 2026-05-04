@@ -9,7 +9,6 @@ from core.config import config_manager
 from core.event_bus import event_bus
 
 import ctypes
-import sys
 import json
 
 logger = logging.getLogger("PluginManager")
@@ -23,14 +22,31 @@ def is_admin():
 def elevate_and_restart():
     """Перезапуск приложения с правами администратора"""
     logger.info("Requesting Administrator privileges...")
-    # ShellExecuteW с параметром "runas" вызывает системное окно UAC
-    params = " ".join(sys.argv)
-    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, None, 1)
+    
+    import subprocess
+    
+    args = sys.argv[:]
+    if args[0].endswith(".py"):
+        args[0] = os.path.abspath(args[0])
+    
+    quoted_args = []
+    for arg in args:
+        if ' ' in arg and not (arg.startswith('"') and arg.endswith('"')):
+            quoted_args.append(f'"{arg}"')
+        else:
+            quoted_args.append(arg)
+            
+    params = " ".join(quoted_args)
+    
+    logger.debug(f"Restarting with: {sys.executable} {params}")
+    
+    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", sys.executable, params, os.getcwd(), 1)
+    
     if ret > 32:
         logger.info("Elevation successful, exiting current process.")
         os._exit(0)
     else:
-        logger.error(f"Elevation failed with code: {ret}")
+        logger.error(f"Elevation failed or cancelled by user. Code: {ret}")
 
 class PluginManager:
     """
@@ -39,6 +55,37 @@ class PluginManager:
     """
     def __init__(self):
         self.active_plugins: Dict[str, BasePlugin] = {}
+
+    async def pre_check_elevation(self):
+        """Проверяет необходимость повышения прав до старта сервера"""
+        cfg = config_manager.get()
+        active_ids = cfg.active_plugins
+        
+        for p_id in active_ids:
+            try:
+                module_name = f"plugins.{p_id}.main"
+                module = importlib.import_module(module_name)
+                plugin_class: Type[BasePlugin] = getattr(module, "Plugin")
+                
+                # Создаем временный инстанс для проверки конфига и метода
+                instance = plugin_class(plugin_id=p_id)
+                p_cfg = instance.get_config()
+                req_admin = p_cfg.get("requires_admin", False)
+                
+                should_elevate = False
+                if req_admin is True or req_admin == "true":
+                    should_elevate = not is_admin()
+                elif req_admin == "if_required":
+                    if await instance.check_admin_requirement():
+                        should_elevate = not is_admin()
+                
+                if should_elevate:
+                    logger.warning(f"Pre-check: Plugin {p_id} requires Administrator privileges. Restarting...")
+                    elevate_and_restart()
+                    return True
+            except Exception as e:
+                logger.debug(f"Pre-check failed for {p_id}: {e}")
+        return False
 
     async def initialize(self):
         """Считывает конфиг и запускает активные плагины"""
@@ -54,8 +101,6 @@ class PluginManager:
             return
 
         try:
-            # Динамический импорт плагина
-            # Ожидаем структуру: plugins/<plugin_id>/main.py с классом Plugin(BasePlugin)
             module_name = f"plugins.{plugin_id}.main"
             if module_name in sys.modules:
                 importlib.reload(sys.modules[module_name])
@@ -63,32 +108,25 @@ class PluginManager:
             module = importlib.import_module(module_name)
             plugin_class: Type[BasePlugin] = getattr(module, "Plugin")
             
-            # Инстанцируем
             instance = plugin_class(plugin_id=plugin_id)
             
-            # --- ПРОВЕРКА ПРАВ АДМИНИСТРАТОРА ---
+            # Повторная проверка на всякий случай (хотя должна была сработать в pre_check)
             p_cfg = instance.get_config()
             req_admin = p_cfg.get("requires_admin", False)
-            
             should_elevate = False
             if req_admin is True or req_admin == "true":
                 should_elevate = not is_admin()
             elif req_admin == "if_required":
-                # Плагин сам проверяет, нужны ли ему права в текущей среде
                 if await instance.check_admin_requirement():
                     should_elevate = not is_admin()
             
             if should_elevate:
                 logger.warning(f"Plugin {plugin_id} requires Administrator privileges. Restarting...")
                 elevate_and_restart()
-                return # Процесс завершится внутри elevate_and_restart
-            # ------------------------------------
+                return
 
             self.active_plugins[plugin_id] = instance
-            
-            # Запускаем в фоне, чтобы не блокировать менеджер
             asyncio.create_task(instance.start())
-            
             logger.info(f"Successfully started plugin: {plugin_id}")
         except Exception as e:
             logger.error(f"Failed to start plugin {plugin_id}: {e}")
@@ -103,11 +141,9 @@ class PluginManager:
                 logger.error(f"Error stopping plugin {plugin_id}: {e}")
 
     async def handle_command(self, plugin_id: str, action: str, data: Any):
-        """Перенаправляет команду от UI к конкретному плагину"""
         if plugin_id in self.active_plugins:
             instance = self.active_plugins[plugin_id]
             try:
-                # Fire and forget (в отдельной таске), чтобы не блокировать сокеты
                 asyncio.create_task(instance.handle_command(action, data))
             except Exception as e:
                 logger.error(f"Error handling command {action} for {plugin_id}: {e}")
@@ -115,9 +151,7 @@ class PluginManager:
             logger.warning(f"Command '{action}' received for inactive plugin '{plugin_id}'")
 
     async def shutdown(self):
-        """Остановка всех плагинов при выходе"""
         for p_id in list(self.active_plugins.keys()):
             await self.stop_plugin(p_id)
 
-# Global instance
 plugin_manager = PluginManager()

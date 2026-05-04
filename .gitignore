@@ -33,6 +33,11 @@ auth.json
 *.pem
 *.key
 
+# Databases
+*.db
+*.sqlite
+*.sqlite3
+
 # Node.js & Build Artifacts
 node_modules/
 dist/

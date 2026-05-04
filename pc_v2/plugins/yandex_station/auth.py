@@ -4,7 +4,7 @@ import json
 import asyncio
 import aiohttp
 from zeroconf import ServiceBrowser, Zeroconf
-from .const import AUTH_FILE, CLIENT_ID, CLIENT_SECRET
+from .const import CLIENT_ID, CLIENT_SECRET
 from .discovery import SpeakerDiscovery, get_all_interfaces
 
 class YandexAuth:
@@ -12,33 +12,16 @@ class YandexAuth:
         self.plugin = plugin
         self.log = plugin.log
 
-    def _read_env(self):
-        """Читает все ключи из .env файла"""
-        if not AUTH_FILE.exists(): return {}
-        data = {}
-        try:
-            with open(AUTH_FILE, "r", encoding="utf-8") as f:
-                for line in f:
-                    if "=" in line:
-                        k, v = line.split("=", 1)
-                        data[k.strip()] = v.strip()
-        except: pass
-        return data
+    def get_secret(self, key: str, default: str = "") -> str:
+        """Получение секрета через плагин (из зашифрованной БД)"""
+        return self.plugin.get_secret(key, default)
 
-    def _write_env(self, key, value):
-        """Записывает/обновляет ключ в .env, сохраняя остальные"""
-        data = self._read_env()
-        data[key] = value
-        try:
-            with open(AUTH_FILE, "w", encoding="utf-8") as f:
-                for k, v in data.items():
-                    f.write(f"{k}={v}\n")
-        except Exception as e:
-            self.log(f"Failed to write to .env: {e}", 40)
+    def set_secret(self, key: str, value: str):
+        """Сохранение секрета через плагин (в зашифрованную БД)"""
+        self.plugin.set_secret(key, value)
 
     def has_token(self):
-        env = self._read_env()
-        token = env.get("YANDEX_TOKEN", "")
+        token = self.get_secret("YANDEX_TOKEN", "")
         return len(token) > 10
 
     async def start_qr_login(self):
@@ -48,6 +31,9 @@ class YandexAuth:
         asyncio.create_task(self._qr_login_worker())
 
     async def _emit_qr_status(self):
+        if not getattr(self.plugin, "_qr_status", ""):
+            return
+            
         status_text = self.plugin.i18n("qr_waiting", "Ожидание...")
         if self.plugin._qr_status == "getting_url": status_text = self.plugin.i18n("loading", "Загрузка...")
         elif self.plugin._qr_status == "success": status_text = self.plugin.i18n("qr_success", "Успешно!")
@@ -70,15 +56,19 @@ class YandexAuth:
                 })
 
                 # 1. CSRF
+                self.log("Step 1: Fetching CSRF token...")
                 async with session.get("https://passport.yandex.ru/am?app_platform=android", timeout=10) as r:
                     text = await r.text()
                     m = re.search(r'"csrf_token" value="([^"]+)"', text)
+                    if not m: m = re.search(r'hal.CSRF\s*=\s*["\']([^"\']+)["\']', text) # Fallback pattern
                     if not m: m = re.search(r'window\.__CSRF__\s*=\s*["\']([^"\']+)["\']', text)
                     if not m:
+                        self.log("Step 1 Failed: CSRF token not found in response", 40)
                         self.plugin._qr_status = "error"
                         await self._emit_qr_status()
                         return
                     page_csrf = m.group(1)
+                    self.log(f"Step 1 Success: CSRF found ({page_csrf[:5]}...)")
 
                 bff_headers = {
                     "X-CSRF-Token": page_csrf,
@@ -87,19 +77,29 @@ class YandexAuth:
                 }
 
                 # 2. Multistep start
+                self.log("Step 2: Starting multistep auth...")
                 async with session.post("https://passport.yandex.ru/pwl-yandex/api/passport/auth/multistep_start", headers=bff_headers, data={}, timeout=10) as r_start:
-                    track_id = (await r_start.json()).get("track_id")
+                    resp_start = await r_start.json()
+                    track_id = resp_start.get("track_id")
+                    if not track_id:
+                        self.log(f"Step 2 Failed: No track_id in response: {resp_start}", 40)
+                        self.plugin._qr_status = "error"
+                        return
+                    self.log(f"Step 2 Success: Track ID obtained ({track_id[:5]}...)")
 
                 # 3. Request QR session
+                self.log("Step 3: Submitting password/code request...")
                 async with session.post("https://passport.yandex.ru/pwl-yandex/api/passport/auth/password/submit", headers=bff_headers, data={"track_id": track_id, "with_code": 1, "retpath": "https://passport.yandex.ru/profile"}, timeout=10) as r_qr:
                     qr_resp = await r_qr.json()
                     polling_csrf = qr_resp.get("csrf_token", page_csrf)
+                    self.log("Step 3 Success: QR session requested")
 
                 qr_url = f"https://passport.yandex.ru/auth/magic/code/?track_id={track_id}"
                 self.plugin._qr_url = qr_url
                 self.plugin._qr_status = "getting_url"
                 await self._emit_qr_status()
-                
+
+                self.log(f"Step 4: Fetching QR image/SVG from {qr_url}...")
                 try:
                     import base64
                     async with session.get(qr_url, timeout=10) as r_page:
@@ -107,17 +107,22 @@ class YandexAuth:
                         svg_match = re.search(r'<svg[^>]*>.*?</svg>', page_text, re.DOTALL)
                         
                         if svg_match:
+                            self.log("Step 4: Found SVG QR code")
                             svg_content = svg_match.group(0)
                             b64_data = base64.b64encode(svg_content.encode('utf-8')).decode()
                             self.plugin._qr_image_base64 = f"data:image/svg+xml;base64,{b64_data}"
                         else:
+                            self.log("Step 4: SVG not found, falling back to image...")
                             async with session.get(f"https://passport.yandex.ru/auth/magic/code/image?track_id={track_id}", timeout=10) as img_r:
                                 if img_r.status == 200:
                                     img_content = await img_r.read()
                                     b64_data = base64.b64encode(img_content).decode()
                                     self.plugin._qr_image_base64 = f"data:image/png;base64,{b64_data}"
+                                    self.log("Step 4: Found PNG QR code")
+                                else:
+                                    self.log(f"Step 4 Failed: Image request status {img_r.status}", 40)
                 except Exception as e:
-                    self.log(f"Failed to extract QR: {e}", 30)
+                    self.log(f"Step 4 Exception: {e}", 30)
 
                 self.plugin._qr_status = "waiting"
                 await self._emit_qr_status()
@@ -136,11 +141,11 @@ class YandexAuth:
                                                     timeout=10) as token_r:
                                     x_token = (await token_r.json()).get("access_token")
                                     if x_token:
-                                        self._write_env("YANDEX_TOKEN", x_token)
-                                        self.log("Yandex token saved successfully to .env.")
+                                        self.set_secret("YANDEX_TOKEN", x_token)
+                                        self.log("Yandex token saved successfully to Database.")
                                         self.plugin._qr_status = "success"
                                         await self._emit_qr_status()
-                                        await self.plugin._broadcast_config_to_tablet()
+                                        await self.plugin.broadcaster.broadcast_config_to_tablet()
                                         asyncio.create_task(self.refresh_tokens_sync())
                                         return
                             elif status_resp.get("status") == "error":
@@ -166,8 +171,7 @@ class YandexAuth:
         self.log("Starting automatic token refresh cycle...")
         
         try:
-            env = self._read_env()
-            x_token = env.get("YANDEX_TOKEN")
+            x_token = self.get_secret("YANDEX_TOKEN")
             if not x_token: return False
 
             # Zeroconf поиск делаем в пуле потоков, так как библиотека синхронная
@@ -215,10 +219,10 @@ class YandexAuth:
                         new_results[d_id] = {"name": q_dev.get("name", "Колонка").strip(), "glagol_token": g_token, "platform": q_dev.get("platform"), "ip": ip}
                 
                 if new_results:
-                    self._write_env("GLAGOL_TOKENS", json.dumps(new_results, ensure_ascii=False))
+                    self.set_secret("GLAGOL_TOKENS", json.dumps(new_results, ensure_ascii=False))
                     self.plugin.devices = new_results
                     # Принудительно применяем новый конфиг (запуск воркеров, рассылка на планшеты)
-                    await self.plugin.apply_mode()
+                    await self.plugin.device_manager.apply_mode()
                     return True
         except Exception as e: 
             self.log(f"Auto-refresh exception: {e}", 40)

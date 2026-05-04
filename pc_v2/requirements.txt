@@ -11,3 +11,5 @@ websockets>=11.0.3
 GPUtil>=1.4.0
 WMI>=1.5.1
 zeroconf>=0.131.0
+pyinstaller>=6.0.0
+pillow>=10.0.0

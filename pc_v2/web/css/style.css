@@ -152,6 +152,7 @@ body::before {
     flex: 1;
     padding: 20px 40px 40px 20px;
     overflow-y: auto;
+    overflow-x: hidden;
     display: flex;
     flex-direction: column;
     gap: 24px;
@@ -236,8 +237,9 @@ body::before {
 /* Plugin Grid */
 .plugins-grid {
     display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
     gap: 24px;
+    width: 100%;
 }
 
 .plugin-card {
@@ -257,6 +259,12 @@ body::before {
     display: flex;
     justify-content: space-between;
     align-items: flex-start;
+    gap: 12px;
+}
+
+.plugin-info-left {
+    min-width: 0;
+    flex: 1;
 }
 
 .plugin-title {
@@ -271,6 +279,8 @@ body::before {
     color: var(--text-muted);
     line-height: 1.4;
     min-height: 40px;
+    overflow-wrap: break-word;
+    word-break: break-word;
 }
 
 .plugin-actions {

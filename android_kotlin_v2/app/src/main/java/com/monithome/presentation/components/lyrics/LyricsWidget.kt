@@ -40,7 +40,9 @@ import org.koin.compose.koinInject
 @Composable
 fun LyricsWidget(
     lyrics: List<LyricLine>,
-    currentTimeMs: Long,
+    baseProgressMs: Long,
+    lastUpdateUnixTime: Double,
+    isPlaying: Boolean,
     modifier: Modifier = Modifier,
     isFullScreen: Boolean = false,
     coverUrl: String = "",
@@ -54,9 +56,34 @@ fun LyricsWidget(
     val density = LocalDensity.current
     var containerHeightPx by remember { mutableIntStateOf(0) }
 
-    // O(log N) поиск текущей строки
-    val activeIndex by remember(lyrics, currentTimeMs) {
-        derivedStateOf { syncUseCase(lyrics, currentTimeMs) }
+    // Локальное плавное время
+    var smoothTimeMs by remember { mutableLongStateOf(baseProgressMs) }
+
+    LaunchedEffect(baseProgressMs, isPlaying, lastUpdateUnixTime) {
+        val initialDelta = (System.currentTimeMillis() / 1000.0) - lastUpdateUnixTime
+        val targetTimeMs = baseProgressMs + (initialDelta * 1000).toLong()
+        
+        // Если разница велика (>500мс) или песня не играет - прыгаем сразу
+        val diff = Math.abs(smoothTimeMs - targetTimeMs)
+        if (diff > 500 || !isPlaying) {
+            smoothTimeMs = targetTimeMs
+        }
+        
+        if (isPlaying) {
+            val startMs = System.currentTimeMillis()
+            val initialSmoothTime = smoothTimeMs
+            while (true) {
+                val elapsed = System.currentTimeMillis() - startMs
+                // Время только вперед в рамках текущей таски
+                smoothTimeMs = initialSmoothTime + elapsed
+                kotlinx.coroutines.delay(100)
+            }
+        }
+    }
+
+    // O(log N) поиск текущей строки на основе плавного времени
+    val activeIndex by remember(lyrics, smoothTimeMs) {
+        derivedStateOf { syncUseCase(lyrics, smoothTimeMs) }
     }
 
     // Автоскролл
