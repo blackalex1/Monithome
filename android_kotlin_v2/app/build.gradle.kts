@@ -10,7 +10,7 @@ android {
     defaultConfig {
         applicationId = "com.monithome"
         minSdk = 24
-        targetSdk = 37
+        targetSdk = 34
         versionCode = 2
         versionName = "2.0.0"
 
@@ -70,8 +70,9 @@ dependencies {
     implementation("com.google.code.gson:gson:2.14.0")
     implementation("org.msgpack:msgpack-core:0.9.11")
     
-    // Images
+    // Images & 3D
     implementation("io.coil-kt:coil-compose:2.7.0")
+
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

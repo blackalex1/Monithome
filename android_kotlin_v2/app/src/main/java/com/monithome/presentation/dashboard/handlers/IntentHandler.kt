@@ -20,6 +20,7 @@ class IntentHandler(
             is DashboardIntent.Connect -> {
                 if (intent.url != null) {
                     val savedToken = settingsRepository.getString("auth_token")
+                    state.update { it.copy(serverUrl = intent.url) }
                     socketClient.connect(intent.url, savedToken)
                 } else {
                     startDiscovery()
@@ -56,7 +57,9 @@ class IntentHandler(
                 if (source != null) pluginRepository.sendCommand(source.pluginId, "set_volume:${intent.volume}", source.deviceId)
             }
             is DashboardIntent.ToggleLyricsFullScreen -> state.update { it.copy(isLyricsFullScreen = !it.isLyricsFullScreen) }
-            is DashboardIntent.PluginCommand -> pluginRepository.sendCommand(intent.pluginId, intent.action, intent.target, intent.data)
+            is DashboardIntent.PluginCommand -> {
+                pluginRepository.sendCommand(intent.pluginId, intent.action, intent.target, intent.data)
+            }
             is DashboardIntent.MoveWidget -> {
                 val s = state.value
                 val visibleWidgets = s.widgetOrder.filter { id ->

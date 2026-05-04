@@ -37,8 +37,9 @@ async def get_ui_config_data():
                             p_cfg = json.load(f)
                 
                 if p_cfg:
-                    p_cfg["active"] = d in plugin_manager.active_plugins
                     p_id = p_cfg.get("id", d)
+                    p_cfg["id"] = p_id
+                    p_cfg["active"] = d in plugin_manager.active_plugins
                     p_cfg["name"] = translations.get(f"plugin_name_{p_id}", p_cfg.get("name", p_id))
                     p_cfg["description"] = translations.get(f"plugin_desc_{p_id}", p_cfg.get("description", ""))
                     plugins_configs.append(p_cfg)

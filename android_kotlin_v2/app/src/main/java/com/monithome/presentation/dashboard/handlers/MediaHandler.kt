@@ -71,9 +71,15 @@ class MediaHandler(
             }
         }
 
-        val lyricsFlow = pluginRepository.getPluginStats("yandex_lyrics").map { stats ->
+        val lyricsFlow = combine(
+            pluginRepository.getPluginStats("yandex_lyrics"),
+            manualSelectedSourceId
+        ) { stats, selectedId ->
+            if (selectedId == null || !selectedId.startsWith("yandex_station:")) {
+                return@combine emptyList<LyricLine>()
+            }
+            
             val devices = stats["devices"] as? Map<String, Any>
-            val selectedId = (manualSelectedSourceId as? MutableStateFlow)?.value ?: ""
             val actualDeviceId = selectedId.substringAfter(":")
             val data = devices?.get(actualDeviceId) as? Map<String, Any>
             

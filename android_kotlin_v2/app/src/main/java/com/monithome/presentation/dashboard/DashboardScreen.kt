@@ -8,6 +8,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
@@ -202,6 +203,8 @@ fun DashboardScreen(
         if (state.isAuthRequired) {
             AuthDialog(state, viewModel)
         }
+
+
     }
 
     androidx.activity.compose.BackHandler(enabled = state.isLyricsFullScreen || state.isStatsExpanded) {

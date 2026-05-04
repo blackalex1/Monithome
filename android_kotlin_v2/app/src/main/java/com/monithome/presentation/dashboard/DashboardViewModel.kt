@@ -65,6 +65,8 @@ class DashboardViewModel(
                 handleSocketEvent(event)
             }
         }
+
+
     }
 
     private fun handleUiConfigUpdate(configs: List<PluginInfo>) {

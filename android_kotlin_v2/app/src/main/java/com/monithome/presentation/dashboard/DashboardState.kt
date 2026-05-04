@@ -9,6 +9,7 @@ data class DashboardState(
     val themeColor: Long = 0xFF22C55E,
     val serverSuggestedColor: Long? = null,
     val isConnected: Boolean = false,
+    val serverUrl: String = "",
     val pcError: String? = null,
     val mediaState: MediaUIState = MediaUIState.Empty,
     val activePlugins: List<PluginInfo> = emptyList(),

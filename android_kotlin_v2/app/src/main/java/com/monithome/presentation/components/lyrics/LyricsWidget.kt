@@ -177,11 +177,17 @@ fun LyricsWidget(
                 )
             }
 
+            var placeholderAspectRatio by remember { mutableFloatStateOf(1f) }
+            
             Box(modifier = Modifier.fillMaxSize().weight(1f), contentAlignment = Alignment.Center) {
                 if (lyrics.isEmpty()) {
                 // Если текста нет - показываем обложку в центре
                 if (decodedBackground != null) {
-                    Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Column(
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        modifier = Modifier.fillMaxHeight()
+                    ) {
+                        Spacer(modifier = Modifier.weight(1f))
                         AsyncImage(
                             model = ImageRequest.Builder(context)
                                 .data(decodedBackground)
@@ -189,8 +195,15 @@ fun LyricsWidget(
                                 .build(),
                             contentDescription = null,
                             contentScale = ContentScale.Crop,
+                            onSuccess = { state ->
+                                val drawable = state.result.drawable
+                                if (drawable.intrinsicWidth > 0 && drawable.intrinsicHeight > 0) {
+                                    placeholderAspectRatio = drawable.intrinsicWidth.toFloat() / drawable.intrinsicHeight.toFloat()
+                                }
+                            },
                             modifier = Modifier
-                                .size(if (isFullScreen) 280.dp else 180.dp)
+                                .fillMaxHeight(if (isFullScreen) 0.6f else 0.5f)
+                                .aspectRatio(placeholderAspectRatio)
                                 .clip(RoundedCornerShape(28.dp))
                                 .background(MaterialTheme.colorScheme.outline)
                         )
@@ -203,6 +216,7 @@ fun LyricsWidget(
                                 fontWeight = FontWeight.Medium
                             )
                         }
+                        Spacer(modifier = Modifier.weight(1f))
                     }
                 }
             }

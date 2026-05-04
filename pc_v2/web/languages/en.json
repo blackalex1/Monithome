@@ -14,6 +14,8 @@
     "status_disconnected": "Disconnected",
     "plugin_name_pc_disks": "Disk Monitoring",
     "plugin_desc_pc_disks": "Displays free space and health status of all PC drives.",
+    "plugin_name_app_launcher": "App Launcher",
+    "plugin_desc_app_launcher": "Quickly launch programs on your PC directly from your tablet.",
     "plugins_desc": "Enable or disable modules for monitoring and control.",
     "logs_desc": "Real-time system and plugin activity.",
     "about_desc": "MonitHome Desktop Backend for Windows.",
@@ -40,6 +42,8 @@
     "btn_settings": "Settings",
     "btn_yandex_login": "Login via QR",
     "yandex_settings_title": "Yandex Station Settings",
+    "yandex_auth_title": "Yandex Station Authorization",
+    "requesting_qr": "Requesting QR Code...",
     "yandex_control_mode": "Control Mode",
     "yandex_tablet_control_label": "Tablet Control (Direct Glagol)",
     "yandex_visible_speakers": "Visible Speakers",
@@ -82,4 +86,5 @@
     "stats_storage_title": "Storage Temperatures",
     "stats_load": "Load",
     "stats_temp": "Temp"
+
 }

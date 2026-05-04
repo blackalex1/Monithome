@@ -283,6 +283,8 @@ window.editPluginConfig = async (pluginId) => {
         } else if (pluginId === 'pc_disks') {
             modalContent.innerHTML = `<div class="loading-spinner"></div>`;
             socket.emit('plugin_command', { plugin_id: 'pc_disks', action: 'get_disks_for_settings', data: {} });
+        } else if (pluginId === 'app_launcher') {
+            renderAppLauncherSettings(config);
         } else {
             // Fallback to JSON editor
             modalContent.innerHTML = `
@@ -300,9 +302,9 @@ socket.on('plugin_event:pc_disks', (payload) => {
     if (payload.event === 'disks_for_settings') {
         const { all_disks, monitored_disks, show_new_disks } = payload.data;
         const saveChangesLabel = window.translations['btn_save_changes'] || 'Save Changes';
-        
+
         let html = `<div class="settings-list">`;
-        
+
         // Чекбокс для "Отображать новые диски"
         html += `
             <div class="settings-item glass-panel" style="display:flex; justify-content: space-between; padding: 12px; margin-bottom: 15px; border-bottom: 2px solid var(--accent);">
@@ -341,12 +343,12 @@ window.saveDiskSettings = () => {
         if (cb.checked) monitored.push(cb.getAttribute('data-device'));
     });
 
-    socket.emit('plugin_command', { 
-        plugin_id: 'pc_disks', 
-        action: 'update_settings', 
-        data: { monitored_disks: monitored, show_new_disks: showNew } 
+    socket.emit('plugin_command', {
+        plugin_id: 'pc_disks',
+        action: 'update_settings',
+        data: { monitored_disks: monitored, show_new_disks: showNew }
     });
-    
+
     modal.classList.add('hidden');
     setTimeout(loadPlugins, 500);
 };
@@ -360,12 +362,12 @@ window.saveSensorSettings = () => {
     });
 
     // Отправляем команду плагину для применения настроек
-    socket.emit('plugin_command', { 
-        plugin_id: 'system_stats', 
-        action: 'update_sensor_settings', 
-        data: sensors 
+    socket.emit('plugin_command', {
+        plugin_id: 'system_stats',
+        action: 'update_sensor_settings',
+        data: sensors
     });
-    
+
     modal.classList.add('hidden');
     // Небольшая задержка перед перезагрузкой, чтобы сервер успел сохранить
     setTimeout(loadPlugins, 500);
@@ -389,8 +391,8 @@ window.savePluginConfig = async (pluginId) => {
 };
 
 window.requestYandexQR = () => {
-    modalTitle.textContent = "Yandex Station Auth";
-    modalContent.innerHTML = `<p>Requesting QR Code...</p>`;
+    modalTitle.textContent = window.translations['yandex_auth_title'] || "Yandex Station Auth";
+    modalContent.innerHTML = `<p>${window.translations['requesting_qr'] || 'Requesting QR Code...'}</p>`;
     modal.classList.remove('hidden');
 
     // Trigger command to plugin
@@ -410,7 +412,7 @@ socket.on('plugin_event:yandex_station', (payload) => {
 
         modalContent.innerHTML = html;
         if (modal.classList.contains('hidden')) {
-            modalTitle.textContent = "Yandex Station Auth";
+            modalTitle.textContent = window.translations['yandex_auth_title'] || "Yandex Station Auth";
             modal.classList.remove('hidden');
         }
     } else if (payload.event === 'wizard_data') {
@@ -584,5 +586,168 @@ document.getElementById('global-settings-form').addEventListener('submit', async
             btn.style.background = 'var(--accent)';
             btn.disabled = false;
         }, 2000);
+    }
+});
+
+// --- App Launcher Management UI ---
+
+function renderAppLauncherSettings(config) {
+    const widgets = config.widgets || [];
+    const launcherWidget = widgets.find(w => w.id === "app_buttons") || widgets[0];
+    const apps = launcherWidget ? (launcherWidget.buttons || []) : [];
+
+    let html = `
+        <div class="launcher-settings">
+            <div class="settings-group" style="margin-bottom: 20px;">
+                <h4 style="color: var(--accent); margin-bottom: 10px;">Текущие приложения</h4>
+                <div class="apps-list" id="launcher-apps-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; padding-right: 5px;">
+                    ${apps.length > 0 ? apps.map((app, index) => `
+                        <div class="glass-panel" 
+                             draggable="true" 
+                             data-index="${index}"
+                             ondragstart="handleLauncherDragStart(event)" 
+                             ondragover="handleLauncherDragOver(event)" 
+                             ondrop="handleLauncherDrop(event)"
+                             style="display: flex; align-items: center; justify-content: space-between; padding: 10px; cursor: grab;">
+                            <div style="display: flex; align-items: center; gap: 12px; pointer-events: none;">
+                                <div style="color: var(--text-muted); font-size: 14px; margin-right: 5px;">☰</div>
+                                <div style="width: 52px; height: 52px; display: flex; align-items: center; justify-content: center; overflow: hidden;">
+                                    ${getLauncherIconHtml(app.icon)}
+                                </div>
+                                <div style="text-align: left;">
+                                    <div style="font-weight: 500; color: white;">${app.label}</div>
+                                    <div style="font-size: 10px; color: var(--text-muted); word-break: break-all; max-width: 200px;">${app.data}</div>
+                                </div>
+                            </div>
+                            <button class="plugin-btn" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2); padding: 5px 10px;" 
+                                    onclick="removeLauncherApp('${app.label}')">✕</button>
+                        </div>
+                    `).join('') : '<p style="color: var(--text-muted);">Приложения не добавлены</p>'}
+                </div>
+            </div>
+
+            <div class="settings-group glass-panel" style="padding: 15px; border: 1px solid var(--accent-glow);">
+                <h4 style="color: var(--accent); margin-bottom: 12px;">Добавить новое</h4>
+                <div style="display: flex; flex-direction: column; gap: 10px;">
+                    <input type="text" id="new-app-name" placeholder="Название (например, Chrome)" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
+                    <div style="display: flex; gap: 5px;">
+                        <input type="text" id="new-app-path" placeholder="Путь или имя .exe (например, chrome.exe)" style="flex-grow: 1; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
+                        <button class="plugin-btn" style="padding: 5px 12px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);" onclick="browseLauncherFile()">📁 Обзор</button>
+                    </div>
+                    <p style="font-size: 11px; color: var(--text-muted); margin: 0;">Иконка будет извлечена автоматически из файла.</p>
+                    <button class="plugin-btn" style="width: 100%; background: var(--accent); color: white; margin-top: 5px;" onclick="addLauncherApp()">+ Добавить в список</button>
+                </div>
+            </div>
+        </div>
+    `;
+    modalContent.innerHTML = html;
+}
+
+function getLauncherIconHtml(iconData) {
+    if (iconData && iconData.startsWith('data:image')) {
+        return `<img src="${iconData}" style="width: 100%; height: 100%; object-fit: contain; transform: scale(1.15);">`;
+    }
+
+    const icons = {
+        "Globe": "🌐",
+        "MessageSquare": "💬",
+        "Gamepad": "🎮",
+        "Code": "💻",
+        "Music": "🎵",
+        "Terminal": "⌨️",
+        "AppWindow": "🪟"
+    };
+    return `<span style="font-size: 20px;">${icons[iconData] || "🚀"}</span>`;
+}
+
+window.addLauncherApp = () => {
+    const name = document.getElementById('new-app-name').value;
+    const path = document.getElementById('new-app-path').value;
+
+    if (!name || !path) return alert("Заполните название и путь!");
+
+    socket.emit('plugin_command', {
+        plugin_id: 'app_launcher',
+        action: 'add_app',
+        data: { label: name, path: path }
+    });
+
+    // Показываем загрузку
+    modalContent.innerHTML = '<div class="loading-spinner"></div><p style="text-align:center; color: var(--accent);">Извлекаем иконку и добавляем...</p>';
+};
+
+window.browseLauncherFile = () => {
+    socket.emit('plugin_command', {
+        plugin_id: 'app_launcher',
+        action: 'browse_file',
+        data: {}
+    });
+};
+
+let draggedItemIndex = null;
+
+window.handleLauncherDragStart = (e) => {
+    draggedItemIndex = e.target.closest('.glass-panel').dataset.index;
+    e.dataTransfer.effectAllowed = 'move';
+};
+
+window.handleLauncherDragOver = (e) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+};
+
+window.handleLauncherDrop = (e) => {
+    e.preventDefault();
+    const target = e.target.closest('.glass-panel');
+    if (!target) return;
+
+    const targetIndex = target.dataset.index;
+    if (draggedItemIndex === targetIndex) return;
+
+    // Получаем текущий список из DOM или из конфига
+    secureFetch('/api/plugins/app_launcher/config').then(res => res.json()).then(config => {
+        const widgets = config.widgets || [];
+        const launcherWidget = widgets.find(w => w.id === "app_buttons") || widgets[0];
+        if (!launcherWidget) return;
+
+        const buttons = [...launcherWidget.buttons];
+        const movedItem = buttons.splice(draggedItemIndex, 1)[0];
+        buttons.splice(targetIndex, 0, movedItem);
+
+        // Отправляем новый порядок на сервер
+        socket.emit('plugin_command', {
+            plugin_id: 'app_launcher',
+            action: 'reorder_apps',
+            data: { labels: buttons.map(b => b.label) }
+        });
+    });
+};
+
+window.removeLauncherApp = (label) => {
+    if (!confirm(`Удалить приложение "${label}"?`)) return;
+    socket.emit('plugin_command', {
+        plugin_id: 'app_launcher',
+        action: 'remove_app',
+        data: label
+    });
+};
+
+// Refresh launcher UI on update
+socket.on('plugin_event:app_launcher', (payload) => {
+    if (payload.event === 'config_updated') {
+        secureFetch('/api/plugins/app_launcher/config').then(res => res.json()).then(config => {
+            const currentTitle = modalTitle.textContent;
+            const launcherName = window.translations['plugin_name_app_launcher'] || 'App Launcher';
+            if (!modal.classList.contains('hidden') && currentTitle.includes(launcherName)) {
+                renderAppLauncherSettings(config);
+            }
+        });
+    } else if (payload.event === 'file_selected') {
+        const pathInput = document.getElementById('new-app-path');
+        const nameInput = document.getElementById('new-app-name');
+        if (pathInput) pathInput.value = payload.data.path;
+        // Всегда обновляем название при выборе файла, если пользователь его еще не менял вручную 
+        // или если поле было пустым
+        if (nameInput) nameInput.value = payload.data.label;
     }
 });

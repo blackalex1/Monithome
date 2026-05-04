@@ -62,5 +62,18 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                 )
             }
         }
+        "app_launcher" -> {
+            if (state.activePlugins.any { it.id == "app_launcher" && it.active }) {
+                @Suppress("UNCHECKED_CAST")
+                com.monithome.presentation.components.launcher.LauncherWidget(
+                    title = state.t("plugin_name_app_launcher", "Запуск приложений"),
+                    apps = (state.stats["app_launcher"]?.get("buttons") as? List<Map<String, Any>>) ?: emptyList(),
+                    onIntent = { viewModel.processIntent(it) }
+                )
+            }
+        }
     }
 }
+
+
+
