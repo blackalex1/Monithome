@@ -7,9 +7,10 @@ import subprocess
 import json
 import ctypes
 import wmi
-import GPUtil
+import time
 from typing import Dict, Any
 
+import sys
 from plugin_engine.base_plugin import BasePlugin
 from .afterburner_reader import get_afterburner_stats
 from core.event_bus import event_bus
@@ -17,11 +18,13 @@ from core.event_bus import event_bus
 class Plugin(BasePlugin):
     """
     Плагин сбора аппаратной статистики (system_stats v2).
-    Использует to_thread для тяжелых вызовов (WMI, PowerShell, GPUtil).
+    Использует Helper-процесс для получения данных под админом.
     """
     def __init__(self, plugin_id: str):
         super().__init__(plugin_id)
         self._loop_task = None
+        self._helper_proc = None # Для совместимости, но не для поллинга
+        self._last_helper_start = 0
         self._state = {
             "cpu": 0, "cpu_temp": 0, "ram_percent": 0, "ram_used": 0, "ram_total": 0,
             "gpu_load": 0, "gpu_temp": 0, "has_gpu": False,
@@ -42,6 +45,12 @@ class Plugin(BasePlugin):
                 await self._loop_task
             except asyncio.CancelledError:
                 pass
+        
+        # Убиваем хелпер при остановке
+        if self._helper_proc:
+            self._helper_proc.terminate()
+            self._helper_proc = None
+            
         self.log("system_stats stopped.")
 
     async def handle_command(self, action: str, data: any):
@@ -51,25 +60,17 @@ class Plugin(BasePlugin):
             # Пересобираем виджеты на основе выбранных сенсоров
             await self._rebuild_widgets_from_settings(data)
             await self._update_and_emit()
+        elif action == "elevate":
+            self.log("Manual elevation requested via GUI.")
+            self._start_helper()
+            await self._update_and_emit()
 
     async def check_admin_requirement(self) -> bool:
         """
-        Проверяем, нужны ли нам права админа.
-        Если Afterburner запущен - мы можем работать без админа.
-        Если нет - для работы DLL драйвера (температуры) нужны права.
+        Теперь нам НЕ нужны права админа для основного процесса.
+        Админ нужен только хелперу, которого мы запустим отдельно.
         """
-        # Если мы уже админы - дополнительные права не нужны
-        if ctypes.windll.shell32.IsUserAnAdmin() != 0:
-            return False
-
-        # Проверяем Afterburner
-        ab_stats = get_afterburner_stats()
-        if ab_stats and ab_stats.get('cpu_temp', 0) > 0:
-            # Afterburner запущен и отдает температуру, админ не нужен
-            return False
-            
-        # Afterburner нет или он пуст -> нужны права для DLL драйвера
-        return True
+        return False
 
     async def _stats_loop(self):
         try:
@@ -130,7 +131,7 @@ class Plugin(BasePlugin):
         await self.emit_state(self._state)
 
     def _fetch_hardware_stats(self) -> Dict[str, Any]:
-        """Синхронный блокирующий метод сбора аппаратной статы с защитой от зависаний"""
+        """Синхронный метод сбора аппаратной статы"""
         hw = {}
         try:
             ab_stats = get_afterburner_stats()
@@ -140,117 +141,128 @@ class Plugin(BasePlugin):
         cpu_t = gpu_l = gpu_t = 0
         has_gpu = False
 
-        # 1. Afterburner
+        # 1. Afterburner (приоритет - быстро и без админа)
         if ab_stats:
             cpu_t = ab_stats.get('cpu_temp', 0)
             gpu_l = ab_stats.get('gpu_load', 0)
             gpu_t = ab_stats.get('gpu_temp', 0)
             has_gpu = gpu_l > 0 or gpu_t > 0
             if not self._gpu_name: self._gpu_name = ab_stats.get('gpu_name')
+            if cpu_t > 0:
+                self.log(f"Stats from Afterburner: CPU {cpu_t}°C", 10)
 
-        # 2. PowerShell / DLL (только если админ)
+        # 2. Если Afterburner не помог - идем к Хелперу
         if cpu_t == 0 or gpu_t == 0:
-            try:
-                is_admin = ctypes.windll.shell32.IsUserAnAdmin() != 0
-                if is_admin:
-                    ps_script = os.path.join(os.path.dirname(__file__), "get_stats.ps1")
-                    if os.path.exists(ps_script):
-                        # Ограничиваем время выполнения PowerShell 2 секундами
-                        process = subprocess.run(
-                            ["powershell", "-ExecutionPolicy", "Bypass", "-File", ps_script],
-                            capture_output=True, text=True, encoding='utf-8', errors='ignore',
-                            timeout=2.0
-                        )
-                        if process.returncode == 0:
-                            json_start = process.stdout.find('{')
-                            if json_start != -1:
-                                driver_stats = json.loads(process.stdout[json_start:])
-                                if cpu_t == 0: cpu_t = driver_stats.get('cpu_temp', 0)
-                                if gpu_l == 0: gpu_l = driver_stats.get('gpu_load', 0)
-                                if gpu_t == 0: gpu_t = driver_stats.get('gpu_temp', 0)
-                                if not self._cpu_name: self._cpu_name = driver_stats.get('cpu_name')
-                                if not self._gpu_name: self._gpu_name = driver_stats.get('gpu_name')
-            except Exception as e:
-                self.log(f"PowerShell/DLL stats collection failed or timed out: {e}", 10)
+            helper_data = self._get_stats_from_helper()
+            if helper_data:
+                self.log(f"Stats from Helper: {helper_data}", 10)
+                if cpu_t == 0: cpu_t = helper_data.get('cpu_temp', 0)
+                if gpu_t == 0: gpu_t = helper_data.get('gpu_temp', 0)
+                if gpu_l == 0: gpu_l = helper_data.get('gpu_load', 0)
+                has_gpu = has_gpu or gpu_l > 0 or gpu_t > 0
 
-        # 3. WMI Fallback (Самое опасное место, может вешать поток)
+        # 3. WMI Fallback (если хелпер не работает, но LHM запущен отдельно)
         if cpu_t == 0:
             try:
-                # Используем очень осторожный опрос WMI
                 import pythoncom
-                pythoncom.CoInitialize() # Важно для WMI в доп. потоках
+                pythoncom.CoInitialize()
                 w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
-                sensors = w.Sensor(SensorType="Temperature")
-                for s in sensors:
-                    if "CPU" in s.Name or "Package" in s.Name:
-                        cpu_t = s.Value
+                for s in w.Sensor(SensorType="Temperature"):
+                    if "CPU" in s.Name or "Package" in s.Name or "Core" in s.Name:
+                        cpu_t = round(s.Value, 0)
                         break
-            except: 
-                pass
-
-        # 4. GPUtil
-        if not has_gpu:
-            try:
-                gpus = GPUtil.getGPUs()
-                if gpus:
-                    gpu_l, gpu_t = round(gpus[0].load * 100, 1), gpus[0].temperature
-                    if not self._gpu_name: self._gpu_name = gpus[0].name
-                    has_gpu = True
             except: pass
 
-        hw.update({
-            "cpu_temp": cpu_t, "display_cpu_temp": f"{int(cpu_t)}°C" if cpu_t else "N/A",
-            "gpu_load": gpu_l, "display_gpu_load": f"{int(gpu_l)}%" if gpu_l else "0%",
-            "gpu_temp": gpu_t, "display_gpu_temp": f"{int(gpu_t)}°C" if gpu_t else "N/A",
-            "has_gpu": has_gpu,
-            "cpu_name": self._cpu_name or "CPU",
-            "gpu_name": self._gpu_name or "GPU"
-        })
-        return hw
-
-        # GPUtil Fallback
-        if not has_gpu:
-            try:
-                gpus = GPUtil.getGPUs()
-                if gpus:
-                    gpu_l, gpu_t = round(gpus[0].load * 100, 1), gpus[0].temperature
-                    if not self._gpu_name: self._gpu_name = gpus[0].name
-                    has_gpu = True
-            except: pass
-
-        # Registry Name Fallbacks
-        if not self._cpu_name or not self._gpu_name or "Family" in str(self._cpu_name) or "GB203" in str(self._gpu_name):
+        # 3. Registry Name Fallbacks
+        if not self._cpu_name or not self._gpu_name:
             try:
                 import winreg
-                if not self._cpu_name or "Family" in str(self._cpu_name):
+                if not self._cpu_name:
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
                     self._cpu_name = winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
                     winreg.CloseKey(key)
-                if not self._gpu_name or "GB203" in str(self._gpu_name):
-                    for i in range(10):
-                        try:
-                            path = rf"SYSTEM\CurrentControlSet\Control\Class\{{4d36e968-e325-11ce-bfc1-08002be10318}}\{i:04d}"
-                            key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, path)
-                            name = winreg.QueryValueEx(key, "DriverDesc")[0]
-                            winreg.CloseKey(key)
-                            if any(x in name for x in ["NVIDIA", "AMD", "Radeon", "GeForce"]):
-                                self._gpu_name = name
-                                if "NVIDIA" in name or "GeForce" in name: break
-                        except: break
+                if not self._gpu_name:
+                    # Попытка найти имя GPU в реестре
+                    self._gpu_name = "GPU"
             except: pass
-
-        if not self._cpu_name: self._cpu_name = platform.processor()
 
         hw.update({
             "cpu_temp": cpu_t, "display_cpu_temp": f"{int(cpu_t)}°C" if cpu_t else "N/A",
             "gpu_load": gpu_l, "display_gpu_load": f"{int(gpu_l)}%" if gpu_l else "0%",
             "gpu_temp": gpu_t, "display_gpu_temp": f"{int(gpu_t)}°C" if gpu_t else "N/A",
-            "disk_temps": driver_stats.get('disk_temps', []),
             "has_gpu": has_gpu,
             "cpu_name": self._cpu_name or "CPU",
             "gpu_name": self._gpu_name or "GPU"
         })
         return hw
+
+    def _get_stats_from_helper(self) -> Dict[str, Any]:
+        """Чтение данных из Shared Memory хелпера"""
+        try:
+            import mmap
+            # Пробуем открыть память
+            shm = mmap.mmap(-1, 1024, tagname="Local\\MonitHomeSensors", access=mmap.ACCESS_READ)
+            try:
+                data_raw = shm.read(1024).decode('utf-8').strip('\x00')
+                shm.close()
+                
+                if not data_raw:
+                    # Если данных нет и мы не админ - просим прав
+                    if not ctypes.windll.shell32.IsUserAnAdmin():
+                        self.needs_elevation = True
+                    return None
+                
+                stats = json.loads(data_raw)
+                # Проверяем "свежесть" данных (не старше 5 секунд)
+                if time.time() - stats.get('last_update', 0) > 5:
+                    if not ctypes.windll.shell32.IsUserAnAdmin():
+                        self.needs_elevation = True
+                    return None
+                
+                self.needs_elevation = False # Всё ок, данные идут
+                return stats
+            except Exception as e:
+                if 'shm' in locals(): shm.close()
+                if not ctypes.windll.shell32.IsUserAnAdmin():
+                    self.needs_elevation = True
+                return None
+        except:
+            # Памяти нет вообще - значит хелпер не запущен
+            if not ctypes.windll.shell32.IsUserAnAdmin():
+                self.needs_elevation = True
+            return None
+
+    def _start_helper(self):
+        """Запуск хелпера с кулдауном 10 секунд. Приоритет - скомпилированный EXE."""
+        now = time.time()
+        if now - self._last_helper_start < 10:
+            return
+        
+        self._last_helper_start = now
+        self.needs_elevation = False # Сбрасываем флаг, т.к. процесс запуска инициирован
+        
+        try:
+            plugin_dir = os.path.dirname(__file__)
+            # 1. Сначала ищем скомпилированный EXE (чтобы запрос админа был красивым)
+            helper_exe = os.path.abspath(os.path.join(plugin_dir, "bin", "MonitHomeHelper.exe"))
+            
+            if os.path.exists(helper_exe):
+                self.log(f"Starting compiled helper: {helper_exe}")
+                # Запускаем EXE. Он сам попросит админа, т.к. собран с --uac-admin
+                import ctypes
+                ctypes.windll.shell32.ShellExecuteW(None, "open", helper_exe, f"--parent-pid {os.getpid()}", None, 0)
+            else:
+                # 2. Если EXE нет (режим разработки), запускаем скрипт через Python
+                self.log("Helper EXE not found, falling back to script.")
+                helper_path = os.path.abspath(os.path.join(plugin_dir, "sensor_helper.py"))
+                python_exe = sys.executable
+                args = f'"{helper_path}" --parent-pid {os.getpid()}'
+                import ctypes
+                ctypes.windll.shell32.ShellExecuteW(None, "runas", python_exe, args, None, 0)
+                
+            self.log(f"Sensor helper start triggered with parent PID {os.getpid()}")
+        except Exception as e:
+            self.log(f"Failed to trigger helper: {e}", 30)
 
     async def _rebuild_widgets_from_settings(self, sensors: dict):
         widgets = []

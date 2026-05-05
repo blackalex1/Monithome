@@ -293,8 +293,11 @@ async def main_loop():
         except Exception as e:
             await asyncio.sleep(1)
 
-if __name__ == "__main__":
+def run_scanner():
     try:
         asyncio.run(main_loop())
     except Exception as e:
         print(json.dumps({"log": f"Asyncio run failed: {e}"}), flush=True)
+
+if __name__ == "__main__":
+    run_scanner()

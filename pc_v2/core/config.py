@@ -1,6 +1,6 @@
 import json
 import os
-from typing import List, Optional
+from typing import List, Optional, Any
 from pydantic import BaseModel, Field
 
 import sys
@@ -14,22 +14,13 @@ if getattr(sys, 'frozen', False):
     BUNDLE_DIR = sys._MEIPASS 
 else:
     # Если запущено как скрипт
+    # BASE_DIR - корень проекта
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    BUNDLE_DIR = BASE_DIR
-
-CONFIG_FILE = os.path.join(BASE_DIR, "master_config.json")
-
-from core.database import SettingsDB
-
-# Определяем базовую директорию
-if getattr(sys, 'frozen', False):
-    BASE_DIR = os.path.dirname(sys.executable)
-    BUNDLE_DIR = sys._MEIPASS 
-else:
-    BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    BUNDLE_DIR = BASE_DIR
+    BUNDLE_DIR = os.path.join(BASE_DIR, "pc_v2")
 
 DB_PATH = os.path.join(BASE_DIR, "database.db")
+
+from core.database import SettingsDB
 
 import uuid
 import hashlib
@@ -46,7 +37,7 @@ class MasterConfig(BaseModel):
         "yandex_station", "pc_system", "pc_media", "pc_disks"
     ]
     trusted_tokens: List[str] = []
-    _v: int = 0
+    server_uuid: str = "" # Уникальный ID сервера
 
 class ConfigManager:
     def __init__(self, db_path: str = None):
@@ -114,9 +105,16 @@ class ConfigManager:
             if val is not None:
                 stored[key] = val
         
+        # Специальная обработка для UUID (он должен быть всегда)
+        if not stored.get("server_uuid"):
+            new_uuid = str(uuid.uuid4())
+            self.db.set_global("server_uuid", new_uuid)
+            stored["server_uuid"] = new_uuid
+            print(f"[ConfigManager] Generated new Server UUID: {new_uuid}")
+
         # Если база пустая, попробуем импортировать из старого master_config.json (для миграции)
         old_config_path = os.path.join(BASE_DIR, "master_config.json")
-        if not stored and os.path.exists(old_config_path):
+        if len(stored) <= 1 and os.path.exists(old_config_path):
             try:
                 with open(old_config_path, "r", encoding="utf-8") as f:
                     old_data = json.load(f)
@@ -134,10 +132,12 @@ class ConfigManager:
     def _setup_gui_token(self) -> str:
         """Получение или генерация токена доступа для GUI"""
         import secrets
+        
         token = self.db.get_global("gui_token")
         if not token:
             token = secrets.token_hex(16)
             self.db.set_global("gui_token", token)
+            
         return token
 
     def save(self):

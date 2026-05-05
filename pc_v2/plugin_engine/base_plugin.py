@@ -14,6 +14,7 @@ class BasePlugin(ABC):
         self.plugin_id = plugin_id
         self.logger = logging.getLogger(f"Plugin.{plugin_id}")
         self._is_running = False
+        self.needs_elevation = False # Флаг: нужны ли права админа прямо сейчас
 
     async def start(self):
         """Внутренний метод запуска. Не переопределять в плагинах."""
@@ -61,9 +62,11 @@ class BasePlugin(ABC):
 
     async def emit_state(self, state: Dict[str, Any]):
         """Отправка обновленного состояния плагина."""
+        # Добавляем флаг прав админа в состояние, чтобы UI знал, показывать ли кнопку
+        full_state = {**state, "needs_elevation": self.needs_elevation}
         await event_bus.emit("plugin_state_changed", {
             "plugin_id": self.plugin_id,
-            "state": state
+            "state": full_state
         })
 
     async def emit_event(self, event_name: str, data: Any, room: str = None):
@@ -105,6 +108,8 @@ class BasePlugin(ABC):
         try:
             config_manager.save_plugin_config(self.plugin_id, new_config)
             self.log("Config saved to Database.")
+            # Уведомляем систему, что конфиг плагина изменился (для рассылки ui_config)
+            asyncio.create_task(event_bus.emit("ui_config_changed", {"plugin_id": self.plugin_id}))
         except Exception as e:
             self.log(f"Error saving config to DB: {e}", level=logging.ERROR)
 

@@ -12,8 +12,9 @@ async def get_ui_config_data():
     lang = cfg.language or "ru"
     
     translations = {}
-    # Путь к языкам относительно корня проекта
-    lang_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "web", "languages", f"{lang}.json")
+    # Путь к языкам относительно корня BUNDLE_DIR
+    from core.config import BUNDLE_DIR
+    lang_path = os.path.join(BUNDLE_DIR, "web", "languages", f"{lang}.json")
     if os.path.exists(lang_path):
         try:
             with open(lang_path, "r", encoding="utf-8") as f:
@@ -22,7 +23,8 @@ async def get_ui_config_data():
             logger.error(f"Error loading translation for {lang}: {e}")
 
     plugins_configs = []
-    plugins_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "plugins")
+    from core.config import BUNDLE_DIR
+    plugins_dir = os.path.join(BUNDLE_DIR, "plugins")
     if os.path.exists(plugins_dir):
         for d in os.listdir(plugins_dir):
             if os.path.isdir(os.path.join(plugins_dir, d)):
@@ -64,7 +66,8 @@ def register_ui_handlers(sio):
         if sid is not None and not await check_auth(sio, sid): return
         plugins = []
         cfg = config_manager.get()
-        plugins_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "plugins")
+        from core.config import BUNDLE_DIR
+        plugins_dir = os.path.join(BUNDLE_DIR, "plugins")
         if os.path.exists(plugins_dir):
             for d in os.listdir(plugins_dir):
                 if os.path.isdir(os.path.join(plugins_dir, d)):

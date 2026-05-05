@@ -7,10 +7,7 @@ import traceback
 from plugin_engine.base_plugin import BasePlugin
 from core.event_bus import event_bus
 
-try:
-    from .volume_utils import VolumeManager, press_media_key
-except ImportError:
-    pass
+from .volume_utils import VolumeManager, press_media_key
 
 VK_MEDIA_NEXT_TRACK = 0xB0
 VK_MEDIA_PREV_TRACK = 0xB1
@@ -38,20 +35,31 @@ class Plugin(BasePlugin):
         if self._process:
             try:
                 self._process.terminate()
+                # Даем немного времени на вежливое завершение, если нет - убиваем
+                try:
+                    await asyncio.wait_for(self._process.wait(), timeout=1.0)
+                except asyncio.TimeoutError:
+                    self._process.kill()
             except: pass
         self.log("pc_media stopped.")
 
     async def _media_worker(self):
         python_exe = sys.executable
-        scanner_path = os.path.join(os.path.dirname(__file__), "media_scanner.py")
+        # Для EXE используем путь относительно исполняемого файла или временной папки
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        scanner_path = os.path.join(base_dir, "media_scanner.py")
         
         while True:
             try:
                 self.log(f"Starting subprocess: {scanner_path}")
+                # Флаг для скрытия окна консоли на Windows (CREATE_NO_WINDOW)
+                creationflags = 0x08000000 if sys.platform == "win32" else 0
+                
                 self._process = await asyncio.create_subprocess_exec(
                     python_exe, scanner_path,
                     stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.STDOUT
+                    stderr=asyncio.subprocess.STDOUT,
+                    creationflags=creationflags
                 )
                 
                 while True:

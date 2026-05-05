@@ -25,13 +25,15 @@ class YandexDiscovery(
                     service.serviceName.contains(config.name, ignoreCase = true)) {
                     
                     val parentListener = this
+                    @Suppress("DEPRECATION")
                     nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                         override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
                             Log.e(TAG, "Resolve failed for ${service.serviceName}: $errorCode")
                         }
 
                         override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                            val ip = serviceInfo.host.hostAddress ?: return
+                            @Suppress("DEPRECATION")
+                            val ip = serviceInfo.host?.hostAddress ?: return
                             Log.d(TAG, "Service resolved: $ip")
                             onResolved(config.deviceId, ip)
                             try {

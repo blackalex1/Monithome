@@ -48,7 +48,8 @@ app.include_router(plugins_router)
 app.include_router(config_router)
 
 # Раздача статики
-web_dir = os.path.join(os.path.dirname(__file__), "web")
+from core.config import BUNDLE_DIR
+web_dir = os.path.join(BUNDLE_DIR, "web")
 if not os.path.exists(web_dir): os.makedirs(web_dir)
 app.mount("/static", StaticFiles(directory=web_dir), name="static")
 

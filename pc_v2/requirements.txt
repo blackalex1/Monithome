@@ -8,8 +8,12 @@ msgpack>=1.0.5
 PySide6>=6.5.0
 aiohttp>=3.8.0
 websockets>=11.0.3
-GPUtil>=1.4.0
 WMI>=1.5.1
 zeroconf>=0.131.0
 pyinstaller>=6.0.0
 pillow>=10.0.0
+pywin32>=306
+pycaw>=2.0.1
+comtypes>=1.2.0
+pythonnet>=3.0.1
+winsdk

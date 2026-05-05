@@ -1,6 +1,7 @@
 import os
 import ctypes
 import asyncio
+import subprocess
 from plugin_engine.base_plugin import BasePlugin
 
 class Plugin(BasePlugin):
@@ -27,14 +28,18 @@ class Plugin(BasePlugin):
         await asyncio.to_thread(self._execute_system_command, action)
 
     def _execute_system_command(self, action: str):
+        # Используем subprocess.Popen с флагом скрытия окна, чтобы не было мерцания
+        flags = 0x08000000 # CREATE_NO_WINDOW
+        
         if action == 'lock':
             ctypes.windll.user32.LockWorkStation()
         elif action == 'sleep':
-            os.system("powershell -Command \"Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)\"")
+            cmd = ["powershell", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)"]
+            subprocess.Popen(cmd, creationflags=flags)
         elif action == 'restart':
-            os.system("shutdown /r /t 5 /f")
+            subprocess.Popen(["shutdown", "/r", "/t", "5", "/f"], creationflags=flags)
         elif action == 'shutdown':
-            os.system("shutdown /s /t 5 /f")
+            subprocess.Popen(["shutdown", "/s", "/t", "5", "/f"], creationflags=flags)
         elif action == 'handle_wizard':
             # Заглушка: обработка сохранения кнопок из мастера настройки
             self.log(f"Handling wizard selections: {action}")

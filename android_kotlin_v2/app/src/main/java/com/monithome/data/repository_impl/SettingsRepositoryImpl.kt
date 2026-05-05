@@ -32,4 +32,13 @@ class SettingsRepositoryImpl(context: Context) : SettingsRepository {
     override fun saveString(key: String, value: String?) {
         prefs.edit().putString(key, value).apply()
     }
+
+    override fun getDeviceId(): String {
+        var id = prefs.getString("device_unique_id", null)
+        if (id == null) {
+            id = java.util.UUID.randomUUID().toString()
+            prefs.edit().putString("device_unique_id", id).apply()
+        }
+        return id!!
+    }
 }

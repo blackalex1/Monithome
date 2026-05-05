@@ -37,7 +37,12 @@ class DiscoveryManager:
         local_ip = self.get_local_ip()
         hostname = socket.gethostname()
         
-        desc = {'version': '2.0.0'}
+        from core.config import config_manager
+        desc = {
+            'version': '2.0.0',
+            'server_uuid': config_manager.config.server_uuid,
+            'hostname': config_manager.config.hostname
+        }
         
         self.service_info = ServiceInfo(
             "_monithome._tcp.local.",

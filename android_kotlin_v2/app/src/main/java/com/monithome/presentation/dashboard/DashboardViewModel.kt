@@ -108,8 +108,24 @@ class DashboardViewModel(
 
     private fun handleSocketEvent(event: SocketEvent) {
         when (event) {
-            is SocketEvent.AuthRequired -> _state.update { it.copy(isAuthRequired = true, isLoading = false) }
+            is SocketEvent.AuthRequired -> {
+                val uuid = event.serverUuid
+                if (!uuid.isNullOrEmpty()) {
+                    val savedToken = settingsRepository.getString("auth_token_$uuid")
+                    if (!savedToken.isNullOrEmpty()) {
+                        Log.i("DashboardVM", "Auto-authorizing for server: $uuid")
+                        socketClient.authorize(savedToken)
+                        return
+                    }
+                }
+                _state.update { it.copy(isAuthRequired = true, isLoading = false) }
+            }
             is SocketEvent.AuthSuccess -> {
+                val uuid = event.serverUuid
+                if (!uuid.isNullOrEmpty()) {
+                    settingsRepository.saveString("auth_token_$uuid", event.token)
+                    Log.i("DashboardVM", "Saved token for server: $uuid")
+                }
                 settingsRepository.saveString("auth_token", event.token)
                 _state.update { s ->
                     val ns = s.copy(isAuthRequired = false, isLoading = false, pcError = null)
@@ -132,16 +148,40 @@ class DashboardViewModel(
         val savedOrder = settingsRepository.getWidgetOrder()
         val savedColor = settingsRepository.getThemeColor()
         val savedSource = settingsRepository.getString("selected_media_source")
+        val savedUrl = settingsRepository.getString("server_url")
+        
         manualSelectedSourceId.value = savedSource
-        _state.update { it.copy(widgetOrder = savedOrder ?: it.widgetOrder, themeColor = savedColor, 
-            mediaState = it.mediaState.copy(selectedSourceId = savedSource)) }
+        _state.update { it.copy(
+            widgetOrder = savedOrder ?: it.widgetOrder, 
+            themeColor = savedColor, 
+            serverUrl = savedUrl ?: "",
+            mediaState = it.mediaState.copy(selectedSourceId = savedSource)
+        ) }
+        
+        // Автоподключение, если есть сохраненный URL
+        if (!savedUrl.isNullOrEmpty()) {
+            processIntent(DashboardIntent.Connect(savedUrl))
+        }
     }
 
     private fun startDiscovery() {
         viewModelScope.launch {
             connectionHandler.observeDiscovery().collect { server ->
                 _state.update { s ->
-                    if (!s.discoveredServers.any { it.url == server.url }) s.copy(discoveredServers = s.discoveredServers + server) else s
+                    val alreadyExists = s.discoveredServers.any { it.url == server.url }
+                    val newList = if (!alreadyExists) s.discoveredServers + server else s.discoveredServers
+                    
+                    // Если мы нашли сервер, который совпадает с текущим URL, 
+                    // и у нас есть для него токен (по UUID), попробуем "тихо" переподключиться с токеном
+                    if (server.url == s.serverUrl && !server.uuid.isNullOrEmpty()) {
+                        val token = settingsRepository.getString("auth_token_${server.uuid}")
+                        if (!token.isNullOrEmpty() && !s.isConnected) {
+                            Log.i("DashboardVM", "Discovered target server with known UUID, connecting with token...")
+                            processIntent(DashboardIntent.Connect(server.url))
+                        }
+                    }
+                    
+                    s.copy(discoveredServers = newList)
                 }
             }
         }

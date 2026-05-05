@@ -20,6 +20,7 @@ async function secureFetch(url, options = {}) {
 // Connection UI
 const dot = document.getElementById('connection-dot');
 const statusText = document.getElementById('connection-status');
+const pluginsList = document.getElementById('plugins-list');
 
 socket.on('connect', () => {
     dot.classList.add('connected');
@@ -150,8 +151,10 @@ document.querySelectorAll('.nav-links a').forEach(link => {
     });
 });
 
-// Load Plugins
-const pluginsList = document.getElementById('plugins-list');
+socket.on('plugin_state_changed', (data) => {
+    // Если состояние плагина изменилось (например, он попросил прав), перегружаем список
+    loadPlugins();
+});
 
 async function loadPlugins() {
     try {
@@ -184,7 +187,14 @@ async function loadPlugins() {
                     <span style="font-size: 13px; color: ${plugin.active ? 'var(--success)' : 'var(--text-muted)'}">
                         ${plugin.active ? '● ' + runningStr : '○ ' + stoppedStr}
                     </span>
-                    <div style="display:flex; gap: 8px;">
+                    <div style="display:flex; gap: 8px; align-items: center;">
+                        ${plugin.needs_elevation ? `
+                            <button class="plugin-btn elevation-btn" onclick="requestPluginElevation('${plugin.id}')" 
+                                    title="${window.translations['btn_elevate'] || 'Request Admin Rights'}"
+                                    style="background: var(--danger); border-color: rgba(239, 68, 68, 0.4); animation: pulse-red 2s infinite;">
+                                🛡️
+                            </button>
+                        ` : ''}
                         <button class="plugin-btn" onclick="showPluginInfo('${plugin.id}')" title="${window.translations['btn_info'] || 'Info'}">ℹ️</button>
                         ${plugin.has_settings ? `<button class="plugin-btn" onclick="editPluginConfig('${plugin.id}')" title="${window.translations['btn_settings'] || 'Settings'}">⚙️</button>` : ''}
                         ${plugin.id === 'yandex_station' && plugin.active ? `<button class="plugin-btn" onclick="requestYandexQR()">${loginStr}</button>` : ''}
@@ -197,6 +207,15 @@ async function loadPlugins() {
         console.error("Failed to load plugins", err);
     }
 }
+
+window.requestPluginElevation = (pluginId) => {
+    socket.emit('plugin_command', {
+        plugin_id: pluginId,
+        action: 'request_elevation',
+        data: {}
+    });
+    // Можно показать лоадер или задизейблить кнопку
+};
 
 // Toggle Plugin
 window.togglePlugin = async (pluginId, isActive) => {
@@ -628,15 +647,20 @@ function renderAppLauncherSettings(config) {
 
             <div class="settings-group glass-panel" style="padding: 15px; border: 1px solid var(--accent-glow);">
                 <h4 style="color: var(--accent); margin-bottom: 12px;">Добавить новое</h4>
-                <div style="display: flex; flex-direction: column; gap: 10px;">
-                    <input type="text" id="new-app-name" placeholder="Название (например, Chrome)" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
-                    <div style="display: flex; gap: 5px;">
-                        <input type="text" id="new-app-path" placeholder="Путь или имя .exe (например, chrome.exe)" style="flex-grow: 1; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
-                        <button class="plugin-btn" style="padding: 5px 12px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);" onclick="browseLauncherFile()">📁 Обзор</button>
+                <div style="display: flex; gap: 15px; align-items: flex-start;">
+                    <div id="new-app-icon-preview" style="width: 64px; height: 64px; background: rgba(255,255,255,0.05); border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px dashed var(--border-color); flex-shrink: 0;">
+                        <span style="font-size: 24px; opacity: 0.3;">🚀</span>
                     </div>
-                    <p style="font-size: 11px; color: var(--text-muted); margin: 0;">Иконка будет извлечена автоматически из файла.</p>
-                    <button class="plugin-btn" style="width: 100%; background: var(--accent); color: white; margin-top: 5px;" onclick="addLauncherApp()">+ Добавить в список</button>
+                    <div style="display: flex; flex-direction: column; gap: 10px; flex-grow: 1;">
+                        <input type="text" id="new-app-name" placeholder="Название (например, Chrome)" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
+                        <div style="display: flex; gap: 5px;">
+                            <input type="text" id="new-app-path" placeholder="Путь или имя .exe (например, chrome.exe)" style="flex-grow: 1; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
+                            <button class="plugin-btn" style="padding: 5px 12px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);" onclick="browseLauncherFile()">📁 Обзор</button>
+                        </div>
+                    </div>
                 </div>
+                <p style="font-size: 11px; color: var(--text-muted); margin: 10px 0 0 0;">Иконка будет извлечена автоматически из файла.</p>
+                <button class="plugin-btn" style="width: 100%; background: var(--accent); color: white; margin-top: 15px;" onclick="addLauncherApp()">+ Добавить в список</button>
             </div>
         </div>
     `;
@@ -663,17 +687,24 @@ function getLauncherIconHtml(iconData) {
 window.addLauncherApp = () => {
     const name = document.getElementById('new-app-name').value;
     const path = document.getElementById('new-app-path').value;
+    const previewDiv = document.getElementById('new-app-icon-preview');
+    const iconImg = previewDiv ? previewDiv.querySelector('img') : null;
+    const iconData = iconImg ? iconImg.src : null;
 
     if (!name || !path) return alert("Заполните название и путь!");
 
     socket.emit('plugin_command', {
         plugin_id: 'app_launcher',
         action: 'add_app',
-        data: { label: name, path: path }
+        data: { 
+            label: name, 
+            path: path,
+            icon: iconData // Передаем уже извлеченную иконку, если она есть
+        }
     });
 
     // Показываем загрузку
-    modalContent.innerHTML = '<div class="loading-spinner"></div><p style="text-align:center; color: var(--accent);">Извлекаем иконку и добавляем...</p>';
+    modalContent.innerHTML = '<div class="loading-spinner"></div><p style="text-align:center; color: var(--accent);">Добавляем приложение...</p>';
 };
 
 window.browseLauncherFile = () => {
@@ -745,9 +776,15 @@ socket.on('plugin_event:app_launcher', (payload) => {
     } else if (payload.event === 'file_selected') {
         const pathInput = document.getElementById('new-app-path');
         const nameInput = document.getElementById('new-app-name');
+        const previewDiv = document.getElementById('new-app-icon-preview');
+        
         if (pathInput) pathInput.value = payload.data.path;
-        // Всегда обновляем название при выборе файла, если пользователь его еще не менял вручную 
-        // или если поле было пустым
         if (nameInput) nameInput.value = payload.data.label;
+        
+        if (previewDiv && payload.data.icon) {
+            previewDiv.innerHTML = `<img src="${payload.data.icon}" style="width: 100%; height: 100%; object-fit: contain; transform: scale(1.15);">`;
+            previewDiv.style.borderStyle = 'solid';
+            previewDiv.style.borderColor = 'var(--accent)';
+        }
     }
 });

@@ -85,6 +85,8 @@
     "stats_detailed_title": "Detailed Performance",
     "stats_storage_title": "Storage Temperatures",
     "stats_load": "Load",
-    "stats_temp": "Temp"
-
+    "stats_temp": "Temp",
+    "pairing_title": "DEVICE PAIRING",
+    "pairing_desc": "Enter this security code on your tablet",
+    "btn_dismiss": "DISMISS"
 }

@@ -85,5 +85,8 @@
     "stats_detailed_title": "Детальная статистика",
     "stats_storage_title": "Температура накопителей",
     "stats_load": "Загрузка",
-    "stats_temp": "Темп."
+    "stats_temp": "Темп.",
+    "pairing_title": "СОПРЯЖЕНИЕ УСТРОЙСТВА",
+    "pairing_desc": "Введите этот защитный код на планшете",
+    "btn_dismiss": "ЗАКРЫТЬ"
 }

@@ -2,6 +2,7 @@ import os
 import asyncio
 import subprocess
 from plugin_engine.base_plugin import BasePlugin
+from core.event_bus import event_bus
 
 class Plugin(BasePlugin):
     """
@@ -12,35 +13,48 @@ class Plugin(BasePlugin):
 
     async def on_start(self):
         self.log("App Launcher started.")
+        # Подписываемся на события от GUI (например, выбор файла)
+        event_bus.subscribe("plugin_custom_event", self._on_custom_event)
+        
         # Обновляем иконки и рассылаем состояние
         asyncio.create_task(self._auto_update_icons())
         await self._emit_launcher_state()
 
-    def _open_file_dialog(self):
-        try:
-            import tkinter as tk
-            from tkinter import filedialog
-            import os
-
-            # Создаем скрытое окно tkinter
-            root = tk.Tk()
-            root.withdraw()
-            root.attributes("-topmost", True) # Поверх всех окон
-
-            file_path = filedialog.askopenfilename(
-                title="Выберите приложение для добавления",
-                filetypes=[
-                    ("Executables", "*.exe"),
-                    ("Links", "*.lnk"),
-                    ("All Files", "*.*")
-                ]
-            )
+    async def _on_custom_event(self, data):
+        """Обработка кастомных событий, например от GUI моста."""
+        if data.get("plugin_id") != self.plugin_id:
+            return
             
-            root.destroy()
-            return file_path
-        except Exception as e:
-            self.log(f"Tkinter dialog failed: {e}", 30)
-            return ""
+        event = data.get("event")
+        payload = data.get("data")
+        
+        if event == "file_selected":
+            # Важно: игнорируем события, которые мы сами уже обработали (в которых есть иконка)
+            # иначе возникнет бесконечная рекурсия
+            if payload.get("icon"):
+                return
+
+            path = payload.get("path")
+            label = payload.get("label")
+            self.log(f"File selected via GUI bridge: {path}")
+            
+            # Извлекаем иконку сразу, чтобы показать её в GUI
+            icon_b64 = await asyncio.to_thread(self._extract_icon, path)
+            
+            # Отправляем событие обратно на UI (Android/Web), чтобы заполнить поля
+            await self.emit_event("file_selected", {
+                "path": path, 
+                "label": label,
+                "icon": icon_b64
+            })
+
+    async def _request_browse_dialog(self):
+        """Запрашивает открытие диалога выбора файла у главного GUI процесса."""
+        await event_bus.emit("request_file_dialog", {
+            "plugin_id": self.plugin_id,
+            "title": "Выберите приложение для добавления"
+        })
+        return None # Результат придет асинхронно через событие 'file_selected'
 
     async def _emit_launcher_state(self):
         config = self.get_config()
@@ -159,11 +173,8 @@ class Plugin(BasePlugin):
                 self.log("Launch aborted: No path provided", 30)
             
         elif action == "browse_file":
-            path = await asyncio.to_thread(self._open_file_dialog)
-            if path:
-                # Пытаемся также угадать название приложения из пути
-                label = os.path.splitext(os.path.basename(path))[0].title()
-                await self.emit_event("file_selected", {"path": path, "label": label})
+            # Теперь это асинхронный запрос к GUI
+            await self._request_browse_dialog()
 
         elif action == "add_app":
             config = self.get_config()
@@ -253,6 +264,12 @@ class Plugin(BasePlugin):
                     await self._emit_launcher_state()
                     await self.emit_event("config_updated", {"success": True})
                     break
+
+        elif action == "update_settings":
+            # Вызывается при сохранении настроек через общую панель управления
+            self.log("Settings updated via API. Refreshing launcher state...")
+            await self._emit_launcher_state()
+            
         else:
             self.log(f"Unknown action: {action}")
 
@@ -267,7 +284,7 @@ class Plugin(BasePlugin):
             
             # Попытка запустить через shell, если startfile не сработал
             try:
-                subprocess.Popen(path, shell=True)
+                subprocess.Popen(path, shell=True, creationflags=0x08000000)
                 self.log(f"Launched via shell: {path}")
             except Exception as e2:
                 self.log(f"Second attempt failed: {e2}", level=40) # ERROR level

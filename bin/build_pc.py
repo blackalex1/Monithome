@@ -28,7 +28,7 @@ def build_single_exe():
     # 2. Сборка (режим --onefile)
     cmd = [
         sys.executable, "-m", "PyInstaller",
-        "--noconsole",
+        "--console",
         "--onefile",
         f"--name={output_name}",
         f"--distpath={bin_dir}",     # Собираем прямо сюда, в /bin
@@ -37,7 +37,7 @@ def build_single_exe():
         # Пути к данным должны быть относительно папки запуска или абсолютными
         f"--add-data={os.path.join(pc_v2_dir, 'web')};web",
         f"--add-data={os.path.join(pc_v2_dir, 'plugins')};plugins",
-        f"--icon={os.path.join(pc_v2_dir, 'web', 'favicon.png')}",
+        f"--icon={os.path.join(project_root, 'icons', 'pc_icon.ico')}",
         entry_script
     ]
 

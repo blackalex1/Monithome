@@ -24,8 +24,8 @@ sealed class SocketConnectionState {
 }
 
 sealed class SocketEvent {
-    object AuthRequired : SocketEvent()
-    data class AuthSuccess(val token: String, val encryptionKey: String, val themeColor: Long? = null) : SocketEvent()
+    data class AuthRequired(val serverUuid: String? = null) : SocketEvent()
+    data class AuthSuccess(val token: String, val encryptionKey: String, val themeColor: Long? = null, val serverUuid: String? = null) : SocketEvent()
     data class UiConfig(val config: JSONObject, val themeColor: Long? = null) : SocketEvent()
     data class ThemeUpdate(val themeColor: Long) : SocketEvent()
     data class ManagerDataObj(val data: JSONObject) : SocketEvent()
@@ -46,7 +46,7 @@ class PcSocketClient {
     private val _events = MutableSharedFlow<SocketEvent>(extraBufferCapacity = 64)
     val events: SharedFlow<SocketEvent> = _events.asSharedFlow()
 
-    fun connect(url: String, token: String? = null) {
+    fun connect(url: String, token: String? = null, deviceId: String? = null) {
         if (_connectionState.value is SocketConnectionState.Connected || _connectionState.value is SocketConnectionState.Connecting) {
             return
         }
@@ -72,10 +72,10 @@ class PcSocketClient {
                 reconnection = true
                 reconnectionDelay = 1000
                 timeout = 15000
-                auth = if (token != null) {
-                    mapOf("token" to token, "supports_encryption" to "true")
-                } else {
-                    mapOf("supports_encryption" to "true")
+                auth = mutableMapOf<String, String>().apply {
+                    put("supports_encryption", "true")
+                    if (token != null) put("token", token)
+                    if (deviceId != null) put("device_id", deviceId)
                 }
             }
 
@@ -106,9 +106,16 @@ class PcSocketClient {
             _connectionState.value = SocketConnectionState.Error(err)
         }
 
-        onData(s, "auth_required") {
-            Log.i("PcSocketClient", "Server requested AUTH")
-            _events.tryEmit(SocketEvent.AuthRequired)
+        onData(s, "auth_required") { data ->
+            val obj = when(data) {
+                is JSONObject -> data
+                is Map<*, *> -> JSONObject(data)
+                is String -> try { JSONObject(data) } catch(e: Exception) { null }
+                else -> null
+            }
+            val uuid = obj?.optString("server_uuid")
+            Log.i("PcSocketClient", "Server requested AUTH. Server UUID: $uuid")
+            _events.tryEmit(SocketEvent.AuthRequired(uuid))
         }
 
         onData(s, "auth_success") { data ->
@@ -124,11 +131,12 @@ class PcSocketClient {
                 obj?.let {
                     val t = it.optString("token", "")
                     val key = it.optString("encryption_key", "")
+                    val uuid = it.optString("server_uuid", "")
                     encryptionKey = key
-                    Log.i("PcSocketClient", "AuthSuccess: Key set, length: ${key.length}")
+                    Log.i("PcSocketClient", "AuthSuccess: Key set, Server UUID: $uuid")
                     val colorStr = it.optString("theme_color", "")
                     val color = parseHexColor(colorStr)
-                    _events.tryEmit(SocketEvent.AuthSuccess(t, key, color))
+                    _events.tryEmit(SocketEvent.AuthSuccess(t, key, color, uuid))
                 }
             } catch (e: Exception) {
                 Log.e("PcSocketClient", "Auth parsing error", e)
@@ -238,6 +246,11 @@ class PcSocketClient {
     fun authAttempt(password: String) {
         val payload = JSONObject().apply { put("code", password) }
         socket?.emit("auth_attempt", payload)
+    }
+
+    fun authorize(token: String) {
+        val payload = JSONObject().apply { put("token", token) }
+        socket?.emit("authorize", payload)
     }
 
     fun sendCommand(pluginId: String, action: String, target: String?, data: Any? = null) {

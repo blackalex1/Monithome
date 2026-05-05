@@ -7,4 +7,5 @@ interface SettingsRepository {
     fun saveThemeColor(color: Long)
     fun getString(key: String, default: String? = null): String?
     fun saveString(key: String, value: String?)
+    fun getDeviceId(): String
 }

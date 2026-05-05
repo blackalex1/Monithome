@@ -86,9 +86,12 @@ android_kotlin_v2/**/google-services.json
 pc_v2/__pycache__/
 pc_v2/venv/
 pc_v2/.venv/
+pc_v2/bin/
 pc_v2/plugins/pc_media/cover.jpg
 !pc_v2/plugins/system_stats/LibreHardwareMonitorLib.dll
 !pc_v2/plugins/system_stats/get_stats.ps1
+pc_v2/plugins/system_stats/bin/*.exe
+bin/*.exe
 
 # Temporary & Cache
 *.bak

@@ -116,7 +116,8 @@ class SocketServerManager:
         plugins = []
         cfg = config_manager.get()
         import os
-        plugins_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins")
+        from core.config import BUNDLE_DIR
+        plugins_dir = os.path.join(BUNDLE_DIR, "plugins")
         if os.path.exists(plugins_dir):
             for d in os.listdir(plugins_dir):
                 if os.path.isdir(os.path.join(plugins_dir, d)):

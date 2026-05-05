@@ -67,6 +67,7 @@ class PluginRepositoryImpl(
             val yandexCommand = when (action) {
                 "play_pause" -> {
                     val currentStats = statsFlows["yandex_station"]?.value ?: emptyMap()
+                    @Suppress("UNCHECKED_CAST")
                     val devices = currentStats["devices"] as? List<Map<String, Any>>
                     val device = devices?.find { it["id"] == target }
                     val isPlaying = device?.get("playing") as? Boolean ?: false

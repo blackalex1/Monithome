@@ -19,9 +19,22 @@ class IntentHandler(
         when (intent) {
             is DashboardIntent.Connect -> {
                 if (intent.url != null) {
-                    val savedToken = settingsRepository.getString("auth_token")
+                    settingsRepository.saveString("server_url", intent.url)
+                    
+                    // Ищем UUID этого сервера среди обнаруженных
+                    val discovered = state.value.discoveredServers.find { it.url == intent.url }
+                    val uuid = discovered?.uuid
+                    
+                    val token = if (!uuid.isNullOrEmpty()) {
+                        settingsRepository.getString("auth_token_$uuid")
+                    } else {
+                        settingsRepository.getString("auth_token") // Фолбэк на старый метод
+                    }
+                    
+                    val deviceId = settingsRepository.getDeviceId()
+                    
                     state.update { it.copy(serverUrl = intent.url) }
-                    socketClient.connect(intent.url, savedToken)
+                    socketClient.connect(intent.url, token, deviceId)
                 } else {
                     startDiscovery()
                 }

@@ -81,7 +81,7 @@ class YandexLyricsClient {
                 Log.e(TAG, "Supplement fetch failed for $trackId: ${response.code}")
                 return null
             }
-            val body = response.body?.string() ?: return null
+            val body = response.body.string()
             val json = JSONObject(body)
             val result = json.optJSONObject("result")
             if (result == null) {
@@ -129,12 +129,12 @@ class YandexLyricsClient {
                 Log.e(TAG, "LRC fetch failed for $trackId: ${response.code}")
                 return null
             }
-            val body = response.body?.string() ?: return null
+            val body = response.body.string()
             val downloadUrl = JSONObject(body).optJSONObject("result")?.optString("downloadUrl") ?: return null
             
             val lrcRequest = Request.Builder().url(downloadUrl).build()
             client.newCall(lrcRequest).execute().use { lrcResponse ->
-                return lrcResponse.body?.string()
+                return lrcResponse.body.string()
             }
         }
     }
@@ -175,7 +175,7 @@ class YandexLyricsClient {
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
-                val body = response.body?.string() ?: return null
+                val body = response.body.string()
                 val json = JSONObject(body)
                 
                 // Result can be an object (for /tracks/{id}) or an array (for /tracks)
@@ -209,7 +209,7 @@ class YandexLyricsClient {
         try {
             client.newCall(request).execute().use { response ->
                 if (!response.isSuccessful) return null
-                val body = response.body?.string() ?: return null
+                val body = response.body.string()
                 val json = JSONObject(body)
                 val syncedLyrics = json.optString("syncedLyrics")
                 if (syncedLyrics.isNotEmpty()) {

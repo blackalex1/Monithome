@@ -27,7 +27,9 @@ async def verify_token(request: Request):
 
 @router.get("", dependencies=[Depends(verify_token)])
 async def get_plugins():
-    plugins_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins")
+    # Используем абсолютный путь к директории плагинов
+    from core.config import BUNDLE_DIR
+    plugins_dir = os.path.join(BUNDLE_DIR, "plugins")
     cfg = config_manager.get()
     active_plugins = cfg.active_plugins
     
@@ -43,12 +45,16 @@ async def get_plugins():
                     with open(p_cfg_path, "r", encoding="utf-8") as f:
                         p_cfg = json.load(f)
                         if p_cfg.get("hidden", False): continue
+                        instance = plugin_manager.active_plugins.get(p_id)
+                        needs_elevation = getattr(instance, "needs_elevation", False) if instance else False
+                        
                         result.append({
                             "id": p_id, "active": p_id in active_plugins,
                             "name": p_cfg.get("name", p_id.replace("_", " ").title()),
                             "description": p_cfg.get("description", ""),
                             "version": p_cfg.get("version", "1.0.0"),
-                            "has_settings": p_cfg.get("has_settings", False)
+                            "has_settings": p_cfg.get("has_settings", False),
+                            "needs_elevation": needs_elevation
                         })
                 except: pass
     return {"plugins": result}
@@ -70,7 +76,8 @@ async def toggle_plugin(req: PluginToggleRequest):
 
 @router.get("/{plugin_id}/config", dependencies=[Depends(verify_token)])
 async def get_plugin_config(plugin_id: str):
-    p_cfg_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "plugins", plugin_id, "config.json")
+    from core.config import BUNDLE_DIR
+    p_cfg_path = os.path.join(BUNDLE_DIR, "plugins", plugin_id, "config.json")
     default_config = {}
     if os.path.exists(p_cfg_path):
         with open(p_cfg_path, "r", encoding="utf-8") as f:

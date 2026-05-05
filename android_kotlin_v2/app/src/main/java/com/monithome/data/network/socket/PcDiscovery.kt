@@ -10,7 +10,8 @@ import kotlinx.coroutines.flow.callbackFlow
 
 data class DiscoveredServer(
     val name: String,
-    val url: String
+    val url: String,
+    val uuid: String? = null
 )
 
 class PcDiscovery(context: Context) {
@@ -25,19 +26,26 @@ class PcDiscovery(context: Context) {
 
             override fun onServiceFound(service: NsdServiceInfo) {
                 Log.d("PcDiscovery", "Service found: ${service.serviceName}")
+                @Suppress("DEPRECATION")
                 nsdManager.resolveService(service, object : NsdManager.ResolveListener {
                     override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
                         Log.e("PcDiscovery", "Resolve failed: $errorCode")
                     }
 
                     override fun onServiceResolved(serviceInfo: NsdServiceInfo) {
-                        val host = serviceInfo.host.hostAddress
+                        @Suppress("DEPRECATION")
+                        val host = serviceInfo.host?.hostAddress
                         val port = serviceInfo.port
                         if (host != null) {
                             val url = "http://$host:$port"
-                            val name = serviceInfo.serviceName.removePrefix("MonitHome-")
-                            Log.d("PcDiscovery", "PC found: $name at $url")
-                            trySend(DiscoveredServer(name, url))
+                            
+                            // Извлекаем UUID из TXT записей
+                            val attributes = serviceInfo.attributes
+                            val uuid = attributes["server_uuid"]?.let { String(it) }
+                            val serverName = attributes["hostname"]?.let { String(it) } ?: serviceInfo.serviceName.removePrefix("MonitHome-")
+                            
+                            Log.d("PcDiscovery", "PC found: $serverName at $url (UUID: $uuid)")
+                            trySend(DiscoveredServer(serverName, url, uuid))
                         }
                     }
                 })
