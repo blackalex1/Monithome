@@ -37,7 +37,7 @@ class Plugin(BasePlugin):
 
     async def on_start(self):
         self.log("system_stats started.")
-        self._loop_task = asyncio.create_task(self._stats_loop())
+        self._loop_task = self.create_task(self._stats_loop())
 
     async def on_stop(self):
         if self._loop_task:

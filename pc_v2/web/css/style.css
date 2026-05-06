@@ -227,11 +227,27 @@ body::before {
         opacity: 0;
         transform: translateY(10px);
     }
-
     to {
         opacity: 1;
         transform: translateY(0);
     }
+}
+
+@keyframes slideInRight {
+    from {
+        opacity: 0;
+        transform: translateX(30px);
+    }
+    to {
+        opacity: 1;
+        transform: translateX(0);
+    }
+}
+
+@keyframes pulse-accent {
+    0% { box-shadow: 0 0 0 0 var(--accent-glow); }
+    70% { box-shadow: 0 0 0 10px rgba(34, 197, 94, 0); }
+    100% { box-shadow: 0 0 0 0 rgba(34, 197, 94, 0); }
 }
 
 .section-header {
@@ -329,6 +345,22 @@ body::before {
 
 .plugin-btn:hover {
     background: rgba(255, 255, 255, 0.2);
+    transform: translateY(-1px);
+}
+
+.plugin-btn:active {
+    transform: translateY(0);
+}
+
+.plugin-btn.danger {
+    background: rgba(239, 68, 68, 0.1);
+    color: var(--danger);
+    border: 1px solid rgba(239, 68, 68, 0.2);
+}
+
+.plugin-btn.danger:hover {
+    background: var(--danger);
+    color: white;
 }
 
 @keyframes pulse-red {
@@ -450,6 +482,83 @@ input:checked+.slider:before {
     border-radius: 12px;
     background: white;
     padding: 10px;
+}
+
+/* Log Filters */
+.filter-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-muted);
+    padding: 6px 14px;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.filter-btn:hover {
+    color: var(--text-main);
+    background: rgba(255, 255, 255, 0.05);
+}
+
+.filter-btn.active {
+    background: var(--accent);
+    color: white;
+    box-shadow: 0 2px 10px var(--accent-glow);
+}
+
+/* Toast Notifications */
+.toast-container {
+    position: fixed;
+    bottom: 30px;
+    right: 30px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    z-index: 9999;
+}
+
+.toast {
+    background: var(--bg-panel);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border-color);
+    padding: 16px 24px;
+    border-radius: 16px;
+    color: white;
+    box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    min-width: 280px;
+    animation: slideInRight 0.4s cubic-bezier(0.4, 0, 0.2, 1) forwards;
+    border-left: 4px solid var(--accent);
+}
+
+.toast.error { border-left-color: var(--danger); }
+.toast.warning { border-left-color: #facc15; }
+.toast.success { border-left-color: var(--success); }
+
+/* Custom Auth Modal Input */
+.auth-code-input {
+    background: rgba(0, 0, 0, 0.3);
+    border: 2px solid var(--border-color);
+    border-radius: 12px;
+    padding: 15px;
+    font-size: 24px;
+    font-weight: 800;
+    letter-spacing: 8px;
+    text-align: center;
+    color: var(--accent);
+    width: 200px;
+    margin: 10px 0;
+    transition: all 0.3s;
+}
+
+.auth-code-input:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 15px var(--accent-glow);
 }
 
 /* Logs Section */

@@ -16,6 +16,7 @@ class BasePlugin(ABC):
         self._is_running = False
         self.needs_elevation = False # Флаг: нужны ли права админа прямо сейчас
         self.elevation_active = False # Флаг: права админа успешно получены и активны
+        self._tasks = set()
 
     async def start(self):
         """Внутренний метод запуска. Не переопределять в плагинах."""
@@ -29,9 +30,40 @@ class BasePlugin(ABC):
         """Внутренний метод остановки. Не переопределять в плагинах."""
         if not self._is_running:
             return
-        self._is_running = False
+        
         self.log("Stopping...")
-        await self.on_stop()
+        
+        # 1. Вызываем пользовательский метод остановки
+        try:
+            await asyncio.wait_for(self.on_stop(), timeout=2.0)
+        except asyncio.TimeoutError:
+            self.log("on_stop timed out", level=logging.WARNING)
+        except Exception as e:
+            self.log(f"Error in on_stop: {e}", level=logging.ERROR)
+
+        # 2. Отменяем все фоновые задачи, созданные через create_task
+        if self._tasks:
+            self.log(f"Cancelling {len(self._tasks)} tasks...")
+            for task in self._tasks:
+                if not task.done():
+                    task.cancel()
+            
+            # Ждем завершения отмены (опционально, с таймаутом)
+            try:
+                await asyncio.wait_for(asyncio.gather(*self._tasks, return_exceptions=True), timeout=1.0)
+            except:
+                pass
+            self._tasks.clear()
+
+        self._is_running = False
+        self.log("Stopped.")
+
+    def create_task(self, coro):
+        """Хелпер для запуска фоновых задач с автоматическим отслеживанием"""
+        task = asyncio.create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
+        return task
 
     @abstractmethod
     async def on_start(self):

@@ -368,7 +368,17 @@ class MainWindow(QMainWindow):
         """)
         
         self.setStyleSheet("background-color: #020617;")
-        self.target_url = f"http://127.0.0.1:5000/?gui_token={config_manager.gui_token}"
+        self.target_url = "http://127.0.0.1:5000/"
+        
+        # Установка куки с токеном ДО загрузки страницы
+        from PySide6.QtNetwork import QNetworkCookie
+        from PySide6.QtCore import QByteArray
+        
+        cookie = QNetworkCookie(QByteArray(b"gui_token"), QByteArray(config_manager.gui_token.encode()))
+        cookie.setDomain("127.0.0.1")
+        cookie.setPath("/")
+        self.browser.page().profile().cookieStore().setCookie(cookie)
+        
         self.browser.setUrl(QUrl(self.target_url))
         
         # Обработка ошибок загрузки (например, если сервер еще не встал)

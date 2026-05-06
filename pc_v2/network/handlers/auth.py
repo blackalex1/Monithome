@@ -1,5 +1,4 @@
 import logging
-import random
 import secrets
 import asyncio
 from core.config import config_manager
@@ -15,7 +14,14 @@ def register_auth_handlers(sio, socket_manager):
         if scope and 'client' in scope and scope['client']:
             return scope['client'][0]
 
-        # 2. Проверяем заголовки прокси
+        # 2. Проверяем стандартные заголовки прокси
+        # RFC 7239
+        forwarded = environ.get('HTTP_FORWARDED')
+        if forwarded:
+            for part in forwarded.split(';'):
+                if part.strip().lower().startswith('for='):
+                    return part.strip()[4:].split(',')[0].strip('"')
+
         xff = environ.get('HTTP_X_FORWARDED_FOR')
         if xff:
             return xff.split(',')[0].strip()
@@ -48,18 +54,17 @@ def register_auth_handlers(sio, socket_manager):
                 # Это предотвращает спам кодами при дублирующих соединениях.
                 is_already_authorized = False
                 try:
-                    # В python-socketio (особенно в AsyncServer) надежнее всего
-                    # проверять комнаты через sio.rooms(sid) для каждого активного соединения.
-                    # Но нам нужно знать ВСЕ активные sids.
-                    # Мы можем использовать внутренний менеджер комнат.
-                    for other_sid, rooms in sio.manager.rooms.get('/', {}).items():
+                    # Проверяем все активные сессии в комнате 'authorized'
+                    # Это быстрее и правильнее, чем перебор всех комнат всех пользователей
+                    authorized_sids = sio.manager.rooms.get('/', {}).get('authorized', set())
+                    for other_sid in list(authorized_sids):
                         if other_sid == sid: continue
-                        if 'authorized' in rooms:
-                            other_env = sio.get_environ(other_sid)
-                            if other_env and other_env.get('REMOTE_ADDR') == ip:
-                                is_already_authorized = True
-                                break
-                except: pass
+                        other_env = sio.get_environ(other_sid)
+                        if other_env and get_real_ip(other_env) == ip:
+                            is_already_authorized = True
+                            break
+                except Exception as e:
+                    logger.debug(f"Session check error: {e}")
 
                 if is_already_authorized:
                     logger.info(f"[AUTH] Device from {ip} already has an authorized session. Suppressing code for {sid}.")
@@ -150,7 +155,7 @@ def register_auth_handlers(sio, socket_manager):
                                         break
                                 except: pass
                         
-                        socket_manager.pairing_codes[sid] = existing_code or str(random.randint(1000, 9999))
+                        socket_manager.pairing_codes[sid] = existing_code or "".join(secrets.choice("0123456789") for _ in range(4))
                     
                     if not token:
                         # Новый планшет без токена - показываем сразу везде
@@ -163,7 +168,7 @@ def register_auth_handlers(sio, socket_manager):
                 else:
                     # Для обычных браузеров
                     if not token:
-                        code = str(random.randint(1000, 9999))
+                        code = "".join(secrets.choice("0123456789") for _ in range(4))
                         socket_manager.pairing_codes[sid] = code
                         logger.info(f"[AUTH] New unknown device without token. Showing code immediately.")
                         asyncio.create_task(_delayed_pairing_code(sid, socket_manager, sio, ip, delay=0))
@@ -189,7 +194,7 @@ def register_auth_handlers(sio, socket_manager):
                                         break
                                 except: pass
                         
-                        socket_manager.pairing_codes[sid] = existing_code or str(random.randint(1000, 9999))
+                        socket_manager.pairing_codes[sid] = existing_code or "".join(secrets.choice("0123456789") for _ in range(4))
                         asyncio.create_task(_delayed_pairing_code(sid, socket_manager, sio, ip, delay=3.0))
                 
                 return True

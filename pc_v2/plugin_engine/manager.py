@@ -61,8 +61,10 @@ class PluginManager:
             await self.start_plugin(p_id)
 
     async def start_plugin(self, plugin_id: str):
+        # Если плагин уже запущен, сначала останавливаем его
         if plugin_id in self.active_plugins:
-            return
+            logger.info(f"Plugin {plugin_id} is already running. Stopping before reload...")
+            await self.stop_plugin(plugin_id)
 
         try:
             module_name = f"plugins.{plugin_id}.main"
@@ -75,6 +77,7 @@ class PluginManager:
             instance = plugin_class(plugin_id=plugin_id)
             
             self.active_plugins[plugin_id] = instance
+            # Используем встроенный метод запуска плагина
             asyncio.create_task(instance.start())
             logger.info(f"Successfully started plugin: {plugin_id}")
         except Exception as e:
@@ -111,7 +114,8 @@ class PluginManager:
         await plugin.handle_command("elevate", None)
 
     async def shutdown(self):
-        for p_id in list(self.active_plugins.keys()):
-            await self.stop_plugin(p_id)
+        tasks = [self.stop_plugin(p_id) for p_id in list(self.active_plugins.keys())]
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 plugin_manager = PluginManager()

@@ -2,17 +2,9 @@ from fastapi import APIRouter, Depends, Request, HTTPException
 from core.config import config_manager
 from network.socket_server import sio
 from core.autostart import AutostartManager
+from .security import verify_token
 
 router = APIRouter(prefix="/api/config")
-
-async def verify_token(request: Request):
-    token = request.headers.get("X-Token") or request.query_params.get("token")
-    cfg = config_manager.get()
-    valid_tokens = [config_manager.gui_token] if config_manager.gui_token else []
-    if cfg.trusted_tokens:
-        valid_tokens.extend(cfg.trusted_tokens)
-    if not token or token not in valid_tokens:
-        raise HTTPException(status_code=401, detail="Unauthorized")
 
 @router.get("", dependencies=[Depends(verify_token)])
 async def get_global_config():

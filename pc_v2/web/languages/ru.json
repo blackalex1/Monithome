@@ -100,5 +100,17 @@
     "device_type_tablet": "Планшет",
     "device_type_browser": "Браузер",
     "device_ip_label": "IP-адрес",
-    "no_devices_connected": "Нет подключенных внешних устройств"
+    "no_devices_connected": "Нет подключенных внешних устройств",
+    "log_filter_all": "Все",
+    "log_filter_info": "Инфо",
+    "log_filter_warning": "Варнинги",
+    "log_filter_error": "Ошибки",
+    "auth_gui_token_invalid": "Локальный токен GUI недействителен. Введите код сопряжения с экрана ПК:",
+    "auth_new_device_detected": "Обнаружено новое устройство. Введите код сопряжения с экрана ПК:",
+    "btn_confirm": "Подтвердить",
+    "auth_success_msg": "Авторизация прошла успешно!",
+    "auth_failed": "Ошибка авторизации: ",
+    "btn_kick": "Отключить",
+    "confirm_kick": "Разорвать соединение с этим устройством?",
+    "device_kicked": "Отключение устройства..."
 }

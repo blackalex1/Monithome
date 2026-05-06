@@ -38,6 +38,14 @@ class SocketServerManager:
         register_auth_handlers(self.sio, self)
         register_ui_handlers(self.sio)
         register_plugin_handlers(self.sio)
+
+        @self.sio.on("kick_device")
+        async def handle_kick_device(sid, data):
+            target_sid = data.get("sid")
+            if target_sid:
+                logger.info(f"Kicking device {target_sid} requested by {sid}")
+                await self.sio.disconnect(target_sid)
+                await self.update_devices()
         
         # Запускаем фоновую рассылку (батчинг)
         asyncio.create_task(self._broadcast_loop())
@@ -52,14 +60,20 @@ class SocketServerManager:
                 environ = self.sio.get_environ(sid)
                 if not environ: continue
                 
-                # Пытаемся максимально точно определить IP
+                # Используем улучшенную логику определения IP из auth.py
+                from .handlers.auth import register_auth_handlers
+                # Но лучше просто вынести get_real_ip в утилиты. 
+                # Пока что скопируем или используем тот же подход.
                 scope = environ.get('asgi.scope')
                 if scope and 'client' in scope and scope['client']:
                     ip = scope['client'][0]
                 else:
-                    ip = environ.get('HTTP_X_FORWARDED_FOR', 
-                         environ.get('HTTP_X_REAL_IP', 
-                         environ.get('REMOTE_ADDR', 'Unknown'))).split(',')[0].strip()
+                    # Проверка X-Forwarded-For и прочих
+                    xff = environ.get('HTTP_X_FORWARDED_FOR')
+                    if xff:
+                        ip = xff.split(',')[0].strip()
+                    else:
+                        ip = environ.get('HTTP_X_REAL_IP', environ.get('REMOTE_ADDR', 'Unknown'))
                 
                 ua = environ.get('HTTP_USER_AGENT', 'Unknown')
                 device_type = "Browser"

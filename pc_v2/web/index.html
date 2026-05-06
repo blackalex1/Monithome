@@ -62,8 +62,18 @@
             <!-- Server Logs Section -->
             <section id="logs-section" class="content-section">
                 <header class="section-header">
-                    <h2 data-i18n="nav_logs">Server Logs</h2>
-                    <p data-i18n="logs_desc">Real-time system and plugin activity.</p>
+                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
+                        <div>
+                            <h2 data-i18n="nav_logs">Server Logs</h2>
+                            <p data-i18n="logs_desc">Real-time system and plugin activity.</p>
+                        </div>
+                        <div class="log-filters glass-panel" style="display: flex; gap: 5px; padding: 5px; border-radius: 12px;">
+                            <button class="filter-btn active" data-level="all" data-i18n="log_filter_all">All</button>
+                            <button class="filter-btn" data-level="info" data-i18n="log_filter_info">Info</button>
+                            <button class="filter-btn" data-level="warning" data-i18n="log_filter_warning">Warning</button>
+                            <button class="filter-btn" data-level="error" data-i18n="log_filter_error">Error</button>
+                        </div>
+                    </div>
                 </header>
                 <div class="glass-panel logs-container">
                     <pre id="log-output"></pre>
@@ -158,8 +168,10 @@
         </div>
     </div>
 
-    <script src="/static/js/charts_ui.js"></script>
-    <script src="/static/js/app.js"></script>
+    <!-- Toast Notification Container -->
+    <div id="toast-container" class="toast-container"></div>
+
+    <script type="module" src="/static/js/main.js"></script>
 </body>
 
 </html>
