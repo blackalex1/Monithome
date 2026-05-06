@@ -88,5 +88,17 @@
     "stats_temp": "Темп.",
     "pairing_title": "СОПРЯЖЕНИЕ УСТРОЙСТВА",
     "pairing_desc": "Введите этот защитный код на планшете",
-    "btn_dismiss": "ЗАКРЫТЬ"
+    "btn_dismiss": "ЗАКРЫТЬ",
+    "autostart_label": "Автозагрузка с Windows",
+    "autostart_desc": "Запускать MonitHome автоматически при входе в систему.",
+    "status_elevated": "Права администратора активны",
+    "tray_open": "Открыть панель управления",
+    "tray_exit": "Выход из MonitHome",
+    "nav_devices": "Подключенные устройства",
+    "devices_desc": "Список всех активных сессий управления вашим ПК.",
+    "device_type_pc": "ПК (Настройки)",
+    "device_type_tablet": "Планшет",
+    "device_type_browser": "Браузер",
+    "device_ip_label": "IP-адрес",
+    "no_devices_connected": "Нет подключенных внешних устройств"
 }

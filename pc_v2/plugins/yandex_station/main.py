@@ -36,7 +36,9 @@ class Plugin(BasePlugin):
 
     async def on_start(self):
         self.loop = asyncio.get_running_loop()
-        await self.auth.refresh_tokens_sync()
+        
+        # Обновляем токены. Если они обновились, refresh_tokens_sync сам вызовет apply_mode()
+        tokens_updated = await self.auth.refresh_tokens_sync()
         
         if not self.auth.has_token():
             self.log("Yandex token missing. Waiting for manual login...", 20)
@@ -52,7 +54,10 @@ class Plugin(BasePlugin):
             self.log(f"Failed to initialize Zeroconf: {e}", 40)
         
         event_bus.subscribe("ui_config_changed", self._on_config_changed)
-        await self.device_manager.apply_mode()
+        
+        # Если токены не обновлялись (и следовательно apply_mode не вызывался), вызываем его сейчас
+        if not tokens_updated:
+            await self.device_manager.apply_mode()
 
     async def _on_config_changed(self, payload: dict):
         if payload.get("plugin_id") == self.plugin_id or payload.get("plugin_id") is None:
@@ -98,11 +103,14 @@ class Plugin(BasePlugin):
             if d_id and addresses:
                 ip = addresses[0]
                 if d_id in self.devices:
-                    if self.devices[d_id].get("ip") != ip:
+                    old_ip = self.devices[d_id].get("ip")
+                    if old_ip != ip:
+                        self.log(f"Device {d_id} IP updated: {old_ip} -> {ip}")
                         self.devices[d_id]["ip"] = ip
                         cached_ips = self.get_config().get("cached_ips", {})
                         cached_ips[d_id] = ip
                         self.update_config({"cached_ips": cached_ips})
+                        # Вещаем конфиг только при РЕАЛЬНОМ изменении IP
                         asyncio.run_coroutine_threadsafe(self.broadcaster.broadcast_config_to_tablet(), self.loop)
 
     def update_service(self, zc, type, name):

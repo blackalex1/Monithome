@@ -220,6 +220,109 @@ class PairingDialog(QDialog):
         if code_lbl:
             code_lbl.setText(code)
 
+class CustomTitleBar(QWidget):
+    def __init__(self, parent):
+        super().__init__(parent)
+        self.parent = parent
+        self.setFixedHeight(48)
+        self.setObjectName("titleBar")
+        
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(18, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Left Side (Icon)
+        self.icon_label = QLabel()
+        if os.path.exists(parent.icon_path):
+            self.icon_label.setPixmap(QIcon(parent.icon_path).pixmap(26, 26))
+        layout.addWidget(self.icon_label)
+        
+        layout.addStretch()
+        
+        # Center Side (Title)
+        self.title_label = QLabel("MonitHome Dashboard")
+        self.title_label.setStyleSheet("font-weight: 700; color: #94A3B8; font-size: 12px; letter-spacing: 1px; text-transform: uppercase;")
+        self.title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.title_label)
+        
+        layout.addStretch()
+        
+        # Right Side (Buttons)
+        self.btn_min = QPushButton("─")
+        self.btn_max = QPushButton("▢")
+        self.btn_close = QPushButton("✕")
+        
+        for btn in [self.btn_min, self.btn_max, self.btn_close]:
+            btn.setFixedSize(50, 48)
+            btn.setCursor(Qt.PointingHandCursor)
+            layout.addWidget(btn)
+            
+        self.btn_min.setObjectName("btnMin")
+        self.btn_max.setObjectName("btnMax")
+        self.btn_close.setObjectName("btnClose")
+        
+        self.btn_min.clicked.connect(self.parent.showMinimized)
+        self.btn_max.clicked.connect(self.toggle_maximize)
+        self.btn_close.clicked.connect(self.parent.close)
+        
+        self.setStyleSheet("""
+            #titleBar {
+                background-color: #020617;
+                border: none;
+            }
+            QLabel {
+                border: none;
+                background: transparent;
+            }
+            QPushButton {
+                background: transparent;
+                color: #64748B;
+                border: none;
+                font-size: 16px;
+                font-weight: bold;
+            }
+            QPushButton#btnMax {
+                font-size: 20px;
+            }
+            QPushButton#btnMin:hover, QPushButton#btnMax:hover {
+                background-color: rgba(255, 255, 255, 0.05);
+                color: white;
+            }
+            QPushButton#btnClose:hover {
+                background-color: #ef4444;
+                color: white;
+            }
+        """)
+
+        self.start_pos = None
+
+    def toggle_maximize(self):
+        if self.parent.isMaximized():
+            self.parent.showNormal()
+            self.btn_max.setText("▢")
+        else:
+            self.parent.showMaximized()
+            self.btn_max.setText("❐")
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.toggle_maximize()
+            event.accept()
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.start_pos = event.globalPosition().toPoint() - self.parent.frameGeometry().topLeft()
+            event.accept()
+
+    def mouseMoveEvent(self, event):
+        if self.start_pos:
+            self.parent.move(event.globalPosition().toPoint() - self.start_pos)
+            event.accept()
+
+    def mouseReleaseEvent(self, event):
+        self.start_pos = None
+        event.accept()
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -232,16 +335,37 @@ class MainWindow(QMainWindow):
             self.setWindowIcon(QIcon(self.icon_path))
         
         self.resize(1280, 800)
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
         
+        # Main layout
+        main_widget = QWidget()
+        main_widget.setObjectName("mainContainer")
+        self.setCentralWidget(main_widget)
+        self.main_layout = QVBoxLayout(main_widget)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+        
+        # Custom Title Bar
+        self.title_bar = CustomTitleBar(self)
+        self.main_layout.addWidget(self.title_bar)
+        
+        # Browser
         self.browser = QWebEngineView()
+        self.main_layout.addWidget(self.browser)
         
-        layout = QVBoxLayout()
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.browser)
-        
-        container = QWidget()
-        container.setLayout(layout)
-        self.setCentralWidget(container)
+        # Container style
+        main_widget.setStyleSheet("""
+            #mainContainer {
+                background-color: #020617;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 12px;
+            }
+            #titleBar, QWebEngineView, QLabel {
+                border: none;
+                background-color: transparent;
+            }
+        """)
         
         self.setStyleSheet("background-color: #020617;")
         self.target_url = f"http://127.0.0.1:5000/?gui_token={config_manager.gui_token}"
@@ -306,31 +430,55 @@ class MainWindow(QMainWindow):
             self.quit_application()
 
     def quit_application(self):
-        """Полное завершение всех процессов"""
-        logger.info("Shutting down application...")
-        self.tray_icon.hide()
+        """Полное и агрессивное завершение всех процессов"""
+        logger.info("--- SHUTDOWN SEQUENCE STARTED ---")
         
-        # Даем Qt время скрыть иконку
-        QApplication.processEvents()
+        try:
+            self.tray_icon.hide()
+            QApplication.processEvents()
+        except: pass
         
+        # 1. Пытаемся корректно остановить плагины (с лимитом времени)
         try:
             from plugin_engine.manager import plugin_manager
             import asyncio
-            # Даем плагинам шанс корректно остановиться (с лимитом 2 секунды)
+            logger.info("Stopping plugins...")
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
             try:
-                loop.run_until_complete(asyncio.wait_for(plugin_manager.shutdown(), timeout=2.0))
+                loop.run_until_complete(asyncio.wait_for(plugin_manager.shutdown(), timeout=1.5))
+                logger.info("Plugins stopped successfully.")
             except asyncio.TimeoutError:
-                logger.warning("Shutdown timed out, forcing exit...")
+                logger.warning("Plugin shutdown timed out. Proceeding to force kill.")
+            except Exception as e:
+                logger.error(f"Error during plugin shutdown: {e}")
             finally:
                 loop.close()
         except Exception as e:
-            logger.error(f"Error during shutdown: {e}")
+            logger.error(f"Failed to access plugin manager: {e}")
+
+        # 2. Убиваем все дочерние процессы (хелперы, сканеры и т.д.)
+        try:
+            import psutil
+            current_process = psutil.Process()
+            children = current_process.children(recursive=True)
+            if children:
+                logger.info(f"Terminating {len(children)} child processes...")
+                for child in children:
+                    try:
+                        logger.info(f"Killing child PID {child.pid} ({child.name()})")
+                        child.kill()
+                    except (psutil.NoSuchProcess, psutil.AccessDenied):
+                        pass
+        except Exception as e:
+            logger.error(f"Error while killing children: {e}")
+
+        logger.info("Final exit signal sent. Goodbye!")
+        # Даем логам секунду записаться
+        time.sleep(0.1)
         
-        logger.info("Final exit.")
-        # Максимально агрессивное завершение, чтобы убить все фоновые потоки и хелперы
-        os._exit(0) 
+        # Максимально агрессивное завершение
+        os._exit(0)
 
     def show_pairing_code(self, code):
         """Показ кода сопряжения. Если окно уже открыто - просто обновляем код."""
@@ -450,7 +598,11 @@ def main():
     bridge.hide_pairing_requested.connect(window.hide_pairing_code)
     file_bridge.file_selected.connect(window.open_system_file_dialog)
     
-    window.show()
+    is_minimized = "--minimized" in sys.argv
+    if not is_minimized:
+        window.show()
+    else:
+        logger.info("Starting minimized to tray.")
     
     sys.exit(qt_app.exec())
 

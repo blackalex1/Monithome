@@ -38,6 +38,7 @@ class MasterConfig(BaseModel):
     ]
     trusted_tokens: List[str] = []
     server_uuid: str = "" # Уникальный ID сервера
+    autostart: bool = False
 
 class ConfigManager:
     def __init__(self, db_path: str = None):

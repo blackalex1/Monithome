@@ -33,6 +33,7 @@ class Plugin(BasePlugin):
         # Кэш имен оборудования
         self._cpu_name = None
         self._gpu_name = None
+        self._elevation_pending_until = 0
 
     async def on_start(self):
         self.log("system_stats started.")
@@ -209,27 +210,35 @@ class Plugin(BasePlugin):
                 if not data_raw:
                     # Если данных нет и мы не админ - просим прав
                     if not ctypes.windll.shell32.IsUserAnAdmin():
-                        self.needs_elevation = True
+                        if time.time() > self._elevation_pending_until:
+                            self.needs_elevation = True
+                        self.elevation_active = False
                     return None
                 
                 stats = json.loads(data_raw)
                 # Проверяем "свежесть" данных (не старше 5 секунд)
                 if time.time() - stats.get('last_update', 0) > 5:
                     if not ctypes.windll.shell32.IsUserAnAdmin():
-                        self.needs_elevation = True
+                        if time.time() > self._elevation_pending_until:
+                            self.needs_elevation = True
+                        self.elevation_active = False
                     return None
                 
                 self.needs_elevation = False # Всё ок, данные идут
+                self.elevation_active = True
                 return stats
             except Exception as e:
                 if 'shm' in locals(): shm.close()
                 if not ctypes.windll.shell32.IsUserAnAdmin():
                     self.needs_elevation = True
+                    self.elevation_active = False
                 return None
         except:
             # Памяти нет вообще - значит хелпер не запущен
             if not ctypes.windll.shell32.IsUserAnAdmin():
-                self.needs_elevation = True
+                if time.time() > self._elevation_pending_until:
+                    self.needs_elevation = True
+                self.elevation_active = False
             return None
 
     def _start_helper(self):
@@ -239,7 +248,9 @@ class Plugin(BasePlugin):
             return
         
         self._last_helper_start = now
+        self._elevation_pending_until = now + 10 # Даем 10 секунд на запуск
         self.needs_elevation = False # Сбрасываем флаг, т.к. процесс запуска инициирован
+        self.elevation_active = False
         
         try:
             plugin_dir = os.path.dirname(__file__)

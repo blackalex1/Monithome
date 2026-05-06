@@ -8,6 +8,25 @@ from core.event_bus import event_bus
 logger = logging.getLogger("SocketHandlers.Auth")
 
 def register_auth_handlers(sio, socket_manager):
+    def get_real_ip(environ):
+        """Пытается извлечь реальный IP из ASGI scope или заголовков прокси"""
+        # 1. Сначала пробуем достать напрямую из ASGI scope (самый точный способ в FastAPI/Uvicorn)
+        scope = environ.get('asgi.scope')
+        if scope and 'client' in scope and scope['client']:
+            return scope['client'][0]
+
+        # 2. Проверяем заголовки прокси
+        xff = environ.get('HTTP_X_FORWARDED_FOR')
+        if xff:
+            return xff.split(',')[0].strip()
+        
+        real_ip = environ.get('HTTP_X_REAL_IP')
+        if real_ip:
+            return real_ip.strip()
+            
+        # 3. Запасной вариант
+        return environ.get('REMOTE_ADDR', '')
+
     async def _delayed_pairing_code(sid, socket_manager, sio, ip, delay=3.0):
         try:
             if delay > 0:
@@ -50,7 +69,19 @@ def register_auth_handlers(sio, socket_manager):
 
                 code = socket_manager.pairing_codes.get(sid)
                 if code:
+                    # Проверяем кэш непосредственно перед показом (защита от гонки условий)
+                    now = asyncio.get_event_loop().time()
+                    last_emitted = getattr(socket_manager, "_last_emitted_code", {})
+                    if ip in last_emitted and last_emitted[ip]["code"] == code and (now - last_emitted[ip]["time"]) < 2.0:
+                        return
+
                     logger.info(f"[AUTH] Triggering pairing UI for {sid} (code: {code})")
+                    
+                    # Обновляем кэш ДО первого await, чтобы параллельные задачи увидели это немедленно
+                    if not hasattr(socket_manager, "_last_emitted_code"):
+                        socket_manager._last_emitted_code = {}
+                    socket_manager._last_emitted_code[ip] = {"code": code, "time": now}
+                    
                     # Показываем код на ПК
                     await event_bus.emit("show_pairing_code", {"code": code, "server_uuid": config_manager.config.server_uuid})
                     # Посылаем сигнал на Планшет (с данными сервера, чтобы он открыл окно ввода)
@@ -68,9 +99,15 @@ def register_auth_handlers(sio, socket_manager):
             cfg = config_manager.get()
             token = auth.get("token") if auth else None
             
-            ip = environ.get('REMOTE_ADDR', '')
+            # Определяем реальный IP с учетом возможных прокси
+            ip = get_real_ip(environ)
+            orig_ip = environ.get('REMOTE_ADDR', '')
             ua = environ.get('HTTP_USER_AGENT', '')
-            logger.info(f"Connection: IP={ip}, Token={str(token)[:8] if token else 'None'}..., UA={ua}")
+            
+            log_msg = f"Connection: IP={ip}"
+            if orig_ip and orig_ip != ip:
+                log_msg += f" (via {orig_ip})"
+            logger.info(f"{log_msg}, Token={str(token)[:8] if token else 'None'}..., UA={ua}")
             
             is_gui = (token == config_manager.gui_token) and (config_manager.gui_token is not None)
             
@@ -121,7 +158,7 @@ def register_auth_handlers(sio, socket_manager):
                         asyncio.create_task(_delayed_pairing_code(sid, socket_manager, sio, ip, delay=0))
                     else:
                         # Планшет с токеном (возможно старым) - даем 3 секунды на авто-вход
-                        logger.info(f"Android device with token {sid} connected. Waiting 3s before asking for code...")
+                        logger.info(f"Android device {sid} connected (untrusted). Waiting 3s before asking for code...")
                         asyncio.create_task(_delayed_pairing_code(sid, socket_manager, sio, ip, delay=3.0))
                 else:
                     # Для обычных браузеров
@@ -191,6 +228,8 @@ def register_auth_handlers(sio, socket_manager):
                 await event_bus.emit("hide_pairing_code")
                 
             await socket_manager._send_initial_data(sid)
+            # Обновляем список устройств для всех
+            await socket_manager.update_devices()
             return True
         except Exception as e:
             logger.error(f"Critical error in connect handler: {e}")
@@ -231,6 +270,8 @@ def register_auth_handlers(sio, socket_manager):
                 await event_bus.emit("hide_pairing_code")
                 
             await socket_manager._send_initial_data(sid)
+            # Обновляем список устройств для всех
+            await socket_manager.update_devices()
             return
 
         if cfg.trusted_tokens and code in cfg.trusted_tokens:
@@ -273,6 +314,8 @@ def register_auth_handlers(sio, socket_manager):
             
             if not socket_manager.pairing_codes:
                 await event_bus.emit("hide_pairing_code")
+            # Обновляем список устройств для всех
+            await socket_manager.update_devices()
         else:
             await sio.emit('auth_required', room=sid)
 
@@ -281,3 +324,5 @@ def register_auth_handlers(sio, socket_manager):
         logger.info(f"Client {sid} disconnected")
         if sid in socket_manager.pairing_codes:
             del socket_manager.pairing_codes[sid]
+        # Обновляем список устройств для всех
+        await socket_manager.update_devices()

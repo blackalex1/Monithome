@@ -175,7 +175,7 @@ class DashboardViewModel(
                     // и у нас есть для него токен (по UUID), попробуем "тихо" переподключиться с токеном
                     if (server.url == s.serverUrl && !server.uuid.isNullOrEmpty()) {
                         val token = settingsRepository.getString("auth_token_${server.uuid}")
-                        if (!token.isNullOrEmpty() && !s.isConnected) {
+                        if (!token.isNullOrEmpty() && !s.isConnected && !s.isLoading) {
                             Log.i("DashboardVM", "Discovered target server with known UUID, connecting with token...")
                             processIntent(DashboardIntent.Connect(server.url))
                         }

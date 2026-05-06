@@ -47,6 +47,7 @@ async def get_plugins():
                         if p_cfg.get("hidden", False): continue
                         instance = plugin_manager.active_plugins.get(p_id)
                         needs_elevation = getattr(instance, "needs_elevation", False) if instance else False
+                        elevation_active = getattr(instance, "elevation_active", False) if instance else False
                         
                         result.append({
                             "id": p_id, "active": p_id in active_plugins,
@@ -54,7 +55,8 @@ async def get_plugins():
                             "description": p_cfg.get("description", ""),
                             "version": p_cfg.get("version", "1.0.0"),
                             "has_settings": p_cfg.get("has_settings", False),
-                            "needs_elevation": needs_elevation
+                            "needs_elevation": needs_elevation,
+                            "elevation_active": elevation_active
                         })
                 except: pass
     return {"plugins": result}

@@ -48,13 +48,12 @@ class PcSocketClient {
 
     fun connect(url: String, token: String? = null, deviceId: String? = null) {
         if (_connectionState.value is SocketConnectionState.Connected || _connectionState.value is SocketConnectionState.Connecting) {
+            Log.d("PcSocketClient", "Connect called but already connecting/connected. Skipping.")
             return
         }
-
-        var finalUrl = url.trim().replace(" ", "")
-        if (finalUrl.isNotEmpty() && !finalUrl.startsWith("http")) {
-            finalUrl = "http://$finalUrl"
-        }
+        
+        var finalUrl = if (url.startsWith("http")) url else "http://$url"
+        Log.i("PcSocketClient", "Connecting to $finalUrl (token present: ${token != null})")
         
         val hasPort = if (finalUrl.startsWith("http")) {
             finalUrl.substringAfter("://").contains(":")

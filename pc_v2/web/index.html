@@ -29,6 +29,7 @@
                 <li class="active"><a href="#" data-target="plugins-section" data-i18n="nav_plugins">Plugin Manager</a>
                 </li>
                 <li><a href="#" data-target="logs-section" data-i18n="nav_logs">Server Logs</a></li>
+                <li><a href="#" data-target="devices-section" data-i18n="nav_devices">Connected Devices</a></li>
                 <li><a href="#" data-target="settings-section" data-i18n="nav_settings">Global Settings</a></li>
                 <li><a href="#" data-target="about-section" data-i18n="nav_about">About</a></li>
             </ul>
@@ -69,6 +70,18 @@
                 </div>
             </section>
 
+            <!-- Connected Devices Section -->
+            <section id="devices-section" class="content-section">
+                <header class="section-header">
+                    <h2 data-i18n="nav_devices">Connected Devices</h2>
+                    <p data-i18n="devices_desc">List of all active sessions controlling your PC.</p>
+                </header>
+                <div class="devices-grid" id="devices-list">
+                    <!-- Devices will be injected here via JS -->
+                    <p class="no-devices" data-i18n="no_devices_connected">No external devices connected</p>
+                </div>
+            </section>
+
             <!-- Global Settings Section -->
             <section id="settings-section" class="content-section">
                 <header class="section-header">
@@ -98,6 +111,17 @@
                                 <input type="text" id="server-theme-hex" class="form-input color-hex"
                                     placeholder="0xFF22C55E">
                             </div>
+                        </div>
+
+                        <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 12px; border: 1px solid var(--border-color);">
+                            <div>
+                                <label style="margin-bottom: 4px; color: white;" data-i18n="autostart_label">Autostart with Windows</label>
+                                <p style="font-size: 12px; color: var(--text-muted);" data-i18n="autostart_desc">Start MonitHome automatically when you log in.</p>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="server-autostart">
+                                <span class="slider"></span>
+                            </label>
                         </div>
 
                         <div class="form-actions mt-4">

@@ -83,6 +83,53 @@ socket.on('stats_json', (payload) => {
     }
 });
 
+socket.on('connected_devices', (devices) => {
+    renderDevicesList(devices);
+});
+
+function renderDevicesList(devices) {
+    const list = document.getElementById('devices-list');
+    if (!list) return;
+
+    if (!devices || devices.length === 0) {
+        list.innerHTML = `<p class="no-devices" data-i18n="no_devices_connected">${window.translations['no_devices_connected'] || 'No external devices connected'}</p>`;
+        return;
+    }
+
+    list.innerHTML = '';
+    devices.forEach(dev => {
+        const card = document.createElement('div');
+        card.className = 'device-card glass-panel';
+        
+        let typeLabel = window.translations['device_type_browser'] || 'Browser';
+        let icon = '🌐';
+        
+        if (dev.type === 'PC GUI') {
+            typeLabel = window.translations['device_type_pc'] || 'PC (Settings)';
+            icon = '💻';
+        } else if (dev.type === 'Tablet') {
+            typeLabel = window.translations['device_type_tablet'] || 'Tablet';
+            icon = '📱';
+        }
+
+        const ipLabel = window.translations['device_ip_label'] || 'IP Address';
+
+        card.innerHTML = `
+            <div class="device-icon">${icon}</div>
+            <div class="device-info">
+                <div class="device-name">${typeLabel}</div>
+                <div class="device-detail">${ipLabel}: ${dev.ip}</div>
+                <div class="device-ua" title="${dev.ua}">${dev.ua}</div>
+            </div>
+            <div class="device-status">
+                <span class="dot connected"></span>
+                Online
+            </div>
+        `;
+        list.appendChild(card);
+    });
+}
+
 function applyThemeColor(hex) {
     if (!hex) return;
 
@@ -188,13 +235,19 @@ async function loadPlugins() {
                         ${plugin.active ? '● ' + runningStr : '○ ' + stoppedStr}
                     </span>
                     <div style="display:flex; gap: 8px; align-items: center;">
-                        ${plugin.needs_elevation ? `
+                        ${plugin.elevation_active ? `
+                            <button class="plugin-btn" 
+                                    title="${window.translations['status_elevated'] || 'Admin Rights Active'}"
+                                    style="background: var(--success); border-color: rgba(16, 185, 129, 0.4); cursor: default;">
+                                🛡️
+                            </button>
+                        ` : (plugin.needs_elevation ? `
                             <button class="plugin-btn elevation-btn" onclick="requestPluginElevation('${plugin.id}')" 
                                     title="${window.translations['btn_elevate'] || 'Request Admin Rights'}"
                                     style="background: var(--danger); border-color: rgba(239, 68, 68, 0.4); animation: pulse-red 2s infinite;">
                                 🛡️
                             </button>
-                        ` : ''}
+                        ` : '')}
                         <button class="plugin-btn" onclick="showPluginInfo('${plugin.id}')" title="${window.translations['btn_info'] || 'Info'}">ℹ️</button>
                         ${plugin.has_settings ? `<button class="plugin-btn" onclick="editPluginConfig('${plugin.id}')" title="${window.translations['btn_settings'] || 'Settings'}">⚙️</button>` : ''}
                         ${plugin.id === 'yandex_station' && plugin.active ? `<button class="plugin-btn" onclick="requestYandexQR()">${loginStr}</button>` : ''}
@@ -526,6 +579,7 @@ async function loadGlobalConfig() {
 
         document.getElementById('server-hostname').value = config.hostname || '';
         document.getElementById('server-language').value = config.language || 'ru';
+        document.getElementById('server-autostart').checked = config.autostart || false;
 
         // Load translations
         await switchLanguage(config.language || 'ru');
@@ -577,7 +631,8 @@ document.getElementById('global-settings-form').addEventListener('submit', async
     const config = {
         hostname: document.getElementById('server-hostname').value,
         language: document.getElementById('server-language').value,
-        theme_color: document.getElementById('server-theme-hex').value
+        theme_color: document.getElementById('server-theme-hex').value,
+        autostart: document.getElementById('server-autostart').checked
     };
 
     try {

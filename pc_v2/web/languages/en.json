@@ -88,5 +88,10 @@
     "stats_temp": "Temp",
     "pairing_title": "DEVICE PAIRING",
     "pairing_desc": "Enter this security code on your tablet",
-    "btn_dismiss": "DISMISS"
+    "btn_dismiss": "DISMISS",
+    "autostart_label": "Autostart with Windows",
+    "autostart_desc": "Start MonitHome automatically when you log in.",
+    "status_elevated": "Admin Rights Active",
+    "tray_open": "Open Dashboard",
+    "tray_exit": "Exit MonitHome"
 }

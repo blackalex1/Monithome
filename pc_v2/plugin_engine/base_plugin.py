@@ -15,6 +15,7 @@ class BasePlugin(ABC):
         self.logger = logging.getLogger(f"Plugin.{plugin_id}")
         self._is_running = False
         self.needs_elevation = False # Флаг: нужны ли права админа прямо сейчас
+        self.elevation_active = False # Флаг: права админа успешно получены и активны
 
     async def start(self):
         """Внутренний метод запуска. Не переопределять в плагинах."""
@@ -62,8 +63,12 @@ class BasePlugin(ABC):
 
     async def emit_state(self, state: Dict[str, Any]):
         """Отправка обновленного состояния плагина."""
-        # Добавляем флаг прав админа в состояние, чтобы UI знал, показывать ли кнопку
-        full_state = {**state, "needs_elevation": self.needs_elevation}
+        # Добавляем флаги прав админа в состояние, чтобы UI знал, что показывать
+        full_state = {
+            **state, 
+            "needs_elevation": self.needs_elevation,
+            "elevation_active": self.elevation_active
+        }
         await event_bus.emit("plugin_state_changed", {
             "plugin_id": self.plugin_id,
             "state": full_state

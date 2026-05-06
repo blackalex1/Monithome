@@ -14,6 +14,7 @@ from .handlers.auth import register_auth_handlers
 from .handlers.plugins import register_plugin_handlers
 
 logger = logging.getLogger("SocketServer")
+logger.setLevel(logging.INFO)
 
 # Асинхронный сервер Socket.IO (разрешаем CORS для тестов)
 sio = socketio.AsyncServer(async_mode='asgi', cors_allowed_origins='*')
@@ -41,11 +42,49 @@ class SocketServerManager:
         # Запускаем фоновую рассылку (батчинг)
         asyncio.create_task(self._broadcast_loop())
 
+    async def update_devices(self):
+        """Собирает список всех авторизованных устройств и рассылает его"""
+        devices = []
+        try:
+            # Получаем все SID в комнате authorized
+            authorized_sids = list(self.sio.manager.rooms.get('/', {}).get('authorized', []))
+            for sid in authorized_sids:
+                environ = self.sio.get_environ(sid)
+                if not environ: continue
+                
+                # Пытаемся максимально точно определить IP
+                scope = environ.get('asgi.scope')
+                if scope and 'client' in scope and scope['client']:
+                    ip = scope['client'][0]
+                else:
+                    ip = environ.get('HTTP_X_FORWARDED_FOR', 
+                         environ.get('HTTP_X_REAL_IP', 
+                         environ.get('REMOTE_ADDR', 'Unknown'))).split(',')[0].strip()
+                
+                ua = environ.get('HTTP_USER_AGENT', 'Unknown')
+                device_type = "Browser"
+                if "QtWebEngine" in ua: device_type = "PC GUI"
+                elif "okhttp" in ua or "Android" in ua: device_type = "Tablet"
+                
+                devices.append({
+                    "sid": sid,
+                    "ip": ip,
+                    "type": device_type,
+                    "ua": ua
+                })
+            
+            logger.debug(f"Broadcasting connected devices: {len(devices)}")
+            await self.sio.emit('connected_devices', devices, room='authorized')
+        except Exception as e:
+            logger.error(f"Error updating devices list: {e}")
+
     async def _on_plugin_state_changed(self, payload: Dict[str, Any]):
         p_id = payload["plugin_id"]
         state = payload["state"]
         self._state_cache[p_id] = state
         self._dirty = True
+        # Оповещаем UI, чтобы он мог перерисовать карточки (например, при получении прав)
+        await self.sio.emit('plugin_state_changed', payload, room='authorized')
 
     async def _on_plugin_custom_event(self, payload: Dict[str, Any]):
         p_id = payload["plugin_id"]
@@ -142,6 +181,9 @@ class SocketServerManager:
 
             await self.sio.emit('stats', final_payload, room=sid)
             await self.sio.emit('stats_json', payload, room=sid)
+
+        # Отправляем список устройств
+        await self.update_devices()
 
 async def import_plugin_manager():
     from plugin_engine.manager import plugin_manager
