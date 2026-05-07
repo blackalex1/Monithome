@@ -23,21 +23,23 @@ class Plugin(BasePlugin):
     def __init__(self, plugin_id: str):
         super().__init__(plugin_id)
         self._loop_task = None
-        self._helper_proc = None # Для совместимости, но не для поллинга
+        self._helper_proc = None 
         self._last_helper_start = 0
         self._state = {
             "cpu": 0, "cpu_temp": 0, "ram_percent": 0, "ram_used": 0, "ram_total": 0,
-            "gpu_load": 0, "gpu_temp": 0, "has_gpu": False,
+            "gpu_load": 0, "gpu_temp": 0, "has_gpu": False, "gpu_name": "GPU",
             "hostname": socket.gethostname(), "os": platform.system()
         }
-        # Кэш имен оборудования
         self._cpu_name = None
         self._gpu_name = None
         self._elevation_pending_until = 0
+        self.needs_elevation = False
+        self.elevation_active = False
 
     async def on_start(self):
         self.log("system_stats started.")
         self._loop_task = self.create_task(self._stats_loop())
+        await asyncio.to_thread(self._start_helper, elevate=False)
 
     async def on_stop(self):
         if self._loop_task:
@@ -47,37 +49,31 @@ class Plugin(BasePlugin):
             except asyncio.CancelledError:
                 pass
         
-        # Убиваем хелпер при остановке
-        if self._helper_proc:
-            self._helper_proc.terminate()
-            self._helper_proc = None
+        try:
+            import subprocess
+            subprocess.run(["taskkill", "/F", "/IM", "MonitHomeHelper.exe"], capture_output=True)
+        except: pass
             
         self.log("system_stats stopped.")
 
     async def handle_command(self, action: str, data: any):
         if action == "update_sensor_settings":
-            # Сохраняем новые настройки сенсоров
             self.save_config({"enabled_sensors": data})
-            # Пересобираем виджеты на основе выбранных сенсоров
             await self._rebuild_widgets_from_settings(data)
             await self._update_and_emit()
         elif action == "elevate":
             self.log("Manual elevation requested via GUI.")
-            self._start_helper()
+            await asyncio.to_thread(self._start_helper, elevate=True)
             await self._update_and_emit()
 
     async def check_admin_requirement(self) -> bool:
-        """
-        Теперь нам НЕ нужны права админа для основного процесса.
-        Админ нужен только хелперу, которого мы запустим отдельно.
-        """
-        return False
+        return self.needs_elevation
 
     async def _stats_loop(self):
         try:
             while True:
                 await self._update_and_emit()
-                await asyncio.sleep(1.0) # Опрос раз в секунду
+                await asyncio.sleep(1.0)
         except asyncio.CancelledError:
             self.log("Stats loop cancelled.")
 
@@ -86,7 +82,6 @@ class Plugin(BasePlugin):
         sensors = cfg.get("enabled_sensors", {})
         new_state = {}
         
-        # 1. Быстрые проверки через psutil
         if sensors.get("ram", True):
             ram = psutil.virtual_memory()
             ram_used_gb = round(ram.used / (1024**3), 2)
@@ -96,85 +91,66 @@ class Plugin(BasePlugin):
                 "display_ram_percent": f"{ram.percent}%",
                 "ram_used": ram_used_gb,
                 "ram_total": ram_total_gb,
-                "display_ram_used": f"{ram_used_gb} GB",
-                "display_ram_combined": f"{ram_used_gb} / {ram_total_gb} GB",
-                "secondary_ram_combined": f"{int(ram.percent)}%",
-                "ram_used_total": ram.percent,
-                "display_ram_used_total": f"{ram_used_gb} / {ram_total_gb} GB"
+                "display_ram_combined": f"{ram.percent}% ({ram_used_gb}/{ram_total_gb} GB)"
             })
 
-        if sensors.get("cpu_load", True):
-            cpu_load = psutil.cpu_percent(interval=None)
-            new_state.update({
-                "cpu": cpu_load,
-                "display_cpu": f"{cpu_load}%"
-            })
+        if sensors.get("cpu", True):
+            cpu_l = psutil.cpu_percent()
+            new_state.update({"cpu": cpu_l, "display_cpu": f"{int(cpu_l)}%"})
 
-        # 2. Тяжелый сбор (Температуры, GPU)
-        # Собираем только если включено хоть что-то из тяжелого
-        if sensors.get("cpu_temp", True) or sensors.get("gpu_load", True) or sensors.get("gpu_temp", True):
-            hw_stats = await asyncio.to_thread(self._fetch_hardware_stats)
-            # Фильтруем hw_stats перед добавлением
-            if not sensors.get("cpu_temp", True):
-                hw_stats.pop("cpu_temp", None)
-                hw_stats.pop("display_cpu_temp", None)
-            if not sensors.get("gpu_load", True):
-                hw_stats.pop("gpu_load", None)
-                hw_stats.pop("display_gpu_load", None)
-            if not sensors.get("gpu_temp", True):
-                hw_stats.pop("gpu_temp", None)
-                hw_stats.pop("display_gpu_temp", None)
-                
+        hw_stats = await asyncio.to_thread(self._fetch_hardware_stats)
+        if hw_stats:
             new_state.update(hw_stats)
+        else:
+            # Если данных от хелпера нет (например, перезапуск), сохраняем старые данные GPU/CPU Temp
+            for key in ["gpu_load", "gpu_temp", "cpu_temp", "display_gpu_load", "display_gpu_temp", "display_cpu_temp", "has_gpu", "gpu_name"]:
+                if key in self._state:
+                    new_state[key] = self._state[key]
 
         self._state = new_state
-        self.log(f"Emitting state with {len(self._state)} keys", 10) # DEBUG
         await self.emit_state(self._state)
+        try:
+            event_bus.emit_sync("plugin_state_changed", {"plugin_id": self.plugin_id, "state": self._state})
+        except: pass
 
     def _fetch_hardware_stats(self) -> Dict[str, Any]:
-        """Синхронный метод сбора аппаратной статы"""
         hw = {}
-        try:
-            ab_stats = get_afterburner_stats()
-        except:
-            ab_stats = None
-        
-        cpu_t = gpu_l = gpu_t = 0
+        cpu_t, gpu_l, gpu_t = 0, 0, 0
         has_gpu = False
 
-        # 1. Afterburner (приоритет - быстро и без админа)
+        ab_stats = get_afterburner_stats()
         if ab_stats:
             cpu_t = ab_stats.get('cpu_temp', 0)
             gpu_l = ab_stats.get('gpu_load', 0)
             gpu_t = ab_stats.get('gpu_temp', 0)
-            has_gpu = gpu_l > 0 or gpu_t > 0
-            if not self._gpu_name: self._gpu_name = ab_stats.get('gpu_name')
-            if cpu_t > 0:
-                self.log(f"Stats from Afterburner: CPU {cpu_t}°C", 10)
+            current_gpu = ab_stats.get('gpu_name')
+            if current_gpu and (not self._gpu_name or self._gpu_name == "GPU"):
+                self._gpu_name = current_gpu
+            has_gpu = True if self._gpu_name else (gpu_l > 0 or gpu_t > 0)
 
-        # 2. Если Afterburner не помог - идем к Хелперу
-        if cpu_t == 0 or gpu_t == 0:
+        if cpu_t == 0 or gpu_t == 0 or not has_gpu:
             helper_data = self._get_stats_from_helper()
             if helper_data:
-                self.log(f"Stats from Helper: {helper_data}", 10)
                 if cpu_t == 0: cpu_t = helper_data.get('cpu_temp', 0)
                 if gpu_t == 0: gpu_t = helper_data.get('gpu_temp', 0)
                 if gpu_l == 0: gpu_l = helper_data.get('gpu_load', 0)
-                has_gpu = has_gpu or gpu_l > 0 or gpu_t > 0
+                if helper_data.get('has_gpu'): has_gpu = True
+                current_gpu = helper_data.get('gpu_name')
+                if current_gpu and (not self._gpu_name or self._gpu_name == "GPU"):
+                    self._gpu_name = current_gpu
+                has_gpu = has_gpu or (gpu_l > 0 or gpu_t > 0 or self._gpu_name is not None)
 
-        # 3. WMI Fallback (если хелпер не работает, но LHM запущен отдельно)
         if cpu_t == 0:
             try:
                 import pythoncom
                 pythoncom.CoInitialize()
                 w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
                 for s in w.Sensor(SensorType="Temperature"):
-                    if "CPU" in s.Name or "Package" in s.Name or "Core" in s.Name:
+                    if any(x in s.Name for x in ["CPU", "Package", "Core"]):
                         cpu_t = round(s.Value, 0)
                         break
             except: pass
 
-        # 3. Registry Name Fallbacks
         if not self._cpu_name or not self._gpu_name:
             try:
                 import winreg
@@ -182,9 +158,16 @@ class Plugin(BasePlugin):
                     key = winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r"HARDWARE\DESCRIPTION\System\CentralProcessor\0")
                     self._cpu_name = winreg.QueryValueEx(key, "ProcessorNameString")[0].strip()
                     winreg.CloseKey(key)
-                if not self._gpu_name:
-                    # Попытка найти имя GPU в реестре
-                    self._gpu_name = "GPU"
+                
+                if not self._gpu_name or self._gpu_name == "GPU":
+                    import wmi
+                    w = wmi.WMI()
+                    for g in w.Win32_VideoController():
+                        name = g.Name
+                        if any(x in name.upper() for x in ["NVIDIA", "AMD", "RADEON", "INTEL"]):
+                            self._gpu_name = name
+                            has_gpu = True
+                            break
             except: pass
 
         hw.update({
@@ -198,116 +181,96 @@ class Plugin(BasePlugin):
         return hw
 
     def _get_stats_from_helper(self) -> Dict[str, Any]:
-        """Чтение данных из Shared Memory хелпера"""
         try:
             import mmap
-            # Пробуем открыть память
-            shm = mmap.mmap(-1, 1024, tagname="Local\\MonitHomeSensors", access=mmap.ACCESS_READ)
+            # Размер 16384 и имя V9 должны строго совпадать с хелпером
+            shm = mmap.mmap(-1, 16384, tagname="Local\\MonitHomeSensors_V9", access=mmap.ACCESS_READ)
             try:
-                data_raw = shm.read(1024).decode('utf-8').strip('\x00')
+                # Читаем весь буфер целиком через срез, это надежнее
+                content = shm[:].decode('utf-8').strip('\x00')
                 shm.close()
                 
-                if not data_raw:
-                    # Если данных нет и мы не админ - просим прав
-                    if not ctypes.windll.shell32.IsUserAnAdmin():
-                        if time.time() > self._elevation_pending_until:
-                            self.needs_elevation = True
-                        self.elevation_active = False
+                if not content:
                     return None
                 
-                stats = json.loads(data_raw)
-                # Проверяем "свежесть" данных (не старше 5 секунд)
-                if time.time() - stats.get('last_update', 0) > 5:
-                    if not ctypes.windll.shell32.IsUserAnAdmin():
-                        if time.time() > self._elevation_pending_until:
-                            self.needs_elevation = True
-                        self.elevation_active = False
+                stats = json.loads(content)
+                # Проверка на "протухание" данных (более 10 секунд)
+                if time.time() - stats.get('last_update', 0) > 10:
+                    self.elevation_active = False
                     return None
                 
-                self.needs_elevation = False # Всё ок, данные идут
-                self.elevation_active = True
+                is_admin_now = stats.get('is_admin', False) or (ctypes.windll.shell32.IsUserAnAdmin() != 0)
+                
+                # Стабилизируем статус elevation, чтобы GUI не "прыгал"
+                if is_admin_now:
+                    self.elevation_active = True
+                    self.needs_elevation = False
+                else:
+                    # Если помощник работает, но без админа - показываем щит сразу
+                    self.elevation_active = False
+                    self.needs_elevation = True
+                
                 return stats
-            except Exception as e:
-                if 'shm' in locals(): shm.close()
+            except:
+                shm.close()
+                return None
+        except:
+            # Если хелпер пропал, не меняем статус мгновенно, даем ему 5 секунд на перезапуск
+            if time.time() > self._elevation_pending_until + 5:
                 if not ctypes.windll.shell32.IsUserAnAdmin():
                     self.needs_elevation = True
                     self.elevation_active = False
-                return None
-        except:
-            # Памяти нет вообще - значит хелпер не запущен
-            if not ctypes.windll.shell32.IsUserAnAdmin():
-                if time.time() > self._elevation_pending_until:
-                    self.needs_elevation = True
-                self.elevation_active = False
             return None
 
-    def _start_helper(self):
-        """Запуск хелпера с кулдауном 10 секунд. Приоритет - скомпилированный EXE."""
+    def _start_helper(self, elevate=False):
         now = time.time()
-        if now - self._last_helper_start < 10:
-            return
-        
+        if now - self._last_helper_start < 5: return
         self._last_helper_start = now
-        self._elevation_pending_until = now + 10 # Даем 10 секунд на запуск
-        self.needs_elevation = False # Сбрасываем флаг, т.к. процесс запуска инициирован
-        self.elevation_active = False
+        self._elevation_pending_until = now + 5
         
         try:
+            import subprocess
+            subprocess.run(["taskkill", "/F", "/IM", "MonitHomeHelper.exe"], capture_output=True)
+            time.sleep(0.5)
+        except: pass
+
+        try:
             plugin_dir = os.path.dirname(__file__)
-            # 1. Сначала ищем скомпилированный EXE (чтобы запрос админа был красивым)
             helper_exe = os.path.abspath(os.path.join(plugin_dir, "bin", "MonitHomeHelper.exe"))
+            self.log(f"Checking helper EXE: {helper_exe}")
             
             if os.path.exists(helper_exe):
-                self.log(f"Starting compiled helper: {helper_exe}")
-                # Запускаем EXE. Он сам попросит админа, т.к. собран с --uac-admin
-                import ctypes
-                ctypes.windll.shell32.ShellExecuteW(None, "open", helper_exe, f"--parent-pid {os.getpid()}", None, 0)
+                if elevate:
+                    self.log(f"Starting admin helper: {helper_exe}")
+                    ret = ctypes.windll.shell32.ShellExecuteW(None, "runas", helper_exe, f"--parent-pid {os.getpid()}", None, 0)
+                    self.log(f"ShellExecuteW (admin) returned: {ret}")
+                else:
+                    self.log(f"Starting normal helper: {helper_exe}")
+                    subprocess.Popen([helper_exe, "--parent-pid", str(os.getpid())], creationflags=subprocess.CREATE_NO_WINDOW)
             else:
-                # 2. Если EXE нет (режим разработки), запускаем скрипт через Python
-                self.log("Helper EXE not found, falling back to script.")
+                self.log(f"Helper EXE NOT FOUND, falling back to script.", 30)
                 helper_path = os.path.abspath(os.path.join(plugin_dir, "sensor_helper.py"))
                 python_exe = sys.executable
                 args = f'"{helper_path}" --parent-pid {os.getpid()}'
-                import ctypes
-                ctypes.windll.shell32.ShellExecuteW(None, "runas", python_exe, args, None, 0)
-                
-            self.log(f"Sensor helper start triggered with parent PID {os.getpid()}")
+                verb = "runas" if elevate else None
+                ret = ctypes.windll.shell32.ShellExecuteW(None, verb, python_exe, args, None, 0)
+                self.log(f"ShellExecuteW (script) returned: {ret}")
         except Exception as e:
-            self.log(f"Failed to trigger helper: {e}", 30)
+            self.log(f"Failed to start helper: {e}", 30)
 
     async def _rebuild_widgets_from_settings(self, sensors: dict):
         widgets = []
-        
-        # CPU Load
         if sensors.get("cpu_load", True):
             widgets.append({"id": "cpu_chart", "type": "chart", "label": "cpu_usage", "data_key": "cpu", "color": "#38bdf8", "icon": "cpu"})
-            
-        # CPU Temp
         if sensors.get("cpu_temp", True):
             widgets.append({"id": "cpu_temp_chart", "type": "chart", "label": "cpu_temp", "data_key": "cpu_temp", "color": "#ef4444", "unit": "°C", "icon": "cpu"})
-
-        # GPU Section
         if sensors.get("gpu_load", True):
             widgets.append({"id": "gpu_load_widget", "type": "stat", "label": "gpu_load", "data_key": "display_gpu_load", "icon": "gpu", "color": "#10b981"})
         if sensors.get("gpu_temp", True):
             widgets.append({"id": "gpu_temp_widget", "type": "stat", "label": "gpu_temp", "data_key": "display_gpu_temp", "icon": "gpu", "color": "#f59e0b"})
-
-        # RAM Section
         if sensors.get("ram", True):
-            widgets.append({
-                "id": "ram_combined_widget", 
-                "type": "stat", 
-                "label": "ram_label", 
-                "data_key": "display_ram_combined", 
-                "icon": "ram", 
-                "unit": "%"
-            })
-
-        self.save_config({
-            "widgets": widgets,
-            "enabled_sensors": sensors
-        })
+            widgets.append({"id": "ram_combined_widget", "type": "stat", "label": "ram_label", "data_key": "display_ram_combined", "icon": "ram", "color": "#8b5cf6"})
         
-        # Даем системе время на запись файла и уведомляем всех
+        self.save_config({"widgets": widgets, "enabled_sensors": sensors})
         await asyncio.sleep(0.1)
         await event_bus.emit("ui_config_changed", {"plugin_id": self.plugin_id})
