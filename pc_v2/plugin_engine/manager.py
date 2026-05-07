@@ -76,12 +76,17 @@ class PluginManager:
             
             instance = plugin_class(plugin_id=plugin_id)
             
-            self.active_plugins[plugin_id] = instance
-            # Используем встроенный метод запуска плагина
-            asyncio.create_task(instance.start())
-            logger.info(f"Successfully started plugin: {plugin_id}")
+            # Ждем инициализации плагина
+            await instance.start()
+            
+            if instance._is_running:
+                self.active_plugins[plugin_id] = instance
+                logger.info(f"Successfully initialized plugin: {plugin_id}")
+            else:
+                logger.error(f"Plugin {plugin_id} failed to start (check logs)")
+                
         except Exception as e:
-            logger.error(f"Failed to start plugin {plugin_id}: {e}")
+            logger.error(f"Failed to load plugin module {plugin_id}: {e}")
 
     async def stop_plugin(self, plugin_id: str):
         if plugin_id in self.active_plugins:
@@ -100,11 +105,20 @@ class PluginManager:
                 if action == "request_elevation":
                     await self._elevate_plugin(instance)
                 else:
-                    asyncio.create_task(instance.handle_command(action, data))
+                    # Выполняем команду с таймаутом, чтобы один плагин не вешал поток команд
+                    asyncio.create_task(self._safe_handle_command(instance, action, data))
             except Exception as e:
-                logger.error(f"Error handling command {action} for {plugin_id}: {e}")
+                logger.error(f"Error preparing command {action} for {plugin_id}: {e}")
         else:
             logger.warning(f"Command '{action}' received for inactive plugin '{plugin_id}'")
+
+    async def _safe_handle_command(self, instance: BasePlugin, action: str, data: Any):
+        try:
+            await asyncio.wait_for(instance.handle_command(action, data), timeout=10.0)
+        except asyncio.TimeoutError:
+            logger.error(f"Command '{action}' for plugin '{instance.plugin_id}' timed out!")
+        except Exception as e:
+            logger.error(f"Error in plugin '{instance.plugin_id}' while handling '{action}': {e}")
 
     async def _elevate_plugin(self, plugin: BasePlugin):
         """Стандартная логика повышения прав для плагина"""

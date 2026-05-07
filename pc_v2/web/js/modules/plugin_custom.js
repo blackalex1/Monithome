@@ -99,6 +99,88 @@ export const customHandlers = {
                 }
             }
         }
+    },
+    'yandex_station': {
+        render: (config) => {
+            modalContent.innerHTML = `<div class="loading-spinner"></div>`;
+            socket.emit('plugin_command', { plugin_id: 'yandex_station', action: 'get_wizard_data', data: {} });
+        },
+        onEvent: (payload) => {
+            if (payload.event === 'wizard_data') {
+                const { devices, tablet_control, selected_device_ids } = payload.data;
+                let html = `
+                    <div class="yandex-settings">
+                        <div class="settings-group glass-panel mb-4" style="padding: 15px;">
+                            <div style="display: flex; align-items: center; justify-content: space-between;">
+                                <div>
+                                    <h4 style="color: var(--accent); margin-bottom: 4px;">${t('label_tablet_control', 'Управление с планшета')}</h4>
+                                    <p style="font-size: 12px; color: var(--text-muted);">${t('desc_tablet_control', 'Разрешить планшету управлять колонками напрямую')}</p>
+                                </div>
+                                <label class="switch">
+                                    <input type="checkbox" id="yandex-tablet-control" ${tablet_control ? 'checked' : ''}>
+                                    <span class="slider"></span>
+                                </label>
+                            </div>
+                        </div>
+
+                        <div class="settings-group mb-4">
+                            <h4 style="color: var(--accent); margin-bottom: 10px;">${t('label_select_speakers', 'Выберите колонки')}</h4>
+                            <div class="devices-selection-list" style="display: flex; flex-direction: column; gap: 8px;">
+                                ${devices.map(d => `
+                                    <div class="settings-item glass-panel" style="display:flex; justify-content: space-between; padding: 12px;">
+                                        <span>${d.name}</span>
+                                        <label class="switch">
+                                            <input type="checkbox" class="yandex-device-checkbox" data-id="${d.id}" ${selected_device_ids.includes(d.id) ? 'checked' : ''}>
+                                            <span class="slider"></span>
+                                        </label>
+                                    </div>
+                                `).join('') || `<p style="color: var(--text-muted);">${t('no_devices_found', 'Колонки не найдены')}</p>`}
+                            </div>
+                        </div>
+
+                        <div class="settings-group mb-4">
+                            <button class="plugin-btn" style="width: 100%; border-color: #f59e0b; color: #f59e0b; background: rgba(245, 158, 11, 0.1);" id="yandex-qr-login-btn">
+                                🔑 ${t('btn_qr_login', 'Войти через QR-код')}
+                            </button>
+                        </div>
+
+                        <button class="plugin-btn" style="width: 100%; background: var(--accent); color: white;" id="yandex-save-btn">${t('btn_save_changes', 'Сохранить изменения')}</button>
+                    </div>
+                `;
+                modalContent.innerHTML = html;
+
+                modalContent.querySelector('#yandex-qr-login-btn').onclick = () => {
+                    socket.emit('plugin_command', { plugin_id: 'yandex_station', action: 'start_qr_login', data: {} });
+                    modalContent.innerHTML = `<div class="loading-spinner"></div><p style="text-align:center; margin-top:10px;">${t('getting_qr', 'Получение QR-кода...')}</p>`;
+                };
+
+                modalContent.querySelector('#yandex-save-btn').onclick = () => {
+                    const selected = Array.from(modalContent.querySelectorAll('.yandex-device-checkbox:checked')).map(cb => cb.getAttribute('data-id'));
+                    const tablet = modalContent.querySelector('#yandex-tablet-control').checked;
+                    socket.emit('plugin_command', {
+                        plugin_id: 'yandex_station',
+                        action: 'handle_wizard',
+                        data: { selected_device_ids: selected, tablet_control: tablet }
+                    });
+                    closeModal();
+                };
+            } else if (payload.event === 'show_qr') {
+                const { qr_url, status, instructions } = payload.data;
+                modalContent.innerHTML = `
+                    <div class="qr-container" style="text-align: center; padding: 20px;">
+                        <h3 style="margin-bottom: 15px; color: var(--accent);">${status}</h3>
+                        <div style="background: white; padding: 15px; border-radius: 15px; display: inline-block; margin-bottom: 15px;">
+                            <img src="${qr_url}" style="width: 256px; height: 256px;">
+                        </div>
+                        <p style="color: var(--text-muted);">${instructions}</p>
+                        <button class="plugin-btn mt-4" style="width: 100%;" id="yandex-back-to-settings">${t('btn_back', 'Назад')}</button>
+                    </div>
+                `;
+                modalContent.querySelector('#yandex-back-to-settings').onclick = () => {
+                    customHandlers['yandex_station'].render();
+                };
+            }
+        }
     }
 };
 

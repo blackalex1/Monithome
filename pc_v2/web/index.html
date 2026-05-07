@@ -33,19 +33,19 @@
                 <li><a href="#" data-target="settings-section" data-i18n="nav_settings">Global Settings</a></li>
                 <li><a href="#" data-target="about-section" data-i18n="nav_about">About</a></li>
             </ul>
-            <div class="status-indicator">
-                <span class="dot" id="connection-dot"></span>
-                <span id="connection-status" data-i18n="status_connecting">Connecting...</span>
-            </div>
+            <monit-status></monit-status>
+            <script type="module" src="/static/js/components/monit-status.js"></script>
         </nav>
 
         <!-- Main Content Area -->
         <main class="main-content">
             <div class="top-bar">
-                <div class="stat-chip" id="top-cpu">CPU: <span id="cpu-val">--%</span></div>
-                <div class="stat-chip" id="top-ram">RAM: <span id="ram-val">--%</span></div>
-                <div class="stat-chip" id="top-temp">TEMP: <span id="temp-val">--°C</span></div>
+                <monit-stat key="cpu" label="CPU" unit="%"></monit-stat>
+                <monit-stat key="ram" label="RAM" unit="%"></monit-stat>
+                <monit-stat key="temp" label="TEMP" unit="°C"></monit-stat>
             </div>
+            
+            <script type="module" src="/static/js/components/monit-stat.js"></script>
 
             <!-- Plugins Section -->
             <section id="plugins-section" class="content-section active">
@@ -54,93 +54,21 @@
                     <p data-i18n="plugins_desc">Enable or disable modules for monitoring and control.</p>
                 </header>
 
-                <div class="plugins-grid" id="plugins-list">
-                    <!-- Plugins will be injected here via JS -->
-                </div>
+                <monit-plugins-list id="plugins-list"></monit-plugins-list>
+                <script type="module" src="/static/js/components/monit-plugins-list.js"></script>
             </section>
 
             <!-- Server Logs Section -->
-            <section id="logs-section" class="content-section">
-                <header class="section-header">
-                    <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 15px;">
-                        <div>
-                            <h2 data-i18n="nav_logs">Server Logs</h2>
-                            <p data-i18n="logs_desc">Real-time system and plugin activity.</p>
-                        </div>
-                        <div class="log-filters glass-panel" style="display: flex; gap: 5px; padding: 5px; border-radius: 12px;">
-                            <button class="filter-btn active" data-level="all" data-i18n="log_filter_all">All</button>
-                            <button class="filter-btn" data-level="info" data-i18n="log_filter_info">Info</button>
-                            <button class="filter-btn" data-level="warning" data-i18n="log_filter_warning">Warning</button>
-                            <button class="filter-btn" data-level="error" data-i18n="log_filter_error">Error</button>
-                        </div>
-                    </div>
-                </header>
-                <div class="glass-panel logs-container">
-                    <pre id="log-output"></pre>
-                </div>
-            </section>
+            <monit-log-panel id="logs-section" class="content-section"></monit-log-panel>
+            <script type="module" src="/static/js/components/monit-log-panel.js"></script>
 
             <!-- Connected Devices Section -->
-            <section id="devices-section" class="content-section">
-                <header class="section-header">
-                    <h2 data-i18n="nav_devices">Connected Devices</h2>
-                    <p data-i18n="devices_desc">List of all active sessions controlling your PC.</p>
-                </header>
-                <div class="devices-grid" id="devices-list">
-                    <!-- Devices will be injected here via JS -->
-                    <p class="no-devices" data-i18n="no_devices_connected">No external devices connected</p>
-                </div>
-            </section>
+            <monit-devices-list id="devices-section" class="content-section"></monit-devices-list>
+            <script type="module" src="/static/js/components/monit-devices-list.js"></script>
 
             <!-- Global Settings Section -->
-            <section id="settings-section" class="content-section">
-                <header class="section-header">
-                    <h2 data-i18n="settings_title">Global Settings</h2>
-                    <p data-i18n="settings_desc">Configure the core MonitHome server.</p>
-                </header>
-                <div class="glass-panel p-4">
-                    <form id="global-settings-form">
-                        <div class="form-group">
-                            <label for="server-hostname" data-i18n="server_name">Server Name</label>
-                            <input type="text" id="server-hostname" class="form-input" placeholder="MonitHome PC">
-                        </div>
-
-                        <div class="form-group">
-                            <label for="server-language" data-i18n="interface_lang">Interface Language</label>
-                            <select id="server-language" class="form-input">
-                                <option value="ru">Russian (RU)</option>
-                                <option value="en">English (EN)</option>
-                            </select>
-                        </div>
-
-                        <div class="form-group">
-                            <label for="server-theme-color" data-i18n="accent_color">Accent Color (Suggestions for
-                                Tablet)</label>
-                            <div class="color-picker-container">
-                                <input type="color" id="server-theme-picker" class="form-input color-picker">
-                                <input type="text" id="server-theme-hex" class="form-input color-hex"
-                                    placeholder="0xFF22C55E">
-                            </div>
-                        </div>
-
-                        <div class="form-group" style="display: flex; align-items: center; justify-content: space-between; background: rgba(255,255,255,0.03); padding: 15px; border-radius: 12px; border: 1px solid var(--border-color);">
-                            <div>
-                                <label style="margin-bottom: 4px; color: white;" data-i18n="autostart_label">Autostart with Windows</label>
-                                <p style="font-size: 12px; color: var(--text-muted);" data-i18n="autostart_desc">Start MonitHome automatically when you log in.</p>
-                            </div>
-                            <label class="switch">
-                                <input type="checkbox" id="server-autostart">
-                                <span class="slider"></span>
-                            </label>
-                        </div>
-
-                        <div class="form-actions mt-4">
-                            <button type="submit" class="btn btn-primary" id="save-config-btn"
-                                data-i18n="save_config">Save Configuration</button>
-                        </div>
-                    </form>
-                </div>
-            </section>
+            <monit-settings-form id="settings-section" class="content-section"></monit-settings-form>
+            <script type="module" src="/static/js/components/monit-settings-form.js"></script>
 
             <!-- About Section -->
             <section id="about-section" class="content-section">

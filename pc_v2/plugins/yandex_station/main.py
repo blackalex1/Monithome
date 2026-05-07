@@ -6,7 +6,8 @@ from plugin_engine.base_plugin import BasePlugin
 from .auth import YandexAuth
 from .worker import monitor_request_state
 from core.event_bus import event_bus
-from zeroconf import ServiceBrowser, Zeroconf
+from core.network.zeroconf_service import ZeroconfService
+from zeroconf import ServiceBrowser
 from .discovery import SpeakerDiscovery
 from .device_manager import DeviceManager
 from .broadcaster import StateBroadcaster
@@ -37,28 +38,31 @@ class Plugin(BasePlugin):
     async def on_start(self):
         self.loop = asyncio.get_running_loop()
         
-        # Обновляем токены. Если они обновились, refresh_tokens_sync сам вызовет apply_mode()
-        tokens_updated = await self.auth.refresh_tokens_sync()
+        # Сначала загружаем кэшированные токены из БД
+        self._load_tokens()
         
         if not self.auth.has_token():
             self.log("Yandex token missing. Waiting for manual login...", 20)
+        else:
+            self.log("Yandex tokens loaded from cache.", 20)
 
         # Запускаем mDNS поиск
         from .discovery import get_all_interfaces
         interfaces = get_all_interfaces()
-        self.log(f"Initializing Zeroconf on interfaces: {interfaces}")
+        self.log(f"Initializing unified Zeroconf on interfaces: {interfaces}")
         try:
-            self.zeroconf = Zeroconf(interfaces=interfaces)
-            self.browser = ServiceBrowser(self.zeroconf, "_yandexio._tcp.local.", self)
+            zc_service = await ZeroconfService.get_instance()
+            # Пытаемся инициализировать с интерфейсами плагина, если еще не инициализировано
+            self.aio_zeroconf = await zc_service.initialize(interfaces=interfaces)
+            self.browser = ServiceBrowser(self.aio_zeroconf.zeroconf, "_yandexio._tcp.local.", self)
         except Exception as e:
-            self.log(f"Failed to initialize Zeroconf: {e}", 40)
+            self.log(f"Failed to use unified Zeroconf: {e}", 40)
         
         event_bus.subscribe("ui_config_changed", self._on_config_changed)
         
-        # Если токены не обновлялись (и следовательно apply_mode не вызывался), вызываем его сейчас
-        if not tokens_updated:
-            await self.device_manager.apply_mode()
-
+        # Запускаем поиск и применяем режим (запуск воркеров)
+        await self.device_manager.apply_mode()
+    
     async def _on_config_changed(self, payload: dict):
         if payload.get("plugin_id") == self.plugin_id or payload.get("plugin_id") is None:
             sid = payload.get("sid")
@@ -66,8 +70,8 @@ class Plugin(BasePlugin):
 
     async def on_stop(self):
         self.log("Stopping Yandex Station plugin...")
-        if self.zeroconf:
-            self.zeroconf.close()
+        if hasattr(self, 'browser') and self.browser:
+            self.browser.cancel()
         for d_id, worker in self.workers.items():
             worker.stop()
 

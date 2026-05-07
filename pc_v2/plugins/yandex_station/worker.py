@@ -61,7 +61,14 @@ class DeviceWorker:
 
         ssl_ctx = get_ssl_ctx()
         try:
-            async with websockets.connect(f"wss://{ip}:1961", ssl=ssl_ctx, ping_interval=10) as ws:
+            # Увеличиваем таймауты для стабильности на Wi-Fi
+            async with websockets.connect(
+                f"wss://{ip}:1961", 
+                ssl=ssl_ctx, 
+                ping_interval=20, 
+                ping_timeout=10, 
+                close_timeout=5
+            ) as ws:
                 self.plugin.connections[self.device_id] = ws
                 self.plugin.states[self.device_id]["online"] = True
                 self.log(f"Connected to speaker {self.device_id} at {ip}")
@@ -107,23 +114,32 @@ class DeviceWorker:
 
         ip = device_info.get("ip")
         ssl_ctx = get_ssl_ctx()
-        async with websockets.connect(f"wss://{ip}:1961", ssl=ssl_ctx, ping_interval=3, ping_timeout=2) as ws:
-            self.plugin.control_conns[self.device_id] = ws
-            queue = self.plugin.cmd_queues[self.device_id]
-            
-            async def trash_consumer():
+        try:
+            async with websockets.connect(
+                f"wss://{ip}:1961", 
+                ssl=ssl_ctx, 
+                ping_interval=20, 
+                ping_timeout=10, 
+                close_timeout=5
+            ) as ws:
+                self.plugin.control_conns[self.device_id] = ws
+                queue = self.plugin.cmd_queues[self.device_id]
+                
+                async def trash_consumer():
+                    try:
+                        async for _ in ws: pass
+                    except: pass
+                
+                tc_task = asyncio.create_task(trash_consumer())
                 try:
-                    async for _ in ws: pass
-                except: pass
-            
-            tc_task = asyncio.create_task(trash_consumer())
-            try:
-                while True:
-                    payload = await queue.get()
-                    try: await ws.send(json.dumps(payload))
-                    except: break
-                    queue.task_done()
-            finally: tc_task.cancel()
+                    while True:
+                        payload = await queue.get()
+                        try: await ws.send(json.dumps(payload))
+                        except: break
+                        queue.task_done()
+                finally: tc_task.cancel()
+        except:
+            pass
 
     async def _internal_parse_state(self, s):
         new_vals = parse_state(s)

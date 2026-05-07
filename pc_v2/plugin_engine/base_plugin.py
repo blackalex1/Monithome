@@ -22,9 +22,19 @@ class BasePlugin(ABC):
         """Внутренний метод запуска. Не переопределять в плагинах."""
         if self._is_running:
             return
-        self._is_running = True
+        
         self.log("Starting...")
-        await self.on_start()
+        try:
+            # Даем плагину 10 секунд на инициализацию (важно для сетевых плагинов)
+            await asyncio.wait_for(self.on_start(), timeout=10.0)
+            self._is_running = True
+            self.log("Started successfully.")
+        except asyncio.TimeoutError:
+            self.log("on_start timed out after 10s", level=logging.ERROR)
+            await self.stop() # Пытаемся очистить ресурсы
+        except Exception as e:
+            self.log(f"Failed to start: {e}", level=logging.ERROR)
+            await self.stop()
 
     async def stop(self):
         """Внутренний метод остановки. Не переопределять в плагинах."""
@@ -161,43 +171,6 @@ class BasePlugin(ABC):
         config_manager.set_secret(key, value)
 
     def i18n(self, key: str, default: str = None) -> str:
-        """Полноценная локализация на основе глобального конфига."""
-        try:
-            import os
-            import json
-            import sys
-            
-            # Пытаемся достать config_manager из уже загруженных модулей
-            cfg_mgr = sys.modules.get('core.config')
-            if cfg_mgr:
-                config_manager = cfg_mgr.config_manager
-                lang = getattr(config_manager.get(), "language", "ru")
-            else:
-                # Пробуем импорт через core.config
-                try:
-                    from core.config import config_manager
-                    lang = getattr(config_manager.get(), "language", "ru")
-                except:
-                    lang = "ru"
-            
-            # Кэшируем переводы в атрибуте класса для скорости
-            if not hasattr(BasePlugin, "_cached_translations") or BasePlugin._cached_lang != lang:
-                # Определяем путь к папке языков (pc_v2/web/languages)
-                # Файл находится в pc_v2/plugin_engine/base_plugin.py
-                current_dir = os.path.dirname(os.path.abspath(__file__)) # plugin_engine
-                pc_v2_dir = os.path.dirname(current_dir)
-                lang_path = os.path.join(pc_v2_dir, "web", "languages", f"{lang}.json")
-                
-                if os.path.exists(lang_path):
-                    with open(lang_path, "r", encoding="utf-8") as f:
-                        BasePlugin._cached_translations = json.load(f)
-                        BasePlugin._cached_lang = lang
-                else:
-                    BasePlugin._cached_translations = {}
-                    BasePlugin._cached_lang = lang
-            
-            return BasePlugin._cached_translations.get(key, default if default else key)
-        except Exception as e:
-            # Не используем self.log тут, чтобы не зациклиться при ошибке лога
-            print(f"[ERROR] i18n error in {self.plugin_id}: {e}")
-            return default if default else key
+        """Локализация через центральный менеджер."""
+        from core.i18n import I18nManager
+        return I18nManager.get_instance().translate(key, default)

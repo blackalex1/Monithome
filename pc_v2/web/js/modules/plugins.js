@@ -4,87 +4,24 @@ import { t } from './i18n.js';
 import { showModal, closeModal } from './ui.js';
 import { customHandlers } from './plugin_custom.js';
 
-const pluginsList = document.getElementById('plugins-list');
+import { store } from './store.js';
 
 export async function loadPlugins() {
-    if (!pluginsList) return;
     try {
         const response = await secureFetch('/api/plugins');
         const data = await response.json();
 
-        pluginsList.innerHTML = '';
         if (data && data.plugins) {
-            data.plugins.forEach(plugin => {
-                const card = renderPluginCard(plugin);
-                pluginsList.appendChild(card);
-            });
+            store.update({ plugins: data.plugins });
         } else {
             console.warn("No plugins data received or unauthorized");
-            pluginsList.innerHTML = `<p style="text-align:center; color: var(--text-muted); padding: 20px;">${t('error_unauthorized', 'Unauthorized or no data')}</p>`;
+            store.update({ plugins: [] });
         }
     } catch (err) {
         console.error("Failed to load plugins", err);
     }
 }
 
-function renderPluginCard(plugin) {
-    const card = document.createElement('div');
-    card.className = 'plugin-card glass-panel';
-
-    const name = t(`plugin_name_${plugin.id}`, plugin.name);
-    const desc = t(`plugin_desc_${plugin.id}`, plugin.description || 'No description available.');
-    const runningStr = t('plugin_running', 'Running');
-    const stoppedStr = t('plugin_stopped', 'Stopped');
-    const loginStr = t('btn_yandex_login', 'Login with QR');
-
-    card.innerHTML = `
-        <div class="plugin-header">
-            <div class="plugin-info-left">
-                <h3 class="plugin-title">${name}</h3>
-                <p class="plugin-desc">${desc}</p>
-            </div>
-            <label class="switch">
-                <input type="checkbox" class="plugin-toggle" ${plugin.active ? 'checked' : ''}>
-                <span class="slider"></span>
-            </label>
-        </div>
-        <div class="plugin-actions">
-            <span style="font-size: 13px; color: ${plugin.active ? 'var(--success)' : 'var(--text-muted)'}">
-                ${plugin.active ? '● ' + runningStr : '○ ' + stoppedStr}
-            </span>
-            <div style="display:flex; gap: 8px; align-items: center;">
-                ${plugin.elevation_active ? `
-                    <button class="plugin-btn elevation-active-btn" 
-                            title="${t('status_elevated', 'Admin Rights Active')}"
-                            style="background: var(--success); border-color: rgba(16, 185, 129, 0.4); cursor: default;">
-                        🛡️
-                    </button>
-                ` : (plugin.needs_elevation ? `
-                    <button class="plugin-btn elevation-request-btn" 
-                            title="${t('btn_elevate', 'Request Admin Rights')}"
-                            style="background: var(--danger); border-color: rgba(239, 68, 68, 0.4); animation: pulse-red 2s infinite;">
-                        🛡️
-                    </button>
-                ` : '')}
-                <button class="plugin-btn info-btn" title="${t('btn_info', 'Info')}">ℹ️</button>
-                ${plugin.has_settings ? `<button class="plugin-btn settings-btn" title="${t('btn_settings', 'Settings')}">⚙️</button>` : ''}
-                ${plugin.id === 'yandex_station' && plugin.active ? `<button class="plugin-btn yandex-qr-btn">${loginStr}</button>` : ''}
-            </div>
-        </div>
-    `;
-
-    // Event listeners
-    card.querySelector('.plugin-toggle').onchange = (e) => togglePlugin(plugin.id, e.target.checked);
-    const elevBtn = card.querySelector('.elevation-request-btn');
-    if (elevBtn) elevBtn.onclick = () => requestPluginElevation(plugin.id);
-    card.querySelector('.info-btn').onclick = () => showPluginInfo(plugin.id);
-    const settingsBtn = card.querySelector('.settings-btn');
-    if (settingsBtn) settingsBtn.onclick = () => editPluginConfig(plugin.id);
-    const yandexBtn = card.querySelector('.yandex-qr-btn');
-    if (yandexBtn) yandexBtn.onclick = () => requestYandexQR();
-
-    return card;
-}
 
 export async function togglePlugin(pluginId, isActive) {
     try {

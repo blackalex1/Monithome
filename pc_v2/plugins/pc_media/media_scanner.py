@@ -39,27 +39,47 @@ except Exception as e:
     sys.exit(1)
 
 try:
-    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume
-    from comtypes import CLSCTX_ALL
-    from ctypes import cast, POINTER
+    from pycaw.pycaw import AudioUtilities, IAudioEndpointVolume, IAudioEndpointVolumeCallback
+    from comtypes import CLSCTX_ALL, COMObject
+    from ctypes import cast, POINTER, c_float
     HAS_PYCAW = True
 except Exception as e:
     print(json.dumps({"log": f"Pycaw import failed: {e}"}), flush=True)
     HAS_PYCAW = False
 
+class VolumeEvents(COMObject):
+    _com_interfaces_ = [IAudioEndpointVolumeCallback]
+
+    def __init__(self, callback):
+        super(VolumeEvents, self).__init__()
+        self.callback = callback
+
+    def OnNotify(self, pNotify):
+        # Вызывается Windows при изменении громкости
+        data = pNotify.contents
+        vol = int(round(data.fMasterVolume * 100))
+        mute = data.bMuted == 1
+        self.callback(vol, mute)
+
 class SystemVolume:
-    def __init__(self):
+    def __init__(self, on_change_callback):
         self._volume = None
+        self._callback_obj = None
+        self.on_change_callback = on_change_callback
         if HAS_PYCAW:
             self.init_audio()
 
     def init_audio(self):
         try:
             enumerator = AudioUtilities.GetDeviceEnumerator()
-            device = enumerator.GetDefaultAudioEndpoint(0, 1)
+            device = enumerator.GetDefaultAudioEndpoint(0, 1) # Render, Multimedia
             if device:
                 interface = device.Activate(IAudioEndpointVolume._iid_, CLSCTX_ALL, None)
                 self._volume = cast(interface, POINTER(IAudioEndpointVolume))
+                
+                # Регистрируем коллбэк
+                self._callback_obj = VolumeEvents(self.on_change_callback)
+                self._volume.RegisterControlChangeNotify(self._callback_obj)
         except Exception as e:
             print(json.dumps({"log": f"Audio init failed: {e}"}), flush=True)
             self._volume = None
@@ -75,6 +95,12 @@ class SystemVolume:
             except:
                 self._volume = None
         return 0, False
+
+    def __del__(self):
+        if self._volume and self._callback_obj:
+            try:
+                self._volume.UnregisterControlChangeNotify(self._callback_obj)
+            except: pass
 
 async def save_cover_to_file(props, file_path):
     if not props or not props.thumbnail: return False
@@ -97,34 +123,38 @@ async def save_cover_to_file(props, file_path):
     return False
 
 async def main_loop():
+    loop = asyncio.get_running_loop()
+    update_event = asyncio.Event()
+    
+    def trigger_update(*args):
+        # Используем сохраненный loop для потокобезопасного вызова
+        loop.call_soon_threadsafe(update_event.set)
+
     last_info = {"title": "___INIT___", "artist": "", "playing": False, "volume": -1, "mute": None, "progress": -1.0}
     last_print_time = 0
     last_sent_cover_title = ""
     is_first_run = True
-    last_base_p_sec = -1.0
     last_poll_time = time.time()
     last_manager_refresh = time.time()
     
     print(json.dumps({"log": "Entering main_loop"}), flush=True)
-    vol_manager = SystemVolume()
+    vol_manager = SystemVolume(trigger_update)
     
     try:
         manager = await SessionManager.request_async()
-        print(json.dumps({"log": "SessionManager acquired"}), flush=True)
+        
+        # Подписываемся на события медиа-сессий
+        def on_sessions_changed(sender, args):
+            trigger_update()
+        
+        manager.add_sessions_changed(on_sessions_changed)
+        print(json.dumps({"log": "SessionManager events registered"}), flush=True)
     except Exception as e:
         print(json.dumps({"log": f"Manager Request Error: {str(e)}"}), flush=True)
         return
 
     while True:
         try:
-            # Периодическое обновление SessionManager (раз в 5 минут)
-            if (time.time() - last_manager_refresh) > 300:
-                try:
-                    manager = await SessionManager.request_async()
-                    last_manager_refresh = time.time()
-                    print(json.dumps({"log": "SessionManager refreshed"}), flush=True)
-                except: pass
-
             # 1. Громкость
             cur_vol, cur_mute = vol_manager.get_info()
 
@@ -132,13 +162,8 @@ async def main_loop():
             session = None
             try:
                 all_sessions = manager.get_sessions()
-                if is_first_run or (time.time() - last_print_time) > 30.0:
-                    print(json.dumps({"log": f"Found {len(all_sessions)} media sessions"}), flush=True)
-                # Приоритет 1: Реально играющая сессия
                 for s in all_sessions:
                     pb = s.get_playback_info()
-                    if is_first_run or (time.time() - last_print_time) > 30.0:
-                        print(json.dumps({"log": f"Session from: {s.source_app_user_model_id}, status: {pb.playback_status if pb else 'N/A'}"}), flush=True)
                     if pb and pb.playback_status == 4: # Playing
                         try:
                             tm = s.get_timeline_properties()
@@ -147,15 +172,8 @@ async def main_loop():
                                 break
                         except: pass
                 
-                # Приоритет 2: Текущая системная сессия
                 if not session:
                     session = manager.get_current_session()
-                    if session:
-                        try:
-                            tm = session.get_timeline_properties()
-                            if not tm or tm.end_time.total_seconds() <= 1.0:
-                                session = None
-                        except: session = None
             except: pass
 
             info = {
@@ -173,12 +191,7 @@ async def main_loop():
             if session:
                 try:
                     pb = session.get_playback_info()
-                    try:
-                        props = await asyncio.wait_for(session.try_get_media_properties_async(), timeout=2.0)
-                    except asyncio.TimeoutError:
-                        props = None
-                        print(json.dumps({"log": "Media properties fetch timeout"}), flush=True)
-                    
+                    props = await asyncio.wait_for(session.try_get_media_properties_async(), timeout=2.0)
                     timeline = session.get_timeline_properties()
                     
                     if props:
@@ -187,63 +200,9 @@ async def main_loop():
                     if pb:
                         info["playing"] = (pb.playback_status == 4)
 
-                    # Если трек уже доиграл до конца (статус 5 или позиция >= длительности)
-                    if pb and pb.playback_status == 5:
-                        session = None
-                        info["playing"] = False
-
-                    # Сначала проверяем смену состояния
-                    is_media_changed = (props and (props.title != last_info.get("title") or props.artist != last_info.get("artist")))
-                    is_playing_changed = info.get("playing") != last_info.get("playing")
-                    
                     if timeline:
-                        d_sec = float(timeline.end_time.total_seconds())
-                        base_p_sec = float(timeline.position.total_seconds())
-                        
-                        # АВТООПРЕДЕЛЕНИЕ: Сама ли Windows двигает время (динамическая позиция)
-                        # или оно "замерло" (статическая позиция).
-                        now = datetime.now(timezone.utc)
-                        now_ts = now.timestamp()
-                        
-                        system_delta = base_p_sec - last_base_p_sec
-                        time_delta = now_ts - last_poll_time
-                        
-                        # Если позиция в системе изменилась примерно на то же время, что прошло в реальности,
-                        # значит Windows сама инкрементирует Position (динамический режим).
-                        is_dynamic = abs(system_delta - time_delta) < 0.2
-                        
-                        p_sec = base_p_sec
-                        if info.get("playing") and not is_dynamic:
-                            # Компенсируем только если система сама "тормозит" (статический режим)
-                            lut = timeline.last_updated_time
-                            elapsed = (now - lut).total_seconds()
-                            p_sec += max(0, elapsed)
-                        
-                        last_base_p_sec = base_p_sec
-                        last_poll_time = now_ts
-                        
-                        # ФИЛЬТР МОНОТОННОСТИ: если мы в рамках одного трека и он играет, 
-                        # не позволяем времени прыгать назад (это фиксирует джиттер Windows)
-                        if not is_media_changed and not is_playing_changed and info.get("playing"):
-                            last_p = last_info.get("progress", 0.0)
-                            # Если разница невелика (до 5 сек), обеспечиваем плавный рост.
-                            # Если разница большая - значит была перемотка, принимаем новое значение.
-                            if p_sec < last_p and (last_p - p_sec) < 5.0:
-                                p_sec = last_p
-                        
-                        if p_sec > d_sec and d_sec > 0: p_sec = d_sec
-                        
-                        # Сброс при смене трека или окончании
-                        if is_media_changed or (d_sec > 0 and p_sec >= d_sec - 0.5):
-                            if d_sec > 0 and p_sec >= d_sec - 0.5:
-                                session = None
-                                info["playing"] = False
-                                info["title"] = ""
-                                info["artist"] = ""
-                            p_sec = max(0.0, p_sec) if not is_media_changed else 0.0
-
-                        info["duration"] = d_sec
-                        info["progress"] = p_sec
+                        info["duration"] = float(timeline.end_time.total_seconds())
+                        info["progress"] = float(timeline.position.total_seconds())
                 except: pass
 
             # ЛОГИКА ОТПРАВКИ
@@ -251,17 +210,12 @@ async def main_loop():
                                info["artist"] != last_info.get("artist") or 
                                info["playing"] != last_info.get("playing"))
             
-            if is_media_changed:
-                info["progress"] = 0.0
-                info["duration"] = 0.0
-                last_base_p_sec = -1.0
-                
             is_vol_changed = (info["volume"] != last_info.get("volume") or 
                              info["mute"] != last_info.get("mute"))
             
-            # Порог тика времени уменьшен до 0.5с для плавности
-            is_time_tick = info["playing"] and abs(info["progress"] - last_info.get("progress", 0)) >= 0.5
-            is_heartbeat = (time.time() - last_print_time) > 10.0
+            # Прогресс отправляем раз в секунду или при больших скачках
+            is_time_tick = info["playing"] and abs(info["progress"] - last_info.get("progress", 0)) >= 1.0
+            is_heartbeat = (time.time() - last_print_time) > 30.0
 
             if is_media_changed or is_vol_changed or is_time_tick or is_first_run or is_heartbeat:
                 last_print_time = time.time()
@@ -272,24 +226,25 @@ async def main_loop():
                         try:
                             await asyncio.sleep(0.3)
                             props = await asyncio.wait_for(s.try_get_media_properties_async(), timeout=5.0)
-                            if not props: return
-                            
                             cover_file = os.path.join(os.path.dirname(__file__), "cover.jpg")
-                            success = await asyncio.wait_for(save_cover_to_file(props, cover_file), timeout=10.0)
-                            
-                            if success:
-                                # Вместо Base64 отправляем только сигнал о готовности файла
+                            if await save_cover_to_file(props, cover_file):
                                 print(json.dumps({"cover_event": "updated", "title": t}, ensure_ascii=False), flush=True)
                                 last_sent_cover_title = t
                         except Exception as e:
-                            print(json.dumps({"log": f"Cover fetch error: {e}"}), flush=True)
+                             print(json.dumps({"log": f"Cover fetch error: {str(e)}"}), flush=True)
                     asyncio.create_task(fetch_cover_task(session, info["title"]))
                 
                 print(json.dumps(info, ensure_ascii=False), flush=True)
                 last_info = info.copy()
                 is_first_run = False
             
-            await asyncio.sleep(0.5)
+            # Ждем события или таймаута (для обновления прогресса)
+            timeout = 1.0 if info["playing"] else 30.0
+            try:
+                await asyncio.wait_for(update_event.wait(), timeout=timeout)
+                update_event.clear()
+            except asyncio.TimeoutError:
+                pass
         except Exception as e:
             await asyncio.sleep(1)
 

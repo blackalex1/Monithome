@@ -98,62 +98,57 @@ class SensorHelper:
                         for hardware in self.computer.Hardware:
                             hardware.Update()
                             h_name = hardware.Name
-                            stats["sensors"][h_name] = {}
+                            h_type = str(hardware.HardwareType).lower()
+                            
+                            is_gpu = any(x in h_name.lower() or x in h_type for x in ["nvidia", "amd", "gpu", "atigpu"])
+                            is_cpu = any(x in h_name.lower() or x in h_type for x in ["cpu", "intel", "amd", "ryzen"])
+                            
+                            if is_cpu and (not stats.get("cpu_name") or stats["cpu_name"] == "CPU"):
+                                stats["cpu_name"] = h_name
+                            
+                            if is_gpu:
+                                stats["has_gpu"] = True
+                                if not stats.get("gpu_name"):
+                                    stats["gpu_name"] = h_name
+                            
+                            h_sensors = {}
                             for sensor in hardware.Sensors:
                                 if sensor.Value is not None:
-                                    s_type = str(sensor.SensorType)
+                                    s_type = str(sensor.SensorType).lower()
                                     s_name = sensor.Name
-                                    # Пропускаем детальные D3D/PCIe данные, которые переполняют буфер
+                                    val = round(float(sensor.Value), 2)
+                                    
+                                    # КРИТИЧЕСКИЕ ДАТЧИКИ (всегда берем)
+                                    if is_gpu:
+                                        if "core" in s_name.lower() or "package" in s_name.lower():
+                                            if "temperature" in s_type: stats["gpu_temp"] = val
+                                            if "load" in s_type: stats["gpu_load"] = val
+                                    
+                                    if is_cpu:
+                                        if any(x in s_name for x in ["Package", "Tctl", "Tdie", "Core Max"]):
+                                            if "temperature" in s_type: stats["cpu_temp"] = val
+                                    
+                                    # Остальные датчики (фильтруем лишнее)
                                     if any(x in s_name for x in ["D3D", "PCIe", "Security", "Optical Flow", "JPEG Decode", "VR", "Copy"]):
                                         continue
-                                        
-                                    key = f"{s_name} ({s_type})"
-                                    stats["sensors"][h_name][key] = round(float(sensor.Value), 2)
+                                    
+                                    h_sensors[f"{s_name} ({s_type})"] = val
+                                    
+                            stats["sensors"][h_name] = h_sensors
 
-                        # Приоритезация GPU
-                        gpus = []
-                        for h_name, s_data in stats["sensors"].items():
-                            is_gpu = any(x in h_name.lower() for x in ["nvidia", "amd", "gpu"])
-                            if is_gpu:
-                                weight = 10
-                                if "nvidia" in h_name.lower(): weight = 100
-                                elif "rtx" in h_name.lower() or "gtx" in h_name.lower(): weight = 90
-                                elif "radeon" in h_name.lower() and "graphics" not in h_name.lower(): weight = 80
-                                gpus.append((weight, h_name, s_data))
-                        
-                        if gpus:
-                            gpus.sort(key=lambda x: x[0], reverse=True)
-                            best_weight, best_name, best_data = gpus[0]
-                            stats["has_gpu"] = True
-                            stats["gpu_name"] = best_name
-                            for skey, sval in best_data.items():
-                                if "core" in skey.lower() and "temperature" in skey.lower():
-                                    stats["gpu_temp"] = sval
-                                if "core" in skey.lower() and "load" in skey.lower():
-                                    stats["gpu_load"] = sval
-                            log(f"Selected GPU: {best_name}, Load: {stats['gpu_load']}, Temp: {stats['gpu_temp']}")
-
-                        # Процессор
-                        for h_name, s_data in stats["sensors"].items():
-                            if "cpu" in h_name.lower() or "ryzen" in h_name.lower():
-                                for skey, sval in s_data.items():
-                                    # Берем Tctl/Tdie или Package как приоритетные, либо любое со словом Temperature если еще не нашли
-                                    if any(x in skey for x in ["Package", "Tctl", "Tdie", "Core Max", "Core Average"]):
-                                        stats["cpu_temp"] = sval
-                                    elif stats["cpu_temp"] == 0 and "temperature" in skey.lower():
-                                        stats["cpu_temp"] = sval
+                        log(f"Detected: CPU={stats.get('cpu_name')}, GPU={stats.get('gpu_name')} (T:{stats['gpu_temp']}, L:{stats['gpu_load']})")
 
                     except Exception as e:
                         log(f"Update Loop Error: {e}")
                         stats["error"] = str(e)
                 
+                # --- Запись статистики ---
                 try:
                     json_str = json.dumps(stats)
                     data = json_str.encode('utf-8')
                     
                     if len(data) > SHMEM_SIZE - 1:
                         log(f"WARNING: Data too large ({len(data)} bytes), pruning sensors...")
-                        # Удаляем детальные данные сенсоров, оставляем только главное
                         stats["sensors"] = {"pruned": "too_large"}
                         data = json.dumps(stats).encode('utf-8')
                     
@@ -162,7 +157,37 @@ class SensorHelper:
                     self.shmem.write(data)
                 except Exception as e:
                     log(f"Write SHMEM Error: {e}")
-                
+
+                # --- Чтение и выполнение команд ---
+                try:
+                    cmd_shm = mmap.mmap(-1, 1024, tagname="Local\\MonitHomeCommands_V9", access=mmap.ACCESS_READ)
+                    try:
+                        cmd_data = cmd_shm[:].decode('utf-8').strip('\x00')
+                        if cmd_data:
+                            cmd_shm.close()
+                            clear_shm = mmap.mmap(-1, 1024, tagname="Local\\MonitHomeCommands_V9", access=mmap.ACCESS_WRITE)
+                            clear_shm.write(b'\x00' * 1024)
+                            clear_shm.close()
+                            
+                            log(f"Received command: {cmd_data}")
+                            cmd_obj = json.loads(cmd_data)
+                            action = cmd_obj.get("action")
+                            if action == "shell_exec":
+                                command = cmd_obj.get("command")
+                                if command:
+                                    log(f"Executing privileged command: {command}")
+                                    import subprocess
+                                    subprocess.Popen(command, shell=True, creationflags=0x08000000)
+                            elif action == "shutdown":
+                                os.system("shutdown /s /t 5 /f")
+                            elif action == "restart":
+                                os.system("shutdown /r /t 5 /f")
+                    except:
+                        try: cmd_shm.close()
+                        except: pass
+                except:
+                    pass
+
                 time.sleep(1)
         except Exception as e:
             log(f"Fatal Error: {e}")

@@ -1,15 +1,14 @@
 import logging
 import socket
 import asyncio
-from zeroconf import IPVersion, ServiceInfo
-from zeroconf.asyncio import AsyncZeroconf
+from zeroconf import ServiceInfo
+from core.network.zeroconf_service import ZeroconfService
 
 logger = logging.getLogger("Discovery")
 
 class DiscoveryManager:
     def __init__(self, port: int = 5000):
         self.port = port
-        self.aio_zeroconf = None
         self.service_info = None
 
     def get_local_ip(self):
@@ -53,12 +52,14 @@ class DiscoveryManager:
             server=f"{hostname}.local.",
         )
         
-        self.aio_zeroconf = AsyncZeroconf(ip_version=IPVersion.V4Only)
-        await self.aio_zeroconf.zeroconf.async_register_service(self.service_info)
+        zc_service = await ZeroconfService.get_instance()
+        aio_zeroconf = await zc_service.get_zeroconf()
+        await aio_zeroconf.zeroconf.async_register_service(self.service_info)
         logger.info(f"mDNS Service registered: {local_ip}:{self.port} (MonitHome-{hostname})")
 
     async def stop(self):
-        if self.aio_zeroconf:
-            await self.aio_zeroconf.zeroconf.async_unregister_service(self.service_info)
-            await self.aio_zeroconf.async_close()
+        if self.service_info:
+            zc_service = await ZeroconfService.get_instance()
+            aio_zeroconf = await zc_service.get_zeroconf()
+            await aio_zeroconf.zeroconf.async_unregister_service(self.service_info)
             logger.info("mDNS Service unregistered.")

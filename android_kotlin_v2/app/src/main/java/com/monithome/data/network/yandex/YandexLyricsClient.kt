@@ -17,9 +17,21 @@ import javax.crypto.spec.SecretKeySpec
 class YandexLyricsClient {
     private val TAG = "YandexLyricsClient"
     private val client = OkHttpClient.Builder()
+        .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
         .hostnameVerifier { _, _ -> true }
         .sslSocketFactory(
             YandexSslUtils.createSSLSocketFactory(),
+            YandexSslUtils.trustManager
+        )
+        .build()
+
+    private val commonClient = OkHttpClient.Builder()
+        .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
+        .hostnameVerifier { _, _ -> true }
+        .sslSocketFactory(
+            YandexSslUtils.createSSLSocketFactory(), // Используем тот же механизм обхода, что и для Яндекса
             YandexSslUtils.trustManager
         )
         .build()
@@ -64,10 +76,66 @@ class YandexLyricsClient {
         return@withContext emptyList()
     }
 
-    suspend fun fetchLyricsBySearch(artist: String, title: String): List<LyricLine> = withContext(Dispatchers.IO) {
+    suspend fun fetchLyricsBySearch(artist: String, title: String, token: String?): List<LyricLine> = withContext(Dispatchers.IO) {
         if (artist.isEmpty() || title.isEmpty()) return@withContext emptyList()
         Log.i(TAG, "Fetching lyrics by search: $artist - $title")
-        return@withContext fetchFromLrcLib(artist, title) ?: emptyList()
+        
+        // 1. Try to find track ID in Yandex first if we have a token
+        if (token != null) {
+            val trackId = searchTrackInYandex(artist, title, token)
+            if (trackId != null) {
+                Log.d(TAG, "Search: Found Yandex track ID $trackId for $artist - $title")
+                val yandexLyrics = fetchLyrics(trackId, token)
+                if (yandexLyrics.isNotEmpty()) {
+                    Log.i(TAG, "Search: Found lyrics in Yandex via search for $artist - $title")
+                    return@withContext yandexLyrics
+                }
+                Log.d(TAG, "Search: Yandex has no lyrics for ID $trackId, falling back to LRCLIB")
+            } else {
+                Log.d(TAG, "Search: No track found in Yandex search for $artist - $title")
+            }
+        }
+
+        // 2. Fallback to LRCLIB
+        val lrclib = fetchFromLrcLib(artist, title)
+        if (lrclib == null || lrclib.isEmpty()) {
+            Log.w(TAG, "Search: No lyrics found in LRCLIB either for $artist - $title")
+        }
+        return@withContext lrclib ?: emptyList()
+    }
+
+    private fun searchTrackInYandex(artist: String, title: String, token: String): String? {
+        val query = "$artist - $title"
+        val url = HttpUrl.Builder()
+            .scheme("https")
+            .host("api.music.yandex.net")
+            .addPathSegment("search")
+            .addQueryParameter("text", query)
+            .addQueryParameter("type", "track")
+            .build()
+
+        val request = Request.Builder()
+            .url(url)
+            .addHeader("Authorization", "OAuth $token")
+            .addHeader("X-Yandex-Music-Client", "YandexMusicAndroid/24023621")
+            .build()
+
+        try {
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body.string()
+                val json = JSONObject(body)
+                val result = json.optJSONObject("result") ?: return null
+                val tracks = result.optJSONObject("tracks") ?: return null
+                val items = tracks.optJSONArray("results") ?: return null
+                if (items.length() > 0) {
+                    return items.getJSONObject(0).optString("id")
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "Yandex search error: ${e.message}")
+        }
+        return null
     }
 
     private fun fetchFromSupplement(trackId: String, headers: Map<String, String>): List<LyricLine>? {
@@ -90,12 +158,12 @@ class YandexLyricsClient {
             }
             val lyricsObj = result.optJSONObject("lyrics")
             if (lyricsObj == null) {
-                Log.w(TAG, "Supplement lyrics object is missing for $trackId")
+                Log.d(TAG, "Supplement lyrics object is missing for $trackId (falling back to LRC)")
                 return null
             }
             val major = lyricsObj.optJSONObject("major")
             if (major == null) {
-                Log.w(TAG, "Supplement major (synced) lyrics missing for $trackId")
+                Log.d(TAG, "Supplement major (synced) lyrics missing for $trackId (falling back to LRC)")
                 return null
             }
             val lines = major.optJSONArray("lines") ?: return null
@@ -196,7 +264,8 @@ class YandexLyricsClient {
     }
 
     private fun fetchFromLrcLib(artist: String, title: String): List<LyricLine>? {
-        val url = HttpUrl.Builder()
+        // 1. Сначала пробуем точный поиск (GET)
+        val getUrl = HttpUrl.Builder()
             .scheme("https")
             .host("lrclib.net")
             .addPathSegment("api")
@@ -205,25 +274,75 @@ class YandexLyricsClient {
             .addQueryParameter("track_name", title)
             .build()
 
-        val request = Request.Builder().url(url).build()
+        val getRequest = Request.Builder()
+            .url(getUrl)
+            .addHeader("User-Agent", "MonitHome/2.0 (Android; Kotlin; +https://github.com/blackalex1)")
+            .build()
+
         try {
-            client.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
-                val body = response.body.string()
-                val json = JSONObject(body)
-                val syncedLyrics = json.optString("syncedLyrics")
-                if (syncedLyrics.isNotEmpty()) {
-                    return parseLrc(syncedLyrics)
-                }
-                val plainLyrics = json.optString("plainLyrics")
-                if (plainLyrics.isNotEmpty()) {
-                    return listOf(LyricLine(0, plainLyrics))
+            commonClient.newCall(getRequest).execute().use { response ->
+                if (response.isSuccessful) {
+                    val body = response.body.string()
+                    val json = JSONObject(body)
+                    
+                    val synced = if (!json.isNull("syncedLyrics")) json.optString("syncedLyrics") else ""
+                    if (synced.isNotEmpty()) {
+                        Log.i(TAG, "Found synced lyrics via GET")
+                        return parseLrc(synced)
+                    }
+                    
+                    val plain = if (!json.isNull("plainLyrics")) json.optString("plainLyrics") else ""
+                    if (plain.isNotEmpty()) {
+                        Log.i(TAG, "Found plain lyrics via GET")
+                        return listOf(LyricLine(0, plain))
+                    }
                 }
             }
         } catch (e: Exception) {
-            Log.w(TAG, "LRCLIB error (${e.javaClass.simpleName}): ${e.message}")
-            return null
+            Log.d(TAG, "LRCLIB GET failed: ${e.message}")
         }
+
+        // 2. Если точный поиск не дал результата - пробуем расширенный поиск (SEARCH)
+        val searchUrl = HttpUrl.Builder()
+            .scheme("https")
+            .host("lrclib.net")
+            .addPathSegment("api")
+            .addPathSegment("search")
+            .addQueryParameter("q", "$artist $title")
+            .build()
+
+        val searchRequest = Request.Builder()
+            .url(searchUrl)
+            .addHeader("User-Agent", "MonitHome/2.0 (Android; Kotlin; +https://github.com/blackalex1)")
+            .build()
+
+        try {
+            Log.i(TAG, "Fuzzy searching LRCLIB: $artist - $title")
+            commonClient.newCall(searchRequest).execute().use { response ->
+                if (!response.isSuccessful) return null
+                val body = response.body.string()
+                val results = JSONArray(body)
+                if (results.length() > 0) {
+                    // Берем первый результат
+                    val first = results.getJSONObject(0)
+                    
+                    val synced = if (!first.isNull("syncedLyrics")) first.optString("syncedLyrics") else ""
+                    if (synced.isNotEmpty()) {
+                        Log.i(TAG, "Fuzzy search found synced lyrics")
+                        return parseLrc(synced)
+                    }
+                    
+                    val plain = if (!first.isNull("plainLyrics")) first.optString("plainLyrics") else ""
+                    if (plain.isNotEmpty()) {
+                        Log.i(TAG, "Fuzzy search found plain lyrics")
+                        return listOf(LyricLine(0, plain))
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "LRCLIB Search failed: ${e.message}")
+        }
+
         return null
     }
 }

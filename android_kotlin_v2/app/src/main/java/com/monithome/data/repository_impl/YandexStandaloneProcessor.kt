@@ -154,9 +154,9 @@ class YandexStandaloneProcessor(
                     lyrics = yandexLyricsClient.fetchLyrics(trackId, token)
                 }
                 
-                // 2. Если не вышло или нет данных - фолбек на поиск в LRCLIB
+                // 2. Если не вышло или нет данных - фолбек на поиск в LRCLIB (теперь с предварительным поиском в Яндексе)
                 if (lyrics.isEmpty() && artist.isNotEmpty() && title.isNotEmpty()) {
-                    lyrics = yandexLyricsClient.fetchLyricsBySearch(artist, title)
+                    lyrics = yandexLyricsClient.fetchLyricsBySearch(artist, title, token)
                 }
 
                 if (lyrics.isNotEmpty()) {
@@ -168,10 +168,12 @@ class YandexStandaloneProcessor(
                         devices[deviceId] = mapOf("timings" to timings)
                         current.toMutableMap().apply { put("devices", devices) }
                     }
-                    Log.d("YandexProcessor", "Lyrics updated for $deviceId (${artist} - ${title})")
+                    Log.i("YandexProcessor", "Successfully updated lyrics for $deviceId (${artist} - ${title}). Lines: ${lyrics.size}")
+                } else {
+                    Log.w("YandexProcessor", "No lyrics found for: $artist - $title (Device: $deviceId)")
                 }
             } catch (e: Exception) {
-                Log.e("YandexProcessor", "Failed to fetch lyrics for $deviceId: ${e.message}")
+                Log.e("YandexProcessor", "Critical failure fetching lyrics for $deviceId: ${e.message}", e)
             }
         }
     }

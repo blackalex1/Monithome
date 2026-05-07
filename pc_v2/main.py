@@ -26,6 +26,13 @@ async def lifespan(app: FastAPI):
     await socket_manager.initialize()
     await plugin_manager.initialize()
     
+    from core.i18n import I18nManager
+    I18nManager.get_instance().set_language(config_manager.config.language)
+    
+    from core.elevation import get_elevation_manager
+    em = await get_elevation_manager()
+    await em.start()
+    
     discovery = DiscoveryManager(port=5000)
     asyncio.create_task(discovery.start())
     app.state.discovery = discovery
@@ -36,7 +43,17 @@ async def lifespan(app: FastAPI):
     logger.info("Shutting down...")
     if hasattr(app.state, 'discovery'):
         await app.state.discovery.stop()
+    
+    from core.network.zeroconf_service import ZeroconfService
+    zc_service = await ZeroconfService.get_instance()
+    await zc_service.shutdown()
+    
+    from core.elevation import get_elevation_manager
+    em = await get_elevation_manager()
+    await em.stop()
+    
     await plugin_manager.shutdown()
+    config_manager.db.close()
 
 app = FastAPI(lifespan=lifespan)
 
