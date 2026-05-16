@@ -11,6 +11,14 @@ class MonitSettingsForm extends HTMLElement {
 
         this.querySelector('form').onsubmit = (e) => this.handleSubmit(e);
         
+        // Immediate save for autostart
+        const autostart = this.querySelector('#server-autostart');
+        if (autostart) {
+            autostart.onchange = (e) => {
+                this.saveField('autostart', e.target.checked);
+            };
+        }
+
         // Живое обновление HEX при выборе цвета в пикере
         const picker = this.querySelector('#server-theme-picker');
         const hex = this.querySelector('#server-theme-hex');
@@ -34,14 +42,36 @@ class MonitSettingsForm extends HTMLElement {
         const hex = this.querySelector('#server-theme-hex');
         const picker = this.querySelector('#server-theme-picker');
 
-        if (hostname) hostname.value = config.hostname || '';
-        if (lang) lang.value = config.language || 'ru';
-        if (autostart) autostart.checked = config.autostart || false;
-        if (hex) hex.value = config.theme_color || '0xFF22C55E';
+        // Only update if not focused and value changed to avoid UI glitches during stats updates
+        if (hostname && document.activeElement !== hostname && hostname.value !== (config.hostname || '')) {
+            hostname.value = config.hostname || '';
+        }
+        if (lang && document.activeElement !== lang && lang.value !== (config.language || 'ru')) {
+            lang.value = config.language || 'ru';
+        }
+        if (autostart && autostart.checked !== (config.autostart || false)) {
+            autostart.checked = config.autostart || false;
+        }
+        if (hex && document.activeElement !== hex && hex.value !== (config.theme_color || '0xFF22C55E')) {
+            hex.value = config.theme_color || '0xFF22C55E';
+        }
         
         if (picker && config.theme_color) {
             const c = config.theme_color;
-            picker.value = c.startsWith('0xFF') ? '#' + c.substring(4) : c.replace('0x', '#');
+            const hexVal = c.startsWith('0xFF') ? '#' + c.substring(4) : c.replace('0x', '#');
+            if (picker.value !== hexVal) picker.value = hexVal;
+        }
+    }
+
+    async saveField(key, value) {
+        try {
+            await secureFetch('/api/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ [key]: value })
+            });
+        } catch (err) {
+            console.error(`Failed to save ${key}`, err);
         }
     }
 

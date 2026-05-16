@@ -46,12 +46,15 @@ async def get_ui_config_data():
                     p_cfg["description"] = translations.get(f"plugin_desc_{p_id}", p_cfg.get("description", ""))
                     plugins_configs.append(p_cfg)
     
+    from core.autostart import AutostartManager
     color = cfg.theme_color if hasattr(cfg, 'theme_color') else "0xFF22C55E"
     return {
         "plugins": plugins_configs,
         "theme_color": color,
         "translations": translations,
-        "language": lang
+        "language": lang,
+        "autostart": AutostartManager.is_enabled(),
+        "hostname": cfg.hostname
     }
 
 def register_ui_handlers(sio):
