@@ -95,21 +95,32 @@ class SensorHelper:
                 if self.computer:
                     try:
                         # Сбор данных
+                        # 1. Выбираем приоритетную видеокарту (дискретную)
+                        best_gpu_name = None
+                        best_gpu_is_discrete = False
+                        for hardware in self.computer.Hardware:
+                            h_name = hardware.Name
+                            h_type = str(hardware.HardwareType).lower()
+                            if "gpu" in h_type:
+                                is_discrete = ("arc" in h_name.lower()) or (not any(x in h_name.lower() for x in ["graphics", "integrated", "vega", "basic render", "intel(r) hd", "intel(r) uhd", "intel(r) iris"]))
+                                if not best_gpu_name or (is_discrete and not best_gpu_is_discrete):
+                                    best_gpu_name = h_name
+                                    best_gpu_is_discrete = is_discrete
+
                         for hardware in self.computer.Hardware:
                             hardware.Update()
                             h_name = hardware.Name
                             h_type = str(hardware.HardwareType).lower()
                             
-                            is_gpu = any(x in h_name.lower() or x in h_type for x in ["nvidia", "amd", "gpu", "atigpu"])
-                            is_cpu = any(x in h_name.lower() or x in h_type for x in ["cpu", "intel", "amd", "ryzen"])
+                            is_gpu = "gpu" in h_type
+                            is_cpu = "cpu" in h_type
                             
                             if is_cpu and (not stats.get("cpu_name") or stats["cpu_name"] == "CPU"):
                                 stats["cpu_name"] = h_name
                             
-                            if is_gpu:
+                            if is_gpu and h_name == best_gpu_name:
                                 stats["has_gpu"] = True
-                                if not stats.get("gpu_name"):
-                                    stats["gpu_name"] = h_name
+                                stats["gpu_name"] = h_name
                             
                             h_sensors = {}
                             for sensor in hardware.Sensors:
@@ -119,7 +130,7 @@ class SensorHelper:
                                     val = round(float(sensor.Value), 2)
                                     
                                     # КРИТИЧЕСКИЕ ДАТЧИКИ (всегда берем)
-                                    if is_gpu:
+                                    if is_gpu and h_name == best_gpu_name:
                                         if "core" in s_name.lower() or "package" in s_name.lower():
                                             if "temperature" in s_type: stats["gpu_temp"] = val
                                             if "load" in s_type: stats["gpu_load"] = val

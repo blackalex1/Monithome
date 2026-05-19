@@ -36,7 +36,9 @@ class YandexConfigHandler(
         onStandaloneChanged(isStandalone)
         
         val token = finalData.optString("yandex_token")
-        onTokenChanged(if (token.isNotEmpty()) token else null)
+        val finalToken = if (token.isNotEmpty()) token else null
+        onTokenChanged(finalToken)
+        yandexClient.setYandexToken(finalToken)
 
         val devicesArr = finalData.optJSONArray("devices")
         val allowedIds = mutableSetOf<String>()
