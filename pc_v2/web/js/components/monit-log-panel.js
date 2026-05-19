@@ -30,21 +30,39 @@ class MonitLogPanel extends HTMLElement {
 
     updateLogs(logs) {
         const output = this.querySelector('#log-output');
-        if (!output) return;
-
-        output.innerHTML = '';
-        logs.forEach(log => {
-            if (this.currentLogLevel === 'all' || this.currentLogLevel === log.level) {
-                const div = document.createElement('div');
-                div.className = `log-line log-${log.level}`;
-                div.textContent = log.message;
-                output.appendChild(div);
-            }
-        });
-        
-        // Автопрокрутка вниз
         const container = this.querySelector('.logs-container');
-        if (container) {
+        if (!output || !container) return;
+
+        // Проверяем, находится ли пользователь в самом низу (с запасом 50px)
+        const isAtBottom = (container.scrollHeight - container.clientHeight - container.scrollTop) < 50;
+
+        // Если сменился фильтр или логи сбросились/уменьшились, перерисовываем с нуля
+        if (this._lastFilter !== this.currentLogLevel || !this._renderedLogsCount || logs.length < this._renderedLogsCount) {
+            output.innerHTML = '';
+            this._renderedLogsCount = 0;
+            this._lastFilter = this.currentLogLevel;
+        }
+
+        // Рендерим только новые лог-строки (не затирая старые, чтобы не сбивать выделение текста)
+        const startIdx = this._renderedLogsCount || 0;
+        const newLogs = logs.slice(startIdx);
+        
+        if (newLogs.length > 0) {
+            const fragment = document.createDocumentFragment();
+            newLogs.forEach(log => {
+                if (this.currentLogLevel === 'all' || this.currentLogLevel === log.level) {
+                    const div = document.createElement('div');
+                    div.className = `log-line log-${log.level}`;
+                    div.textContent = log.message;
+                    fragment.appendChild(div);
+                }
+            });
+            output.appendChild(fragment);
+            this._renderedLogsCount = logs.length;
+        }
+        
+        // Автопрокрутка срабатывает только если пользователь до этого смотрел низ
+        if (isAtBottom) {
             container.scrollTop = container.scrollHeight;
         }
     }

@@ -17,9 +17,40 @@
     {
       "id": "app_buttons",
       "type": "button_group",
-      "label": "Программы",
-      "label_en": "Applications",
-      "buttons": []
+      "label": "Панель макросов (Stream Deck)",
+      "label_en": "Macro Pad (Stream Deck)",
+      "buttons": [
+        {
+          "label": "Мут микрофона (Discord)",
+          "action": "hotkey",
+          "data": "ctrl+shift+m",
+          "icon": "MicOff"
+        },
+        {
+          "label": "Заглушить звук (Discord)",
+          "action": "hotkey",
+          "data": "ctrl+shift+d",
+          "icon": "VolumeX"
+        },
+        {
+          "label": "Свернуть все окна",
+          "action": "hotkey",
+          "data": "win+d",
+          "icon": "Monitor"
+        },
+        {
+          "label": "Диспетчер задач",
+          "action": "hotkey",
+          "data": "ctrl+shift+esc",
+          "icon": "Activity"
+        },
+        {
+          "label": "Закрыть активное окно",
+          "action": "hotkey",
+          "data": "alt+f4",
+          "icon": "XSquare"
+        }
+      ]
     }
   ]
 }

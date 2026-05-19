@@ -14,6 +14,8 @@ import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import org.json.JSONArray
 import org.json.JSONObject
+import com.monithome.data.network.yandex.YandexSslUtils
+import okhttp3.OkHttpClient
 import java.net.URISyntaxException
 
 sealed class SocketConnectionState {
@@ -52,25 +54,35 @@ class PcSocketClient {
             return
         }
         
-        var finalUrl = if (url.startsWith("http")) url else "http://$url"
-        Log.i("PcSocketClient", "Connecting to $finalUrl (token present: ${token != null})")
-        
-        val hasPort = if (finalUrl.startsWith("http")) {
-            finalUrl.substringAfter("://").contains(":")
-        } else {
-            finalUrl.contains(":")
+        // Принудительно переводим любое соединение на HTTPS
+        var finalUrl = when {
+            url.startsWith("https://") -> url
+            url.startsWith("wss://") -> url.replace("wss://", "https://")
+            url.startsWith("http://") -> url.replace("http://", "https://")
+            url.startsWith("ws://") -> url.replace("ws://", "https://")
+            else -> "https://$url"
         }
+        Log.i("PcSocketClient", "Connecting to secure socket: $finalUrl (token present: ${token != null})")
         
+        val hasPort = finalUrl.substringAfter("://").contains(":")
         if (!hasPort && finalUrl.isNotEmpty()) {
             finalUrl += ":5000"
         }
 
         try {
             _connectionState.value = SocketConnectionState.Connecting
+            
+            val okHttpClient = OkHttpClient.Builder()
+                .sslSocketFactory(YandexSslUtils.createSSLSocketFactory(), YandexSslUtils.trustManager)
+                .hostnameVerifier { _, _ -> true }
+                .build()
+
             val opts = IO.Options().apply {
                 reconnection = true
                 reconnectionDelay = 1000
                 timeout = 15000
+                callFactory = okHttpClient
+                webSocketFactory = okHttpClient
                 auth = mutableMapOf<String, String>().apply {
                     put("supports_encryption", "true")
                     if (token != null) put("token", token)

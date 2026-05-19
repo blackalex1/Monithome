@@ -194,7 +194,7 @@ function renderAppLauncherUI(config) {
         <div class="launcher-settings">
             <div class="settings-group" style="margin-bottom: 20px;">
                 <h4 style="color: var(--accent); margin-bottom: 10px;">${t('label_current_apps', 'Текущие приложения')}</h4>
-                <div class="apps-list" id="launcher-apps-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 300px; overflow-y: auto; padding-right: 5px;">
+                <div class="apps-list" id="launcher-apps-list" style="display: flex; flex-direction: column; gap: 8px; max-height: 260px; overflow-y: auto; padding-right: 5px;">
                     ${apps.map((app, index) => `
                         <div class="glass-panel" draggable="true" data-index="${index}" style="display: flex; align-items: center; justify-content: space-between; padding: 10px; cursor: grab;">
                             <div style="display: flex; align-items: center; gap: 12px; pointer-events: none;">
@@ -204,7 +204,9 @@ function renderAppLauncherUI(config) {
                                 </div>
                                 <div style="text-align: left;">
                                     <div style="font-weight: 500; color: white;">${app.label}</div>
-                                    <div style="font-size: 10px; color: var(--text-muted); word-break: break-all; max-width: 200px;">${app.data}</div>
+                                    <div style="font-size: 10px; color: var(--text-muted); word-break: break-all; max-width: 200px;">
+                                        <span style="color: var(--accent); font-weight: bold; text-transform: uppercase;">[${app.action || 'launch'}]</span> ${app.data}
+                                    </div>
                                 </div>
                             </div>
                             <button class="plugin-btn remove-app-btn" style="background: rgba(239, 68, 68, 0.1); color: #ef4444; border-color: rgba(239, 68, 68, 0.2); padding: 5px 10px;" data-label="${app.label}">✕</button>
@@ -212,17 +214,32 @@ function renderAppLauncherUI(config) {
                     `).join('') || `<p style="color: var(--text-muted);">${t('no_apps_added', 'Приложения не добавлены')}</p>`}
                 </div>
             </div>
+            
             <div class="settings-group glass-panel" style="padding: 15px; border: 1px solid var(--accent-glow);">
                 <h4 style="color: var(--accent); margin-bottom: 12px;">${t('label_add_new', 'Добавить новое')}</h4>
+                
+                <!-- Тип действия (Макроса) -->
+                <div style="margin-bottom: 15px;">
+                    <label style="font-size: 11px; color: var(--text-muted); display: block; margin-bottom: 5px; text-transform: uppercase; letter-spacing: 0.5px;">Тип действия:</label>
+                    <select id="new-app-action" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 6px; outline: none; cursor: pointer; font-size: 13px;">
+                        <option value="launch">🚀 Запуск приложения или файла</option>
+                        <option value="hotkey">⌨️ Горячие клавиши (Keyboard Hotkeys)</option>
+                        <option value="command">💻 Команда консоли / Фоновый скрипт</option>
+                        <option value="media">🎵 Управление медиа / Громкость</option>
+                        <option value="system">🔒 Системное действие (Блокировка / Микрофон)</option>
+                    </select>
+                </div>
+
                 <div style="display: flex; gap: 15px; align-items: flex-start;">
                     <div id="new-app-icon-preview" style="width: 64px; height: 64px; background: rgba(255,255,255,0.05); border-radius: 12px; display: flex; align-items: center; justify-content: center; overflow: hidden; border: 1px dashed var(--border-color); flex-shrink: 0;">
                         <span style="font-size: 24px; opacity: 0.3;">🚀</span>
                     </div>
                     <div style="display: flex; flex-direction: column; gap: 10px; flex-grow: 1;">
-                        <input type="text" id="new-app-name" placeholder="${t('placeholder_app_name', 'Название')}" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
-                        <div style="display: flex; gap: 5px;">
-                            <input type="text" id="new-app-path" placeholder="${t('placeholder_app_path', 'Путь')}" style="flex-grow: 1; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px;">
-                            <button class="plugin-btn" id="browse-app-btn" style="padding: 5px 12px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">📁</button>
+                        <input type="text" id="new-app-name" placeholder="Название кнопки (например: Discord Mute)" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px; font-size: 13px;">
+                        
+                        <!-- Контейнер для динамического ввода значения в зависимости от экшена -->
+                        <div id="new-app-input-container" style="width: 100%;">
+                            <!-- Заполняется динамически через JS -->
                         </div>
                     </div>
                 </div>
@@ -232,16 +249,145 @@ function renderAppLauncherUI(config) {
     `;
     modalContent.innerHTML = html;
 
-    // Handlers
-    modalContent.querySelector('#browse-app-btn').onclick = () => socket.emit('plugin_command', { plugin_id: 'app_launcher', action: 'browse_file', data: {} });
+    const actionSelect = modalContent.querySelector('#new-app-action');
+    const inputContainer = modalContent.querySelector('#new-app-input-container');
+    const previewDiv = modalContent.querySelector('#new-app-icon-preview');
+
+    // Функция обновления полей ввода в зависимости от выбранного экшена
+    const updateInputs = () => {
+        const action = actionSelect.value;
+        
+        // Обновляем иконку по умолчанию в превью
+        const emojis = {
+            launch: "🚀",
+            hotkey: "⌨️",
+            command: "💻",
+            media: "🎵",
+            system: "🔒"
+        };
+        previewDiv.innerHTML = `<span style="font-size: 24px; opacity: 0.3;">${emojis[action] || "🚀"}</span>`;
+
+        if (action === "launch") {
+            inputContainer.innerHTML = `
+                <div style="display: flex; gap: 5px;">
+                    <input type="text" id="new-app-path" placeholder="Путь к файлу/ярлыку или команда запуска" style="flex-grow: 1; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px; font-size: 13px;">
+                    <button class="plugin-btn" id="browse-app-btn" style="padding: 5px 12px; background: rgba(56, 189, 248, 0.2); color: #38bdf8; border-color: rgba(56, 189, 248, 0.3);">📁</button>
+                </div>
+            `;
+            modalContent.querySelector('#browse-app-btn').onclick = () => socket.emit('plugin_command', { plugin_id: 'app_launcher', action: 'browse_file', data: {} });
+        } else if (action === "hotkey") {
+            inputContainer.innerHTML = `
+                <input type="text" id="new-app-path" placeholder="Кликните сюда и нажмите клавиши на клавиатуре..." style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 4px; font-size: 13px; cursor: pointer; caret-color: transparent; border-color: var(--accent);" readonly>
+            `;
+            
+            const pathInput = inputContainer.querySelector('#new-app-path');
+            
+            // Функция маппинга физических кодов клавиш (независимо от раскладки)
+            const mapCodeToKey = (code) => {
+                if (!code) return "";
+                if (code.startsWith("Key")) return code.replace("Key", "").toLowerCase();
+                if (code.startsWith("Digit")) return code.replace("Digit", "");
+                if (code.startsWith("F") && !isNaN(code.substring(1))) return code.toLowerCase();
+                
+                const mapping = {
+                    "ControlLeft": "ctrl", "ControlRight": "ctrl",
+                    "ShiftLeft": "shift", "ShiftRight": "shift",
+                    "AltLeft": "alt", "AltRight": "alt",
+                    "MetaLeft": "win", "MetaRight": "win",
+                    "Space": "space", "Escape": "esc", "Enter": "enter", "Tab": "tab",
+                    "Backspace": "backspace", "Delete": "delete",
+                    "ArrowUp": "up", "ArrowDown": "down", "ArrowLeft": "left", "ArrowRight": "right"
+                };
+                return mapping[code] || "";
+            };
+            
+            pathInput.onfocus = () => {
+                pathInput.value = "";
+                pathInput.placeholder = "Запись комбинации... Отпустите клавиши для сохранения";
+                pathInput.style.borderColor = "#10b981"; // Зеленая рамка при записи
+                pathInput.style.boxShadow = "0 0 10px rgba(16, 185, 129, 0.3)";
+            };
+            
+            pathInput.onblur = () => {
+                pathInput.style.borderColor = "var(--border-color)";
+                pathInput.style.boxShadow = "none";
+                if (!pathInput.value) {
+                    pathInput.placeholder = "Кликните сюда и нажмите клавиши на клавиатуре...";
+                }
+            };
+            
+            pathInput.onkeydown = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                
+                const keys = [];
+                if (e.ctrlKey) keys.push("ctrl");
+                if (e.shiftKey) keys.push("shift");
+                if (e.altKey) keys.push("alt");
+                if (e.metaKey) keys.push("win");
+                
+                const cleanKey = mapCodeToKey(e.code);
+                if (cleanKey && !["ctrl", "shift", "alt", "win"].includes(cleanKey)) {
+                    keys.push(cleanKey);
+                }
+                
+                if (keys.length > 0) {
+                    pathInput.value = keys.join("+");
+                }
+            };
+        } else if (action === "command") {
+            inputContainer.innerHTML = `
+                <input type="text" id="new-app-path" placeholder="Системный скрипт/команда (например: ipconfig /flushdns)" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px; font-size: 13px;">
+            `;
+        } else if (action === "media") {
+            inputContainer.innerHTML = `
+                <select id="new-app-path" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px; outline: none; cursor: pointer; font-size: 13px;">
+                    <option value="play_pause">Play / Pause (Воспроизведение/Пауза)</option>
+                    <option value="next">Next Track (Следующий трек)</option>
+                    <option value="prev">Previous Track (Предыдущий трек)</option>
+                    <option value="volume_up">Volume Up (Прибавить громкость)</option>
+                    <option value="volume_down">Volume Down (Убавить громкость)</option>
+                    <option value="mute">Mute Output (Заглушить динамики)</option>
+                </select>
+            `;
+        } else if (action === "system") {
+            inputContainer.innerHTML = `
+                <select id="new-app-path" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 8px; border-radius: 4px; outline: none; cursor: pointer; font-size: 13px;">
+                    <option value="lock">Lock PC (Заблокировать рабочую станцию)</option>
+                    <option value="sleep">Sleep Mode (Отправить ПК в режим сна)</option>
+                    <option value="mute_mic">Toggle Mic Mute (Вкл/Выкл микрофон)</option>
+                </select>
+            `;
+        }
+    };
+
+    // Привязываем события
+    actionSelect.onchange = updateInputs;
+    updateInputs(); // Инициализация первого выбора
+
+    // Добавление кнопки
     modalContent.querySelector('#add-app-btn').onclick = () => {
         const name = document.getElementById('new-app-name').value;
         const path = document.getElementById('new-app-path').value;
-        const iconImg = document.getElementById('new-app-icon-preview').querySelector('img');
+        const actionType = actionSelect.value;
+        const iconImg = previewDiv.querySelector('img');
+        
         if (!name || !path) return;
-        socket.emit('plugin_command', { plugin_id: 'app_launcher', action: 'add_app', data: { label: name, path, icon: iconImg ? iconImg.src : null } });
+        
+        socket.emit('plugin_command', { 
+            plugin_id: 'app_launcher', 
+            action: 'add_app', 
+            data: { 
+                label: name, 
+                path: path, 
+                action: actionType,
+                icon: iconImg ? iconImg.src : null 
+            } 
+        });
         modalContent.innerHTML = '<div class="loading-spinner"></div>';
     };
+
+    // Удаление кнопок
     modalContent.querySelectorAll('.remove-app-btn').forEach(btn => {
         btn.onclick = () => {
             const label = btn.getAttribute('data-label');
@@ -255,6 +401,27 @@ function renderAppLauncherUI(config) {
 function getLauncherIconHtml(iconData) {
     if (iconData && iconData.startsWith('data:image')) {
         return `<img src="${iconData}" style="width: 100%; height: 100%; object-fit: contain; transform: scale(1.15);">`;
+    }
+    
+    // Карта эмодзи-иконок для кастомных макро-действий
+    const emojiMap = {
+        "Lock": "🔒",
+        "Moon": "🌙",
+        "Play": "⏯️",
+        "SkipForward": "⏭️",
+        "MicOff": "🎙️❌",
+        "VolumeX": "🔇",
+        "Monitor": "🖥️",
+        "Activity": "📈",
+        "XSquare": "🛑",
+        "Terminal": "⌨️",
+        "Code": "💻",
+        "Music": "🎵",
+        "AppWindow": "🪟"
+    };
+    
+    if (iconData && emojiMap[iconData]) {
+        return `<span style="font-size: 24px;">${emojiMap[iconData]}</span>`;
     }
     return `<span style="font-size: 20px;">🚀</span>`;
 }

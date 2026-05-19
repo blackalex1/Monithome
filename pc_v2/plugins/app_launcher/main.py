@@ -166,9 +166,38 @@ class Plugin(BasePlugin):
                     # Если регулярка не сработала, пробуем грубо очистить
                     app_path = app_path.split("=")[-1].rstrip("}")
                 
-            self.log(f"Attempting to launch: {app_path}")
+            # Извлекаем список кнопок из конфигурации для проверки кастомных макро-действий
+            config = self.get_config()
+            buttons = []
+            for widget in config.get("widgets", []):
+                if widget.get("type") == "button_group":
+                    buttons = widget.get("buttons", [])
+                    break
+                    
+            # Ищем кнопку в конфигурации по совпадению очищенного пути или названия
+            button = None
             if app_path:
-                await asyncio.to_thread(self._launch_app, app_path)
+                for btn in buttons:
+                    if btn.get("data") == app_path or btn.get("label") == app_path:
+                        button = btn
+                        break
+                        
+            # Определяем тип макро-действия (по умолчанию 'launch' для обратной совместимости)
+            btn_action_type = button.get("action", "launch") if button else "launch"
+            
+            self.log(f"Triggering macro: {app_path} (Type: {btn_action_type})")
+            if app_path:
+                if btn_action_type == "hotkey":
+                    await asyncio.to_thread(self._send_hotkey, app_path)
+                elif btn_action_type == "command":
+                    await asyncio.to_thread(self._run_shell_command, app_path)
+                elif btn_action_type == "media":
+                    await asyncio.to_thread(self._send_media_key, app_path)
+                elif btn_action_type == "system":
+                    await asyncio.to_thread(self._execute_system_action, app_path)
+                else:
+                    # Стандартный запуск файла или ярлыка
+                    await asyncio.to_thread(self._launch_app, app_path)
             else:
                 self.log("Launch aborted: No path provided", 30)
             
@@ -179,15 +208,27 @@ class Plugin(BasePlugin):
         elif action == "add_app":
             config = self.get_config()
             app_path = data.get("path", "")
+            btn_action = data.get("action", "launch")
             
-            # Пытаемся достать иконку автоматически
-            icon_b64 = await asyncio.to_thread(self._extract_icon, app_path)
+            # Пытаемся достать иконку автоматически только для стандартного запуска приложений
+            icon_b64 = None
+            if btn_action == "launch":
+                icon_b64 = await asyncio.to_thread(self._extract_icon, app_path)
+            
+            # Подбираем красивую дефолтную иконку в зависимости от типа макроса
+            default_icons = {
+                "launch": "AppWindow",
+                "hotkey": "Terminal",
+                "command": "Code",
+                "media": "Music",
+                "system": "Lock"
+            }
             
             new_button = {
-                "label": data.get("label", "New App"),
-                "action": "launch",
+                "label": data.get("label", "New Macro"),
+                "action": btn_action,
                 "data": app_path,
-                "icon": icon_b64 or data.get("icon", "AppWindow")
+                "icon": icon_b64 or data.get("icon") or default_icons.get(btn_action, "AppWindow")
             }
             
             for widget in config.get("widgets", []):
@@ -288,3 +329,108 @@ class Plugin(BasePlugin):
                 self.log(f"Launched via shell: {path}")
             except Exception as e2:
                 self.log(f"Second attempt failed: {e2}", level=40) # ERROR level
+
+    def _send_hotkey(self, keys_str: str):
+        try:
+            import ctypes
+            import time
+            
+            parts = [p.strip().lower() for p in keys_str.split("+")]
+            
+            # Таблица Virtual Key кодов
+            VK_CODES = {
+                'ctrl': 0x11, 'control': 0x11,
+                'shift': 0x10,
+                'alt': 0x12,
+                'win': 0x5B, 'super': 0x5B,
+                'enter': 0x0D, 'return': 0x0D,
+                'esc': 0x1B, 'escape': 0x1B,
+                'space': 0x20,
+                'tab': 0x09,
+                'backspace': 0x08,
+                'delete': 0x2E,
+                'f1': 0x70, 'f2': 0x71, 'f3': 0x72, 'f4': 0x73, 'f5': 0x74, 'f6': 0x75,
+                'f7': 0x76, 'f8': 0x77, 'f9': 0x78, 'f10': 0x79, 'f11': 0x7A, 'f12': 0x7B,
+                'left': 0x25, 'up': 0x26, 'right': 0x27, 'down': 0x28,
+            }
+            
+            vk_inputs = []
+            for p in parts:
+                if p in VK_CODES:
+                    vk_inputs.append(VK_CODES[p])
+                elif len(p) == 1:
+                    vk_inputs.append(ord(p.upper()))
+                    
+            if not vk_inputs:
+                self.log(f"No valid keys found in: {keys_str}", level=30)
+                return
+                
+            # Имитируем нажатие
+            for vk in vk_inputs:
+                ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+            
+            time.sleep(0.05)
+            
+            # Отпускаем клавиши в обратном порядке
+            for vk in reversed(vk_inputs):
+                ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
+                
+            self.log(f"Hotkey executed successfully: {keys_str}")
+        except Exception as e:
+            self.log(f"Failed to execute hotkey {keys_str}: {e}", level=40)
+
+    def _run_shell_command(self, cmd: str):
+        try:
+            # Запускаем команду скрытно в фоне
+            subprocess.Popen(cmd, shell=True, creationflags=0x08000000)
+            self.log(f"Command executed silently: {cmd}")
+        except Exception as e:
+            self.log(f"Failed to execute command {cmd}: {e}", level=40)
+
+    def _send_media_key(self, action: str):
+        try:
+            import ctypes
+            VK_MEDIA = {
+                'play': 0xB3, 'play_pause': 0xB3,
+                'next': 0xB0,
+                'prev': 0xB1,
+                'stop': 0xB2,
+                'mute': 0xAD, 'volume_mute': 0xAD,
+                'volume_down': 0xAE,
+                'volume_up': 0xAF
+            }
+            key = action.strip().lower()
+            if key in VK_MEDIA:
+                vk = VK_MEDIA[key]
+                ctypes.windll.user32.keybd_event(vk, 0, 0, 0)
+                ctypes.windll.user32.keybd_event(vk, 0, 2, 0)
+                self.log(f"Media event triggered: {key}")
+            else:
+                self.log(f"Unknown media action: {key}", level=30)
+        except Exception as e:
+            self.log(f"Failed to send media key {action}: {e}", level=40)
+
+    def _execute_system_action(self, action: str):
+        try:
+            import ctypes
+            act = action.strip().lower()
+            if act == "lock":
+                ctypes.windll.user32.LockWorkStation()
+                self.log("System locked successfully.")
+            elif act == "sleep":
+                # Перевод Windows в режим сна без гибернации
+                ctypes.windll.PowrProf.SetSuspendState(0, 1, 0)
+                self.log("System put to sleep successfully.")
+            elif act == "mute_mic":
+                # Переключение мута микрофона через нативный Windows PowerShell CoreAudio
+                ps_cmd = "Set-AudioDevice -Recording -Mute (! (Get-AudioDevice -Recording).Mute)"
+                subprocess.Popen(
+                    ["powershell", "-Command", ps_cmd],
+                    shell=True,
+                    creationflags=0x08000000
+                )
+                self.log("Microphone mute toggled.")
+            else:
+                self.log(f"Unknown system action: {act}", level=30)
+        except Exception as e:
+            self.log(f"Failed to execute system action {action}: {e}", level=40)

@@ -3,7 +3,7 @@ import { applyThemeColor, showToast } from './ui.js';
 import { t } from './i18n.js';
 import { store } from './store.js';
 
-export const socket = io("http://127.0.0.1:5000", {
+export const socket = io(window.location.origin, {
     auth: {
         token: getAuthToken()
     }

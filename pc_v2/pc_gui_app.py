@@ -1,9 +1,13 @@
+import os
 import sys
 import threading
 import time
 import logging
 import ctypes
 import uvicorn
+
+# Игнорируем ошибки SSL в Chromium для полной тишины в консоли
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--ignore-certificate-errors"
 
 # Специальная обработка для запуска сканера медиа внутри EXE
 if len(sys.argv) > 1 and "media_scanner.py" in sys.argv[1]:
@@ -368,7 +372,10 @@ class MainWindow(QMainWindow):
         """)
         
         self.setStyleSheet("background-color: #020617;")
-        self.target_url = "http://127.0.0.1:5000/"
+        self.target_url = "https://127.0.0.1:5000/"
+        
+        # Разрешаем самоподписанные сертификаты для локального хоста
+        self.browser.page().certificateError.connect(self.handle_certificate_error)
         
         # Установка куки с токеном ДО загрузки страницы
         from PySide6.QtNetwork import QNetworkCookie
@@ -385,6 +392,11 @@ class MainWindow(QMainWindow):
         self.browser.loadFinished.connect(self._on_load_finished)
         
         self.setup_tray()
+
+    def handle_certificate_error(self, error):
+        # Автоматически доверяем нашему самоподписанному локальному SSL-сертификату
+        error.acceptCertificate()
+        return True
 
     def setup_tray(self):
         """Настройка системного трея"""
@@ -547,13 +559,87 @@ def kill_process_on_port(port):
 
 def run_uvicorn():
     logger.info("Starting Async FastAPI Server in background thread...")
-    # Даем небольшой зазор перед стартом uvicorn
-    time.sleep(0.5)
+    import subprocess
+    import tempfile
+    
+    # 1. Извлекаем ключи из базы данных или генерируем их
+    ssl_cert = config_manager.get_secret("SSL_CERT")
+    ssl_key = config_manager.get_secret("SSL_KEY")
+    
+    if not ssl_cert or not ssl_key:
+        logger.info("SSL-сертификаты не найдены в БД. Автоматическая генерация...")
+        try:
+            # Создаем временную папку для генерации
+            with tempfile.TemporaryDirectory() as tmpdir:
+                cnf_path = os.path.join(tmpdir, "openssl.cnf")
+                tmp_key = os.path.join(tmpdir, "key.pem")
+                tmp_cert = os.path.join(tmpdir, "cert.pem")
+                
+                # Пишем локальный конфиг для openssl
+                with open(cnf_path, "w", encoding="utf-8") as f:
+                    f.write("[req]\ndistinguished_name = req_distinguished_name\nprompt = no\n\n[req_distinguished_name]\nCN = localhost\n")
+                
+                # Запускаем генерацию
+                subprocess.run([
+                    "openssl", "req", "-x509", "-newkey", "rsa:4096",
+                    "-keyout", tmp_key, "-out", tmp_cert,
+                    "-sha256", "-days", "3650", "-nodes",
+                    "-config", cnf_path
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Читаем результаты
+                with open(tmp_cert, "r", encoding="utf-8") as f:
+                    ssl_cert = f.read()
+                with open(tmp_key, "r", encoding="utf-8") as f:
+                    ssl_key = f.read()
+                
+                # Сохраняем зашифрованными в базу данных
+                config_manager.set_secret("SSL_CERT", ssl_cert)
+                config_manager.set_secret("SSL_KEY", ssl_key)
+                
+            logger.info("SSL-сертификаты успешно сгенерированы и сохранены в БД!")
+        except Exception as e:
+            logger.error(f"Критическая ошибка при автогенерации SSL-сертификатов: {e}")
+            return
+            
+    # 2. Создаем временную директорию keys для Uvicorn в BASE_DIR
+    from core.config import BASE_DIR
+    keys_dir = os.path.join(BASE_DIR, "keys")
+    if not os.path.exists(keys_dir):
+        os.makedirs(keys_dir)
+        
+    key_path = os.path.join(keys_dir, "key.pem")
+    cert_path = os.path.join(keys_dir, "cert.pem")
+    
+    # Записываем временные файлы из БД для старта Uvicorn
+    with open(cert_path, "w", encoding="utf-8") as f:
+        f.write(ssl_cert)
+    with open(key_path, "w", encoding="utf-8") as f:
+        f.write(ssl_key)
+        
     try:
-        # Запускаем uvicorn без автоперезагрузки в фоновом потоке
-        uvicorn.run(socket_app, host="0.0.0.0", port=5000, log_level="warning")
+        # Запускаем uvicorn по защищенному протоколу HTTPS
+        uvicorn.run(
+            socket_app, 
+            host="0.0.0.0", 
+            port=5000, 
+            log_level="warning",
+            ssl_keyfile=key_path,
+            ssl_certfile=cert_path
+        )
     except Exception as e:
         logger.error(f"Failed to start server: {e}")
+    finally:
+        # Удаляем временные файлы с диска после остановки сервера
+        if os.path.exists(cert_path):
+            try: os.remove(cert_path)
+            except: pass
+        if os.path.exists(key_path):
+            try: os.remove(key_path)
+            except: pass
+        if os.path.exists(keys_dir):
+            try: os.rmdir(keys_dir)
+            except: pass
 
 def hide_console():
     """Скрывает окно консоли на Windows (если не запущено через pythonw)"""
@@ -569,6 +655,9 @@ def hide_console():
 
 def main():
     hide_console()
+    
+    # Игнорируем ошибки SSL на уровне Chromium для беззвучной работы
+    sys.argv.append("--ignore-certificate-errors")
     
     # 0. Инициализация плагинов (без блокировки на правах админа)
     import asyncio

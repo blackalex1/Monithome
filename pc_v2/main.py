@@ -79,7 +79,87 @@ socket_app = socketio.ASGIApp(sio, other_asgi_app=app)
 
 if __name__ == "__main__":
     import uvicorn
+    import subprocess
+    import tempfile
+    
     # Предварительная проверка прав до старта сервера
     asyncio.run(plugin_manager.pre_check_elevation())
     
-    uvicorn.run(socket_app, host="0.0.0.0", port=5000, log_level="info")
+    # 1. Извлекаем ключи из базы данных или генерируем их
+    ssl_cert = config_manager.get_secret("SSL_CERT")
+    ssl_key = config_manager.get_secret("SSL_KEY")
+    
+    if not ssl_cert or not ssl_key:
+        logger.info("SSL-сертификаты не найдены в БД. Автоматическая генерация...")
+        try:
+            # Создаем временную папку для генерации
+            with tempfile.TemporaryDirectory() as tmpdir:
+                cnf_path = os.path.join(tmpdir, "openssl.cnf")
+                tmp_key = os.path.join(tmpdir, "key.pem")
+                tmp_cert = os.path.join(tmpdir, "cert.pem")
+                
+                # Пишем локальный конфиг для openssl
+                with open(cnf_path, "w", encoding="utf-8") as f:
+                    f.write("[req]\ndistinguished_name = req_distinguished_name\nprompt = no\n\n[req_distinguished_name]\nCN = localhost\n")
+                
+                # Запускаем генерацию
+                subprocess.run([
+                    "openssl", "req", "-x509", "-newkey", "rsa:4096",
+                    "-keyout", tmp_key, "-out", tmp_cert,
+                    "-sha256", "-days", "3650", "-nodes",
+                    "-config", cnf_path
+                ], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                
+                # Читаем результаты
+                with open(tmp_cert, "r", encoding="utf-8") as f:
+                    ssl_cert = f.read()
+                with open(tmp_key, "r", encoding="utf-8") as f:
+                    ssl_key = f.read()
+                
+                # Сохраняем зашифрованными в базу данных
+                config_manager.set_secret("SSL_CERT", ssl_cert)
+                config_manager.set_secret("SSL_KEY", ssl_key)
+                
+            logger.info("SSL-сертификаты успешно сгенерированы и сохранены в БД!")
+        except Exception as e:
+            logger.error(f"Критическая ошибка при автогенерации SSL-сертификатов: {e}")
+            raise e
+            
+    # 2. Создаем временную директорию keys для Uvicorn в BASE_DIR
+    from core.config import BASE_DIR
+    keys_dir = os.path.join(BASE_DIR, "keys")
+    if not os.path.exists(keys_dir):
+        os.makedirs(keys_dir)
+        
+    key_path = os.path.join(keys_dir, "key.pem")
+    cert_path = os.path.join(keys_dir, "cert.pem")
+    
+    # Записываем временные файлы из БД для старта Uvicorn
+    with open(cert_path, "w", encoding="utf-8") as f:
+        f.write(ssl_cert)
+    with open(key_path, "w", encoding="utf-8") as f:
+        f.write(ssl_key)
+        
+    try:
+        # Запускаем сервер строго по HTTPS / WSS
+        logger.info("Запуск сервера MonitHome по защищенному протоколу HTTPS...")
+        uvicorn.run(
+            socket_app,
+            host="0.0.0.0",
+            port=5000,
+            log_level="info",
+            ssl_keyfile=key_path,
+            ssl_certfile=cert_path
+        )
+    finally:
+        # Удаляем временные файлы с диска после остановки сервера
+        logger.info("Очистка временных SSL-файлов с диска...")
+        if os.path.exists(cert_path):
+            try: os.remove(cert_path)
+            except: pass
+        if os.path.exists(key_path):
+            try: os.remove(key_path)
+            except: pass
+        if os.path.exists(keys_dir):
+            try: os.rmdir(keys_dir)
+            except: pass
