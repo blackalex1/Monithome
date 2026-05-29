@@ -1,5 +1,23 @@
 import asyncio
 import logging
+import sys
+
+# Monkey-patch for Windows-specific asyncio ProactorEventLoop connection lost log noise
+if sys.platform == "win32":
+    try:
+        from asyncio.proactor_events import _ProactorBasePipeTransport
+        _orig_call_connection_lost = _ProactorBasePipeTransport._call_connection_lost
+
+        def _patched_call_connection_lost(self, exc):
+            try:
+                _orig_call_connection_lost(self, exc)
+            except (OSError, AttributeError):
+                pass
+
+        _ProactorBasePipeTransport._call_connection_lost = _patched_call_connection_lost
+    except ImportError:
+        pass
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse

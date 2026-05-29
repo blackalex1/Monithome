@@ -112,5 +112,16 @@
     "auth_failed": "Ошибка авторизации: ",
     "btn_kick": "Отключить",
     "confirm_kick": "Разорвать соединение с этим устройством?",
-    "device_kicked": "Отключение устройства..."
+    "device_kicked": "Отключение устройства...",
+    "plugin_name_keenetic_mihomo": "Keenetic & Mihomo",
+    "plugin_desc_keenetic_mihomo": "Мониторинг Keenetic и управление прокси-сервером Mihomo (Clash Meta).",
+    "label_router_ip": "IP-адрес роутера",
+    "label_router_login": "Логин роутера",
+    "label_router_pwd": "Пароль роутера",
+    "label_mihomo_port": "Порт API Mihomo",
+    "label_mihomo_secret": "Секретный токен Mihomo",
+    "desc_router_settings": "Настройки подключения к Keenetic и Mihomo API. Все пароли и секреты надёжно шифруются в БД.",
+    "btn_validating": "Проверка соединения...",
+    "settings_saved_success": "Настройки сохранены и проверены!",
+    "error_enable_plugin_first": "Пожалуйста, включите плагин перед изменением его настроек."
 }

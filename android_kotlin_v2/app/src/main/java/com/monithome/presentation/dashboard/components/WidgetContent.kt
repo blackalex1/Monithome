@@ -72,6 +72,14 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                 )
             }
         }
+        "keenetic_mihomo" -> {
+            if (state.activePlugins.any { it.id == "keenetic_mihomo" && it.active }) {
+                com.monithome.presentation.components.router_proxy.RouterProxyWidget(
+                    state = state,
+                    onIntent = { viewModel.processIntent(it) }
+                )
+            }
+        }
     }
 }
 

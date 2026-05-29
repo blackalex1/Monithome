@@ -181,6 +181,105 @@ export const customHandlers = {
                 };
             }
         }
+    },
+    'keenetic_mihomo': {
+        render: (config) => {
+            modalContent.innerHTML = `<div class="loading-spinner"></div>`;
+            socket.emit('plugin_command', { plugin_id: 'keenetic_mihomo', action: 'get_settings_data', data: {} });
+        },
+        onEvent: (payload) => {
+            if (payload.event === 'settings_data') {
+                const { router_ip, router_login, mihomo_port, has_password, has_secret } = payload.data;
+                const ipLabel = t('label_router_ip', 'IP-адрес роутера');
+                const loginLabel = t('label_router_login', 'Логин роутера');
+                const pwdLabel = t('label_router_pwd', 'Пароль роутера');
+                const portLabel = t('label_mihomo_port', 'Порт API Mihomo');
+                const secLabel = t('label_mihomo_secret', 'Секретный токен Mihomo');
+                const descLabel = t('desc_router_settings', 'Настройки подключения к Keenetic и Mihomo API. Все пароли и секреты надёжно шифруются.');
+
+                let html = `
+                    <div class="keenetic-settings" style="text-align: left;">
+                        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.4;">${descLabel}</p>
+                        
+                        <div id="settings-error" class="glass-panel" style="display: none; background: rgba(239, 68, 68, 0.15); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; padding: 12px; border-radius: 8px; margin-bottom: 15px; font-size: 13px;"></div>
+                        
+                        <div class="settings-group mb-4" style="display: flex; flex-direction: column; gap: 12px;">
+                            <div>
+                                <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 5px;">${ipLabel}:</label>
+                                <input type="text" id="km-router-ip" value="${router_ip}" placeholder="192.168.1.1" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 6px; outline: none; font-size: 13px;">
+                            </div>
+                            
+                            <div style="display: flex; gap: 12px;">
+                                <div style="flex: 1;">
+                                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 5px;">${loginLabel}:</label>
+                                    <input type="text" id="km-router-login" value="${router_login}" placeholder="admin" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 6px; outline: none; font-size: 13px;">
+                                </div>
+                                <div style="flex: 1;">
+                                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 5px;">${pwdLabel}:</label>
+                                    <input type="password" id="km-router-pwd" value="${has_password ? '******' : ''}" placeholder="${has_password ? '••••••••' : 'Пароль'}" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 6px; outline: none; font-size: 13px;">
+                                </div>
+                            </div>
+                            
+                            <div style="display: flex; gap: 12px; margin-top: 5px; border-top: 1px solid rgba(255,255,255,0.05); padding-top: 15px;">
+                                <div style="flex: 1;">
+                                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 5px;">${portLabel}:</label>
+                                    <input type="number" id="km-mihomo-port" value="${mihomo_port}" placeholder="9097" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 6px; outline: none; font-size: 13px;">
+                                </div>
+                                <div style="flex: 1;">
+                                    <label style="font-size: 12px; color: var(--text-muted); display: block; margin-bottom: 5px;">${secLabel}:</label>
+                                    <input type="password" id="km-mihomo-sec" value="${has_secret ? '******' : ''}" placeholder="${has_secret ? '••••••••' : 'Токен'}" style="width: 100%; background: #020617; border: 1px solid var(--border-color); color: white; padding: 10px; border-radius: 6px; outline: none; font-size: 13px;">
+                                </div>
+                            </div>
+                        </div>
+                        
+                        <button class="plugin-btn" style="width: 100%; background: var(--accent); color: white; margin-top: 15px;" id="km-save-btn">
+                            ${t('btn_save_changes', 'Сохранить изменения')}
+                        </button>
+                    </div>
+                `;
+                modalContent.innerHTML = html;
+                
+                modalContent.querySelector('#km-save-btn').onclick = () => {
+                    const btn = modalContent.querySelector('#km-save-btn');
+                    const errorDiv = modalContent.querySelector('#settings-error');
+                    
+                    if (errorDiv) errorDiv.style.display = 'none';
+                    btn.disabled = true;
+                    btn.style.opacity = '0.6';
+                    btn.textContent = t('btn_validating', 'Проверка соединения...');
+                    
+                    socket.emit('plugin_command', {
+                        plugin_id: 'keenetic_mihomo',
+                        action: 'save_settings',
+                        data: {
+                            router_ip: modalContent.querySelector('#km-router-ip').value,
+                            router_login: modalContent.querySelector('#km-router-login').value,
+                            router_password: modalContent.querySelector('#km-router-pwd').value,
+                            mihomo_port: modalContent.querySelector('#km-mihomo-port').value,
+                            mihomo_secret: modalContent.querySelector('#km-mihomo-sec').value
+                        }
+                    });
+                };
+            } else if (payload.event === 'settings_validation_result') {
+                const btn = modalContent.querySelector('#km-save-btn');
+                const errorDiv = modalContent.querySelector('#settings-error');
+                
+                if (payload.data.success) {
+                    showToast(t('settings_saved_success', 'Настройки сохранены и проверены!'));
+                    closeModal();
+                } else {
+                    if (btn) {
+                        btn.disabled = false;
+                        btn.style.opacity = '1';
+                        btn.textContent = t('btn_save_changes', 'Сохранить изменения');
+                    }
+                    if (errorDiv) {
+                        errorDiv.style.display = 'block';
+                        errorDiv.textContent = payload.data.message;
+                    }
+                }
+            }
+        }
     }
 };
 

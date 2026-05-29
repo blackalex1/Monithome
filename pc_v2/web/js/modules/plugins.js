@@ -69,6 +69,24 @@ export async function showPluginInfo(pluginId) {
 }
 
 export async function editPluginConfig(pluginId) {
+    const activePlugins = store.state.plugins || [];
+    const pluginData = activePlugins.find(p => p.id === pluginId);
+    const isActive = pluginData ? pluginData.active : false;
+    const customWizards = ['yandex_station', 'pc_disks', 'system_stats', 'keenetic_mihomo'];
+
+    if (customWizards.includes(pluginId) && !isActive) {
+        showModal({
+            title: t(`plugin_name_${pluginId}`, pluginId),
+            content: `
+                <div style="text-align: center; padding: 25px; color: var(--text-muted); font-size: 14px; line-height: 1.5;">
+                    <p style="font-size: 28px; margin-bottom: 12px;">⚠️</p>
+                    <p>${t('error_enable_plugin_first', 'Пожалуйста, включите плагин перед изменением настроек.')}</p>
+                </div>
+            `
+        });
+        return;
+    }
+
     if (pluginId === 'yandex_station') {
         showModal({ title: t('yandex_settings_title', "Яндекс Станция"), content: `<div class="loading-spinner"></div>` });
         socket.emit('plugin_command', { plugin_id: 'yandex_station', action: 'get_wizard_data', data: {} });

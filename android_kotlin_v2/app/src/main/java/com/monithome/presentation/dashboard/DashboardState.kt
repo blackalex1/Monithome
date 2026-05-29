@@ -19,7 +19,7 @@ data class DashboardState(
     val lyrics: List<com.monithome.domain.models.LyricLine> = emptyList(),
     val isLyricsFullScreen: Boolean = false,
     val translations: Map<String, String> = emptyMap(),
-    val widgetOrder: List<String> = listOf("media", "pc_system", "yandex_lyrics", "system_stats", "pc_disks"),
+    val widgetOrder: List<String> = listOf("media", "pc_system", "yandex_lyrics", "system_stats", "pc_disks", "keenetic_mihomo"),
     
     // Stats History
     val isStatsExpanded: Boolean = false,

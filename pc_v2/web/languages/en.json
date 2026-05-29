@@ -112,5 +112,16 @@
     "auth_failed": "Authorization failed: ",
     "btn_kick": "Disconnect",
     "confirm_kick": "Disconnect this device?",
-    "device_kicked": "Disconnecting device..."
+    "device_kicked": "Disconnecting device...",
+    "plugin_name_keenetic_mihomo": "Keenetic & Mihomo",
+    "plugin_desc_keenetic_mihomo": "Monitor Keenetic router and manage Mihomo (Clash Meta) proxy proxy.",
+    "label_router_ip": "Router IP Address",
+    "label_router_login": "Router Login",
+    "label_router_pwd": "Router Password",
+    "label_mihomo_port": "Mihomo API Port",
+    "label_mihomo_secret": "Mihomo Secret Token",
+    "desc_router_settings": "Keenetic & Mihomo API connection settings. All passwords and secrets are securely encrypted in DB.",
+    "btn_validating": "Verifying connection...",
+    "settings_saved_success": "Settings successfully saved and verified!",
+    "error_enable_plugin_first": "Please enable the plugin before changing its settings."
 }
