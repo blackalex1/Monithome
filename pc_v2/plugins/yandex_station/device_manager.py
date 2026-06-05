@@ -43,7 +43,7 @@ class DeviceManager:
                 if selected_ids and d_id not in selected_ids:
                     self.plugin.log(f"Stopping worker for unselected device: {d_id}")
                     if d_id in self.plugin.workers:
-                        await self.plugin.workers[d_id].stop()
+                        self.plugin.workers[d_id].stop()
                         del self.plugin.workers[d_id]
                     if d_id in self.plugin.cmd_queues: del self.plugin.cmd_queues[d_id]
 

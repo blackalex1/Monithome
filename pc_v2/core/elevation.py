@@ -150,11 +150,11 @@ class ElevationManager:
             shm = mmap.mmap(-1, SHMEM_SIZE, tagname=SHMEM_NAME, access=mmap.ACCESS_READ)
             try:
                 content = shm[:].decode('utf-8').strip('\x00')
-                shm.close()
                 if content:
                     return json.loads(content)
-            except:
-                shm.close()
+            finally:
+                try: shm.close()
+                except: pass
         except:
             pass
         return None

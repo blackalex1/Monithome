@@ -13,6 +13,9 @@ kernel32.MapViewOfFile.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD
 kernel32.UnmapViewOfFile.restype = ctypes.wintypes.BOOL
 kernel32.UnmapViewOfFile.argtypes = [ctypes.c_void_p]
 
+kernel32.CloseHandle.restype = ctypes.wintypes.BOOL
+kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+
 def get_afterburner_stats():
     """
     Универсальный читатель Shared Memory MSI Afterburner.

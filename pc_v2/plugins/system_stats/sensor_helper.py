@@ -175,7 +175,6 @@ class SensorHelper:
                     try:
                         cmd_data = cmd_shm[:].decode('utf-8').strip('\x00')
                         if cmd_data:
-                            cmd_shm.close()
                             clear_shm = mmap.mmap(-1, 1024, tagname="Local\\MonitHomeCommands_V9", access=mmap.ACCESS_WRITE)
                             clear_shm.write(b'\x00' * 1024)
                             clear_shm.close()
@@ -193,7 +192,7 @@ class SensorHelper:
                                 os.system("shutdown /s /t 5 /f")
                             elif action == "restart":
                                 os.system("shutdown /r /t 5 /f")
-                    except:
+                    finally:
                         try: cmd_shm.close()
                         except: pass
                 except:

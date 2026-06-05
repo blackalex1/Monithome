@@ -165,7 +165,20 @@ export function requestYandexQR() {
 }
 
 export function initPluginHandlers() {
-    socket.on('plugin_state_changed', () => loadPlugins());
+    socket.on('plugin_state_changed', (payload) => {
+        if (!payload || !payload.plugin_id) return;
+        const plugins = store.state.plugins || [];
+        const existing = plugins.find(p => p.id === payload.plugin_id);
+        if (existing) {
+            const needs_elevation = payload.state?.needs_elevation ?? existing.needs_elevation;
+            const elevation_active = payload.state?.elevation_active ?? existing.elevation_active;
+            if (existing.needs_elevation !== needs_elevation || existing.elevation_active !== elevation_active) {
+                loadPlugins();
+            }
+        } else {
+            loadPlugins();
+        }
+    });
     
     // Global plugin event routing
     socket.onAny((event, payload) => {

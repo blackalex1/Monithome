@@ -213,8 +213,8 @@ async def main_loop():
             is_vol_changed = (info["volume"] != last_info.get("volume") or 
                              info["mute"] != last_info.get("mute"))
             
-            # Прогресс отправляем раз в секунду или при больших скачках
-            is_time_tick = info["playing"] and abs(info["progress"] - last_info.get("progress", 0)) >= 1.0
+            # Прогресс отправляем раз в 10 секунд или при больших скачках (клиент интерполирует прогресс сам)
+            is_time_tick = info["playing"] and abs(info["progress"] - last_info.get("progress", 0)) >= 10.0
             is_heartbeat = (time.time() - last_print_time) > 30.0
 
             if is_media_changed or is_vol_changed or is_time_tick or is_first_run or is_heartbeat:
