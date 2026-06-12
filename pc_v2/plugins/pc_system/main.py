@@ -34,8 +34,14 @@ class Plugin(BasePlugin):
         if action == 'lock':
             ctypes.windll.user32.LockWorkStation()
         elif action == 'sleep':
-            cmd = ["powershell", "-Command", "Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Application]::SetSuspendState([System.Windows.Forms.PowerState]::Suspend, $false, $false)"]
-            subprocess.Popen(cmd, creationflags=flags)
+            try:
+                # Вызываем напрямую через powrprof.dll (hibernate=0, force=0, disable_wakeup=0)
+                # Это работает мгновенно и не создает тяжелых дочерних процессов
+                ctypes.windll.powrprof.SetSuspendState(0, 0, 0)
+            except Exception as e:
+                self.log(f"Ctypes sleep failed: {e}. Falling back to rundll32.", 30)
+                cmd = ["rundll32.exe", "powrprof.dll,SetSuspendState", "0,1,0"]
+                subprocess.Popen(cmd, creationflags=flags)
         elif action == 'restart':
             subprocess.Popen(["shutdown", "/r", "/t", "5", "/f"], creationflags=flags)
         elif action == 'shutdown':

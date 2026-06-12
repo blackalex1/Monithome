@@ -37,7 +37,7 @@ sealed class SocketEvent {
     data class YandexConfig(val data: JSONObject) : SocketEvent()
 }
 
-class PcSocketClient {
+class PcSocketClient(private val okHttpClient: OkHttpClient) {
     private var socket: Socket? = null
     @Volatile
     private var encryptionKey: String? = null
@@ -71,11 +71,6 @@ class PcSocketClient {
 
         try {
             _connectionState.value = SocketConnectionState.Connecting
-            
-            val okHttpClient = OkHttpClient.Builder()
-                .sslSocketFactory(YandexSslUtils.createSSLSocketFactory(), YandexSslUtils.trustManager)
-                .hostnameVerifier { _, _ -> true }
-                .build()
 
             val opts = IO.Options().apply {
                 reconnection = true

@@ -7,6 +7,7 @@ from typing import Dict, Any
 
 from core.config import config_manager
 from core.event_bus import event_bus
+from core.security import SecurityManager
 
 # Импортируем хендлеры
 from .handlers.ui import register_ui_handlers, get_ui_config_data
@@ -26,6 +27,7 @@ class SocketServerManager:
         # Кэш состояния для батчинга
         self._state_cache: Dict[str, Any] = {}
         self._dirty = False
+        self._dirty_plugins = set()
         self.pairing_codes = {} # sid -> 4-digit code
 
     async def initialize(self):
@@ -96,6 +98,7 @@ class SocketServerManager:
         p_id = payload["plugin_id"]
         state = payload["state"]
         self._state_cache[p_id] = state
+        self._dirty_plugins.add(p_id)
         self._dirty = True
         # Оповещаем UI, чтобы он мог перерисовать карточки (например, при получении прав)
         await self.sio.emit('plugin_state_changed', payload, room='authorized')
@@ -127,18 +130,31 @@ class SocketServerManager:
                 await p.handle_command("get_yandex_config", {"sid": None})
 
     async def _broadcast_loop(self):
-        """Рассылка MessagePack/JSON данных с частотой 10Hz"""
+        """Рассылка MessagePack/JSON данных с частотой 10Hz (с батчингом дельт и 30с heartbeat)"""
         last_heartbeat = 0
         while True:
             await asyncio.sleep(0.1)
             
             now = time.time()
-            if self._dirty or (now - last_heartbeat > 5.0):
+            is_heartbeat = (now - last_heartbeat > 30.0)
+            if self._dirty or is_heartbeat:
                 if not self._state_cache:
                     continue
 
+                # Формируем дельту: отправляем только измененные с момента прошлой рассылки плагины.
+                # Каждые 30 секунд (heartbeat) шлем полное состояние для синхронизации вновь подключенных клиентов.
+                if is_heartbeat:
+                    stats_to_send = self._state_cache
+                else:
+                    stats_to_send = {p_id: self._state_cache[p_id] for p_id in self._dirty_plugins if p_id in self._state_cache}
+                    
+                if not stats_to_send:
+                    self._dirty = False
+                    self._dirty_plugins.clear()
+                    continue
+
                 payload = {
-                    "stats": self._state_cache,
+                    "stats": stats_to_send,
                     "_server_time": now
                 }
                 
@@ -146,7 +162,6 @@ class SocketServerManager:
                     binary_payload = msgpack.packb(payload, use_bin_type=True)
                     key = config_manager.get_secret("ENCRYPTION_KEY")
                     if key:
-                        from core.security import SecurityManager
                         final_payload = SecurityManager.encrypt_bytes(binary_payload, key)
                     else:
                         final_payload = binary_payload
@@ -154,8 +169,10 @@ class SocketServerManager:
                     await self.sio.emit('stats', final_payload, room='authorized')
                     await self.sio.emit('stats_json', payload, room='authorized')
                     
-                    last_heartbeat = now
                     self._dirty = False
+                    self._dirty_plugins.clear()
+                    if is_heartbeat:
+                        last_heartbeat = now
                 except Exception as e:
                     logger.error(f"Broadcast error: {e}")
 
@@ -188,7 +205,6 @@ class SocketServerManager:
             binary_payload = msgpack.packb(payload, use_bin_type=True)
             key = config_manager.get_secret("ENCRYPTION_KEY")
             if key:
-                from core.security import SecurityManager
                 final_payload = SecurityManager.encrypt_bytes(binary_payload, key)
             else:
                 final_payload = binary_payload

@@ -30,10 +30,23 @@ class DiscoveryManager:
                                 return address.address
             return ip
         except Exception:
+            # Если интернета нет, ищем первый подходящий локальный IP среди интерфейсов
+            try:
+                import psutil
+                addrs = psutil.net_if_addrs()
+                for interface_name, interface_addresses in addrs.items():
+                    for address in interface_addresses:
+                        if address.family == socket.AF_INET:
+                            addr = address.address
+                            if not addr.startswith("127."):
+                                if addr.startswith("192.168.") or addr.startswith("10.") or addr.startswith("172."):
+                                    return addr
+            except Exception:
+                pass
             return "127.0.0.1"
 
     async def start(self):
-        local_ip = self.get_local_ip()
+        local_ip = await asyncio.to_thread(self.get_local_ip)
         hostname = socket.gethostname()
         
         from core.config import config_manager

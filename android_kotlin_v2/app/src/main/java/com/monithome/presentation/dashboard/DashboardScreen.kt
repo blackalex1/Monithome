@@ -29,6 +29,11 @@ fun DashboardScreen(
     val state by viewModel.state.collectAsState()
     val density = LocalDensity.current
 
+    val onToggleLyrics = remember(viewModel) { { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) } }
+    val onToggleStats = remember(viewModel) { { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) } }
+    val onStopReordering = remember(viewModel) { { viewModel.processIntent(DashboardIntent.StopReordering) } }
+    val onChangeThemeColor = remember(viewModel) { { color: Long -> viewModel.processIntent(DashboardIntent.ChangeThemeColor(color)) } }
+
     LaunchedEffect(Unit) {
         viewModel.processIntent(DashboardIntent.Connect())
     }
@@ -58,8 +63,8 @@ fun DashboardScreen(
                     ThemeColorPicker(
                         state = state,
                         selectedColor = state.themeColor,
-                        onColorSelect = { viewModel.processIntent(DashboardIntent.ChangeThemeColor(it)) },
-                        onClose = { viewModel.processIntent(DashboardIntent.StopReordering) },
+                        onColorSelect = onChangeThemeColor,
+                        onClose = onStopReordering,
                         suggestedColor = state.serverSuggestedColor
                     )
                 }
@@ -173,7 +178,7 @@ fun DashboardScreen(
                     isPlaying = state.mediaState.isPlaying,
                     isFullScreen = true,
                     coverUrl = state.mediaState.coverUrl,
-                    onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) },
+                    onClick = onToggleLyrics,
                     modifier = Modifier.fillMaxSize()
                 )
             }
@@ -193,7 +198,7 @@ fun DashboardScreen(
                     diskTemps = (systemStats["disk_temps"] as? List<Map<String, Any>>) ?: emptyList(),
                     currentStats = systemStats,
                     translations = state.translations,
-                    onClose = { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) },
+                    onClose = onToggleStats,
                     modifier = Modifier.fillMaxSize().wrapContentHeight(Alignment.CenterVertically)
                 )
             }

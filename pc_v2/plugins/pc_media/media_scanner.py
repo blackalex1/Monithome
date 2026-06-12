@@ -133,6 +133,8 @@ async def main_loop():
     last_info = {"title": "___INIT___", "artist": "", "playing": False, "volume": -1, "mute": None, "progress": -1.0}
     last_print_time = 0
     last_sent_cover_title = ""
+    last_session = None
+    last_track_duration = -1.0
     is_first_run = True
     last_poll_time = time.time()
     last_manager_refresh = time.time()
@@ -191,18 +193,32 @@ async def main_loop():
             if session:
                 try:
                     pb = session.get_playback_info()
-                    props = await asyncio.wait_for(session.try_get_media_properties_async(), timeout=2.0)
                     timeline = session.get_timeline_properties()
                     
-                    if props:
-                        info["title"] = props.title or ""
-                        info["artist"] = props.artist or props.album_artist or ""
                     if pb:
                         info["playing"] = (pb.playback_status == 4)
 
                     if timeline:
                         info["duration"] = float(timeline.end_time.total_seconds())
                         info["progress"] = float(timeline.position.total_seconds())
+                        
+                    # Оптимизация: запрашиваем тяжелые свойства медиа (метаданные и обложку)
+                    # только при смене сессии, смене трека (изменение длительности) или при первом запуске.
+                    current_duration = info["duration"]
+                    if (session != last_session or 
+                        current_duration != last_track_duration or 
+                        not last_info.get("title")):
+                        
+                        props = await asyncio.wait_for(session.try_get_media_properties_async(), timeout=2.0)
+                        if props:
+                            info["title"] = props.title or ""
+                            info["artist"] = props.artist or props.album_artist or ""
+                            
+                        last_session = session
+                        last_track_duration = current_duration
+                    else:
+                        info["title"] = last_info.get("title", "")
+                        info["artist"] = last_info.get("artist", "")
                 except: pass
 
             # ЛОГИКА ОТПРАВКИ

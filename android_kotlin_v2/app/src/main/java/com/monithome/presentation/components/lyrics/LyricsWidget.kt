@@ -82,7 +82,7 @@ fun LyricsWidget(
     }
 
     // O(log N) поиск текущей строки на основе плавного времени
-    val activeIndex by remember(lyrics, smoothTimeMs) {
+    val activeIndex by remember(lyrics) {
         derivedStateOf { syncUseCase(lyrics, smoothTimeMs) }
     }
 

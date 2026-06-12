@@ -16,10 +16,19 @@ import org.koin.androidx.viewmodel.dsl.viewModel
 import org.koin.dsl.module
 
 val appModule = module {
-    single { PcSocketClient() }
+    single {
+        okhttp3.OkHttpClient.Builder()
+            .sslSocketFactory(
+                com.monithome.data.network.yandex.YandexSslUtils.createSSLSocketFactory(),
+                com.monithome.data.network.yandex.YandexSslUtils.trustManager
+            )
+            .hostnameVerifier { _, _ -> true }
+            .build()
+    }
+    single { PcSocketClient(get()) }
     single { PcDiscovery(androidContext()) }
-    single { YandexStationClient(androidContext()) }
-    single { YandexLyricsClient() }
+    single { YandexStationClient(androidContext(), get()) }
+    single { YandexLyricsClient(get()) }
     single<PluginRepository> { PluginRepositoryImpl(get<PcSocketClient>(), get<YandexStationClient>(), get<YandexLyricsClient>()) }
     single<SettingsRepository> { SettingsRepositoryImpl(androidContext()) }
     

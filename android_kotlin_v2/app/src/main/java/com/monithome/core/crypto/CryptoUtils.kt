@@ -71,10 +71,13 @@ object CryptoUtils {
     }
 
     private fun hexToBytes(hex: String): ByteArray {
-        val bytes = ByteArray(hex.length / 2)
-        for (i in bytes.indices) {
-            bytes[i] = hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        val len = hex.length
+        val data = ByteArray(len / 2)
+        var i = 0
+        while (i < len) {
+            data[i / 2] = ((Character.digit(hex[i], 16) shl 4) + Character.digit(hex[i + 1], 16)).toByte()
+            i += 2
         }
-        return bytes
+        return data
     }
 }

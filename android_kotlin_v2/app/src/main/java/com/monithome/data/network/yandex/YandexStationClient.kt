@@ -20,18 +20,13 @@ sealed class YandexStationEvent {
     data class ConnectionChanged(val deviceId: String, val isConnected: Boolean) : YandexStationEvent()
 }
 
-class YandexStationClient(context: Context) {
+class YandexStationClient(context: Context, baseClient: OkHttpClient) {
     private val TAG = "YandexStationClient"
 
-    private val client = OkHttpClient.Builder()
+    private val client = baseClient.newBuilder()
         .readTimeout(0, TimeUnit.MILLISECONDS)
         .connectTimeout(5, TimeUnit.SECONDS)
         .pingInterval(30, TimeUnit.SECONDS)
-        .hostnameVerifier { _, _ -> true }
-        .sslSocketFactory(
-            YandexSslUtils.createSSLSocketFactory(),
-            YandexSslUtils.trustManager
-        )
         .build()
 
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())

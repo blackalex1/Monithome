@@ -14,26 +14,16 @@ import java.nio.charset.StandardCharsets
 import javax.crypto.Mac
 import javax.crypto.spec.SecretKeySpec
 
-class YandexLyricsClient {
+class YandexLyricsClient(baseClient: OkHttpClient) {
     private val TAG = "YandexLyricsClient"
-    private val client = OkHttpClient.Builder()
+    private val client = baseClient.newBuilder()
         .connectTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(20, java.util.concurrent.TimeUnit.SECONDS)
-        .hostnameVerifier { _, _ -> true }
-        .sslSocketFactory(
-            YandexSslUtils.createSSLSocketFactory(),
-            YandexSslUtils.trustManager
-        )
         .build()
 
-    private val commonClient = OkHttpClient.Builder()
+    private val commonClient = baseClient.newBuilder()
         .connectTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
-        .hostnameVerifier { _, _ -> true }
-        .sslSocketFactory(
-            YandexSslUtils.createSSLSocketFactory(), // Используем тот же механизм обхода, что и для Яндекса
-            YandexSslUtils.trustManager
-        )
         .build()
 
     suspend fun fetchLyrics(trackId: String, token: String): List<LyricLine> = withContext(Dispatchers.IO) {

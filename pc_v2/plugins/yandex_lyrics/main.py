@@ -9,6 +9,9 @@ from plugin_engine.base_plugin import BasePlugin
 from core.event_bus import event_bus
 
 import sys
+import re
+
+LRC_PATTERN = re.compile(r'\[(\d+):(\d+)(?:\.(\d+))?\](.*)')
 
 class Plugin(BasePlugin):
     """
@@ -157,11 +160,9 @@ class Plugin(BasePlugin):
 
     def _parse_lrc(self, lrc_text):
         if not lrc_text: return []
-        import re
         lines = []
-        pattern = re.compile(r'\[(\d+):(\d+)(?:\.(\d+))?\](.*)')
         for line in lrc_text.splitlines():
-            match = pattern.search(line)
+            match = LRC_PATTERN.search(line)
             if match:
                 m, s, ms, text = match.groups()
                 ms = int(ms) if ms else 0

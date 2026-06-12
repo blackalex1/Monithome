@@ -20,14 +20,13 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monithome.presentation.dashboard.DashboardIntent
 
-import com.monithome.presentation.dashboard.DashboardState
 import com.monithome.presentation.dashboard.util.t
 import androidx.compose.foundation.border
 import androidx.compose.ui.graphics.luminance
 
 @Composable
 fun SystemControlWidget(
-    state: DashboardState,
+    translations: Map<String, String>,
     onIntent: (DashboardIntent) -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -44,7 +43,7 @@ fun SystemControlWidget(
             modifier = Modifier.padding(20.dp)
         ) {
             Text(
-                text = state.t("pc_control_title", "Управление ПК"),
+                text = translations.t("pc_control_title", "Управление ПК"),
                 color = MaterialTheme.colorScheme.onSurface,
                 fontSize = 18.sp,
                 fontWeight = FontWeight.Bold,
@@ -56,7 +55,7 @@ fun SystemControlWidget(
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
                 SystemButton(
-                    label = state.t("Сон", "Сон"),
+                    label = translations.t("Сон", "Сон"),
                     icon = Icons.Filled.NightsStay,
                     color = MaterialTheme.colorScheme.primary,
                     onClick = { 
@@ -65,7 +64,7 @@ fun SystemControlWidget(
                     }
                 )
                 SystemButton(
-                    label = state.t("Выкл.", "Выкл"),
+                    label = translations.t("Выкл.", "Выкл"),
                     icon = Icons.Filled.PowerSettingsNew,
                     color = MaterialTheme.colorScheme.primary,
                     onClick = { 
@@ -74,7 +73,7 @@ fun SystemControlWidget(
                     }
                 )
                 SystemButton(
-                    label = state.t("Блок.", "Блок"),
+                    label = translations.t("Блок.", "Блок"),
                     icon = Icons.Filled.Lock,
                     color = MaterialTheme.colorScheme.primary,
                     onClick = { 
@@ -82,7 +81,7 @@ fun SystemControlWidget(
                     }
                 )
                 SystemButton(
-                    label = state.t("Рестарт", "Рестарт"),
+                    label = translations.t("Рестарт", "Рестарт"),
                     icon = Icons.Filled.Refresh,
                     color = MaterialTheme.colorScheme.primary,
                     onClick = { 
@@ -101,8 +100,8 @@ fun SystemControlWidget(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            title = { Text(state.t("confirm_title", "Подтверждение")) },
-            text = { Text(state.t(pendingAction!!.second, pendingAction!!.second)) },
+            title = { Text(translations.t("confirm_title", "Подтверждение")) },
+            text = { Text(translations.t(pendingAction!!.second, pendingAction!!.second)) },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -110,12 +109,12 @@ fun SystemControlWidget(
                         showConfirmDialog = false
                     }
                 ) {
-                    Text(state.t("btn_yes", "Да"), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
+                    Text(translations.t("btn_yes", "Да"), color = Color(0xFFEF4444), fontWeight = FontWeight.Bold)
                 }
             },
             dismissButton = {
                 TextButton(onClick = { showConfirmDialog = false }) {
-                    Text(state.t("btn_cancel", "Отмена"), color = Color.White)
+                    Text(translations.t("btn_cancel", "Отмена"), color = Color.White)
                 }
             }
         )

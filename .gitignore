@@ -185,6 +185,7 @@ node_modules/
 # Security keys and certificates
 keys/
 pc_v2/keys/
+pc_v2/tests/
 
 # Telemetry and metrics
 antigravity_metrics.json

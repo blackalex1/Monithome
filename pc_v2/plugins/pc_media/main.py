@@ -121,15 +121,34 @@ class Plugin(BasePlugin):
         try:
             cover_path = os.path.join(os.path.dirname(__file__), "cover.jpg")
             if os.path.exists(cover_path):
-                # Читаем файл в фоне
-                def read_file():
-                    with open(cover_path, "rb") as f:
-                        return base64.b64encode(f.read()).decode('utf-8')
+                import shutil
+                import time
+                from core.config import BUNDLE_DIR
+                from network.discovery import DiscoveryManager
                 
-                cover_base64 = await asyncio.to_thread(read_file)
-                self._media_info["cover"] = cover_base64
-                self.log(f"Sending cover for: {title} (size: {len(cover_base64)})")
-                await self.emit_event("cover", {"cover": cover_base64, "title": title})
+                # Копируем файл в статику веб-сервера
+                web_dir = os.path.join(BUNDLE_DIR, "web")
+                if not os.path.exists(web_dir):
+                    os.makedirs(web_dir)
+                    
+                dest_path = os.path.join(web_dir, "cover.jpg")
+                def copy_file():
+                    try:
+                        shutil.copy2(cover_path, dest_path)
+                    except Exception as e:
+                        self.log(f"Failed to copy cover: {e}", 30)
+                await asyncio.to_thread(copy_file)
+                
+                # Строим абсолютную ссылку
+                try:
+                    local_ip = DiscoveryManager(port=5000).get_local_ip()
+                except Exception:
+                    local_ip = "127.0.0.1"
+                    
+                cover_url = f"https://{local_ip}:5000/static/cover.jpg?t={int(time.time())}"
+                self._media_info["cover"] = cover_url
+                self.log(f"Sending cover for: {title} via URL: {cover_url}")
+                await self.emit_event("cover", {"cover": cover_url, "title": title})
                 await self._emit_stats()
         except Exception as e:
             self.log(f"Cover error: {e}", 40)

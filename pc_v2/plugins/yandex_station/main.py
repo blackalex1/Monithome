@@ -113,7 +113,7 @@ class Plugin(BasePlugin):
                         self.devices[d_id]["ip"] = ip
                         cached_ips = self.get_config().get("cached_ips", {})
                         cached_ips[d_id] = ip
-                        self.update_config({"cached_ips": cached_ips})
+                        self.save_config({"cached_ips": cached_ips})
                         # Вещаем конфиг только при РЕАЛЬНОМ изменении IP
                         asyncio.run_coroutine_threadsafe(self.broadcaster.broadcast_config_to_tablet(), self.loop)
 

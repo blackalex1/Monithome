@@ -20,17 +20,16 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.monithome.presentation.dashboard.DashboardIntent
-import com.monithome.presentation.dashboard.DashboardState
 import com.monithome.presentation.dashboard.util.t
 
 @Composable
 fun RouterProxyWidget(
-    state: DashboardState,
+    routerStats: Map<String, Any>,
+    themeColor: Long,
+    translations: Map<String, String>,
     onIntent: (DashboardIntent) -> Unit,
     modifier: Modifier = Modifier
 ) {
-    val routerStats = state.stats["keenetic_mihomo"] ?: emptyMap()
-    
     @Suppress("UNCHECKED_CAST")
     val keenetic = (routerStats["keenetic"] as? Map<String, Any>) ?: emptyMap()
     @Suppress("UNCHECKED_CAST")
@@ -51,7 +50,7 @@ fun RouterProxyWidget(
     val mDown = (mihomo["down_speed_mbits"] as? Number)?.toDouble() ?: 0.0
     val mUp = (mihomo["up_speed_mbits"] as? Number)?.toDouble() ?: 0.0
 
-    val accentColor = Color(state.themeColor)
+    val accentColor = Color(themeColor)
 
     var showRebootConfirm by remember { mutableStateOf(false) }
 
@@ -77,7 +76,7 @@ fun RouterProxyWidget(
                         modifier = Modifier.size(24.dp).padding(end = 8.dp)
                     )
                     Text(
-                        text = state.t("plugin_name_keenetic_mihomo", "Keenetic & Mihomo"),
+                        text = translations.t("plugin_name_keenetic_mihomo", "Keenetic & Mihomo"),
                         color = MaterialTheme.colorScheme.onSurface,
                         fontSize = 18.sp,
                         fontWeight = FontWeight.Bold
@@ -366,7 +365,7 @@ fun RouterProxyWidget(
             containerColor = MaterialTheme.colorScheme.surface,
             titleContentColor = MaterialTheme.colorScheme.onSurface,
             textContentColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.7f),
-            title = { Text(state.t("confirm_title", "Подтверждение")) },
+            title = { Text(translations.t("confirm_title", "Подтверждение")) },
             text = { Text("Перезагрузить интернет-роутер Keenetic?") },
             confirmButton = {
                 TextButton(

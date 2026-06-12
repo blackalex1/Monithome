@@ -10,6 +10,7 @@ class Plugin(BasePlugin):
     def __init__(self, plugin_id: str):
         super().__init__(plugin_id)
         self._loop_task: asyncio.Task | None = None
+        self._last_cpu_times = psutil.cpu_times()
 
     async def on_start(self):
         self.log("SysInfo started. Launching monitoring task...")
@@ -40,7 +41,20 @@ class Plugin(BasePlugin):
             self.log("Monitoring loop cancelled.")
 
     async def _update_stats(self):
-        cpu = psutil.cpu_percent(interval=None)
+        current_cpu_times = psutil.cpu_times()
+        t1_all = sum(self._last_cpu_times)
+        t2_all = sum(current_cpu_times)
+        t1_idle = self._last_cpu_times.idle
+        t2_idle = current_cpu_times.idle
+        self._last_cpu_times = current_cpu_times
+        
+        all_delta = t2_all - t1_all
+        if all_delta > 0:
+            idle_delta = t2_idle - t1_idle
+            cpu = max(0.0, min(100.0, (1.0 - (idle_delta / all_delta)) * 100.0))
+        else:
+            cpu = 0.0
+
         ram = psutil.virtual_memory()
         
         state = {

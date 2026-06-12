@@ -1,6 +1,7 @@
 package com.monithome.presentation.dashboard.components
 
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.remember
 import com.monithome.presentation.components.lyrics.LyricsWidget
 import com.monithome.presentation.components.media.MediaWidget
 import com.monithome.presentation.components.stats.StatWidget
@@ -14,19 +15,23 @@ import com.monithome.presentation.dashboard.util.t
 
 @Composable
 fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardViewModel) {
+    val onIntent = remember(viewModel) { { intent: DashboardIntent -> viewModel.processIntent(intent) } }
+    val onToggleLyrics = remember(viewModel) { { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) } }
+    val onToggleStats = remember(viewModel) { { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) } }
+
     when (widgetId) {
         "media" -> {
             if (state.activePlugins.any { it.type == "media_source" && it.active }) {
                 MediaWidget(
                     state = state.mediaState, 
                     translations = state.translations,
-                    onIntent = { viewModel.processIntent(it) }
+                    onIntent = onIntent
                 )
             }
         }
         "pc_system" -> {
             if (state.activePlugins.any { it.id == "pc_system" && it.active }) {
-                SystemControlWidget(state = state, onIntent = { viewModel.processIntent(it) })
+                SystemControlWidget(translations = state.translations, onIntent = onIntent)
             }
         }
         "yandex_lyrics" -> {
@@ -39,7 +44,7 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                     lastUpdateUnixTime = state.mediaState.lastUpdateUnixTime,
                     isPlaying = state.mediaState.isPlaying,
                     coverUrl = state.mediaState.coverUrl,
-                    onClick = { viewModel.processIntent(DashboardIntent.ToggleLyricsFullScreen) }
+                    onClick = onToggleLyrics
                 )
             }
         }
@@ -49,7 +54,7 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                     title = state.t("plugin_name_pc_stats", "Статистика системы"), 
                     stats = state.stats[widgetId] ?: emptyMap(),
                     translations = state.translations,
-                    onClick = { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) }
+                    onClick = onToggleStats
                 )
             }
         }
@@ -68,15 +73,17 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
                 com.monithome.presentation.components.launcher.LauncherWidget(
                     title = state.t("plugin_name_app_launcher", "Запуск приложений"),
                     apps = (state.stats["app_launcher"]?.get("buttons") as? List<Map<String, Any>>) ?: emptyList(),
-                    onIntent = { viewModel.processIntent(it) }
+                    onIntent = onIntent
                 )
             }
         }
         "keenetic_mihomo" -> {
             if (state.activePlugins.any { it.id == "keenetic_mihomo" && it.active }) {
                 com.monithome.presentation.components.router_proxy.RouterProxyWidget(
-                    state = state,
-                    onIntent = { viewModel.processIntent(it) }
+                    routerStats = state.stats["keenetic_mihomo"] ?: emptyMap(),
+                    themeColor = state.themeColor,
+                    translations = state.translations,
+                    onIntent = onIntent
                 )
             }
         }

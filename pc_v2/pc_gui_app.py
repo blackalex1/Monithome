@@ -23,8 +23,18 @@ if sys.platform == "win32":
     except ImportError:
         pass
 
-# Игнорируем ошибки SSL в Chromium для полной тишины в консоли
-os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = "--ignore-certificate-errors"
+# Игнорируем ошибки SSL в Chromium и настраиваем оптимизацию памяти для снижения потребления ОЗУ
+os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
+    "--ignore-certificate-errors "
+    "--enable-low-end-device-mode "
+    "--renderer-process-limit=1 "
+    "--js-flags=\"--max-old-space-size=128\" "
+    "--disable-gpu-shader-disk-cache "
+    "--disable-gpu-program-cache "
+    "--disable-extensions "
+    "--disable-speech-api "
+    "--disable-voice-input"
+)
 
 # Специальная обработка для запуска сканера медиа внутри EXE
 if len(sys.argv) > 1 and "media_scanner.py" in sys.argv[1]:
@@ -373,6 +383,16 @@ class MainWindow(QMainWindow):
         
         # Browser
         self.browser = QWebEngineView()
+        
+        # Настройка ограничения кэша для снижения потребления ОЗУ
+        try:
+            from PySide6.QtWebEngineCore import QWebEngineProfile
+            profile = self.browser.page().profile()
+            profile.setHttpCacheType(QWebEngineProfile.HttpCacheType.MemoryHttpCache)
+            profile.setHttpCacheMaximumSize(10 * 1024 * 1024)  # Ограничиваем кэш в ОЗУ до 10 МБ
+        except Exception as e:
+            pass
+
         self.main_layout.addWidget(self.browser)
         
         # Container style

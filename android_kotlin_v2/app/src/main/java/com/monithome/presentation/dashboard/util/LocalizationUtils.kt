@@ -7,5 +7,12 @@ import com.monithome.presentation.dashboard.DashboardState
  * Если перевода нет, возвращает default.
  */
 fun DashboardState.t(key: String, default: String): String {
-    return translations[key] ?: default
+    return translations.t(key, default)
+}
+
+/**
+ * Возвращает переведенную строку из словаря переводов по ключу.
+ */
+fun Map<String, String>.t(key: String, default: String): String {
+    return this[key] ?: default
 }
