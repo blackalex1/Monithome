@@ -209,6 +209,11 @@ fun DashboardScreen(
             AuthDialog(state, viewModel)
         }
 
+        // Диалог подтверждения включения камеры (поверх всего)
+        if (state.showCameraConfirmDialog) {
+            CameraConfirmDialog(state, viewModel)
+        }
+
 
     }
 

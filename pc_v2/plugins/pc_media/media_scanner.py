@@ -244,13 +244,22 @@ async def main_loop():
                             props = await asyncio.wait_for(s.try_get_media_properties_async(), timeout=5.0)
                             cover_file = os.path.join(os.path.dirname(__file__), "cover.jpg")
                             if await save_cover_to_file(props, cover_file):
-                                print(json.dumps({"cover_event": "updated", "title": t}, ensure_ascii=False), flush=True)
+                                try:
+                                    print(json.dumps({"cover_event": "updated", "title": t}, ensure_ascii=False), flush=True)
+                                except (BrokenPipeError, OSError):
+                                    sys.exit(0)
                                 last_sent_cover_title = t
                         except Exception as e:
-                             print(json.dumps({"log": f"Cover fetch error: {str(e)}"}), flush=True)
+                            try:
+                                print(json.dumps({"log": f"Cover fetch error: {str(e)}"}), flush=True)
+                            except (BrokenPipeError, OSError):
+                                sys.exit(0)
                     asyncio.create_task(fetch_cover_task(session, info["title"]))
                 
-                print(json.dumps(info, ensure_ascii=False), flush=True)
+                try:
+                    print(json.dumps(info, ensure_ascii=False), flush=True)
+                except (BrokenPipeError, OSError):
+                    sys.exit(0)
                 last_info = info.copy()
                 is_first_run = False
             
@@ -262,6 +271,11 @@ async def main_loop():
             except asyncio.TimeoutError:
                 pass
         except Exception as e:
+            try:
+                sys.stdout.write("\n")
+                sys.stdout.flush()
+            except (BrokenPipeError, OSError):
+                sys.exit(0)
             await asyncio.sleep(1)
 
 def run_scanner():

@@ -74,6 +74,9 @@ dependencies {
     // Images & 3D
     implementation("io.coil-kt:coil-compose:2.7.0")
 
+    // Streaming & RTSP
+    implementation("com.github.pedroSG94:RTSP-Server:1.4.1")
+    implementation("com.github.pedroSG94.RootEncoder:library:2.7.2")
 
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.3.0")

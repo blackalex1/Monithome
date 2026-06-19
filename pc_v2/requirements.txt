@@ -17,3 +17,5 @@ pycaw>=2.0.1
 comtypes>=1.2.0
 pythonnet>=3.0.1
 winsdk
+pyvirtualcam>=0.11.0
+opencv-python>=4.8.0

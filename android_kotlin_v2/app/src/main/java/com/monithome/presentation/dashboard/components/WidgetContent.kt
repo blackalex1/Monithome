@@ -7,6 +7,7 @@ import com.monithome.presentation.components.media.MediaWidget
 import com.monithome.presentation.components.stats.StatWidget
 import com.monithome.presentation.components.stats.DisksWidget
 import com.monithome.presentation.components.system.SystemControlWidget
+import com.monithome.presentation.components.system.CameraWidget
 import com.monithome.presentation.dashboard.DashboardIntent
 import com.monithome.presentation.dashboard.DashboardState
 import com.monithome.presentation.dashboard.DashboardViewModel
@@ -20,6 +21,14 @@ fun WidgetContent(widgetId: String, state: DashboardState, viewModel: DashboardV
     val onToggleStats = remember(viewModel) { { viewModel.processIntent(DashboardIntent.ToggleStatsExpanded) } }
 
     when (widgetId) {
+        "virtual_camera" -> {
+            if (state.activePlugins.any { it.id == "virtual_camera" && it.active }) {
+                CameraWidget(
+                    translations = state.translations,
+                    themeColor = state.themeColor
+                )
+            }
+        }
         "media" -> {
             if (state.activePlugins.any { it.type == "media_source" && it.active }) {
                 MediaWidget(

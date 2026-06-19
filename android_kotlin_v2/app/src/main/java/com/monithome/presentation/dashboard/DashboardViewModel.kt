@@ -1,5 +1,6 @@
 package com.monithome.presentation.dashboard
 
+import android.content.Context
 import android.util.Log
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
@@ -7,6 +8,7 @@ import com.monithome.data.network.socket.PcSocketClient
 import com.monithome.data.network.socket.PcDiscovery
 import com.monithome.data.network.socket.SocketEvent
 import com.monithome.domain.models.PluginInfo
+import com.monithome.domain.models.CameraRequest
 import com.monithome.domain.repository.PluginRepository
 import com.monithome.domain.repository.SettingsRepository
 import com.monithome.presentation.dashboard.handlers.*
@@ -14,6 +16,7 @@ import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 
 class DashboardViewModel(
+    private val context: Context,
     private val socketClient: PcSocketClient,
     private val pcDiscovery: PcDiscovery,
     private val pluginRepository: PluginRepository,
@@ -29,7 +32,7 @@ class DashboardViewModel(
     private val connectionHandler = ConnectionHandler(socketClient, pcDiscovery)
     private val statsHandler = StatsHandler(pluginRepository)
     private val mediaHandler = MediaHandler(pluginRepository)
-    private val intentHandler = IntentHandler(socketClient, pluginRepository, settingsRepository, manualSelectedSourceId) { startDiscovery() }
+    private val intentHandler = IntentHandler(context, socketClient, pluginRepository, settingsRepository, manualSelectedSourceId) { startDiscovery() }
 
     init {
         setupObservers()
@@ -66,7 +69,25 @@ class DashboardViewModel(
             }
         }
 
-
+        // Запросы камеры
+        viewModelScope.launch {
+            pluginRepository.cameraRequests.collect { request ->
+                when (request) {
+                    is CameraRequest.Start -> {
+                        _state.update { it.copy(
+                            showCameraConfirmDialog = true,
+                            pendingCameraRequest = request
+                        ) }
+                    }
+                    is CameraRequest.Stop -> {
+                        _state.update { it.copy(
+                            showCameraConfirmDialog = false,
+                            pendingCameraRequest = null
+                        ) }
+                    }
+                }
+            }
+        }
     }
 
     private fun handleUiConfigUpdate(configs: List<PluginInfo>) {

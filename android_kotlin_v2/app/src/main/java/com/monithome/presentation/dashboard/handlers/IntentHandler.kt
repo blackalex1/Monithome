@@ -1,6 +1,9 @@
 package com.monithome.presentation.dashboard.handlers
 
+import android.content.Context
+import android.util.Log
 import com.monithome.data.network.socket.PcSocketClient
+import com.monithome.data.network.socket.CameraStreamService
 import com.monithome.domain.repository.PluginRepository
 import com.monithome.domain.repository.SettingsRepository
 import com.monithome.presentation.dashboard.DashboardIntent
@@ -9,6 +12,7 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.update
 
 class IntentHandler(
+    private val context: Context,
     private val socketClient: PcSocketClient,
     private val pluginRepository: PluginRepository,
     private val settingsRepository: SettingsRepository,
@@ -106,6 +110,20 @@ class IntentHandler(
             DashboardIntent.StartReordering -> state.update { it.copy(isReordering = true) }
             DashboardIntent.StopReordering -> state.update { it.copy(isReordering = false) }
             DashboardIntent.ToggleStatsExpanded -> state.update { it.copy(isStatsExpanded = !it.isStatsExpanded) }
+            is DashboardIntent.ConfirmCamera -> {
+                val pending = state.value.pendingCameraRequest
+                if (intent.accept && pending != null) {
+                    try {
+                        CameraStreamService.start(context, pending.useUsb, pending.useFront, pending.quality)
+                    } catch (e: Exception) {
+                        Log.e("IntentHandler", "Failed to start camera service", e)
+                    }
+                }
+                state.update { it.copy(
+                    showCameraConfirmDialog = false,
+                    pendingCameraRequest = null
+                ) }
+            }
         }
     }
 }

@@ -2,6 +2,7 @@ package com.monithome.presentation.dashboard
 
 import com.monithome.data.network.socket.DiscoveredServer
 import com.monithome.domain.models.PluginInfo
+import com.monithome.domain.models.CameraRequest
 
 data class DashboardState(
     val isLoading: Boolean = false,
@@ -19,14 +20,18 @@ data class DashboardState(
     val lyrics: List<com.monithome.domain.models.LyricLine> = emptyList(),
     val isLyricsFullScreen: Boolean = false,
     val translations: Map<String, String> = emptyMap(),
-    val widgetOrder: List<String> = listOf("media", "pc_system", "yandex_lyrics", "system_stats", "pc_disks", "keenetic_mihomo"),
+    val widgetOrder: List<String> = listOf("media", "pc_system", "virtual_camera", "yandex_lyrics", "system_stats", "pc_disks", "keenetic_mihomo"),
     
     // Stats History
     val isStatsExpanded: Boolean = false,
     val cpuHistory: List<Float> = emptyList(),
     val cpuTempHistory: List<Float> = emptyList(),
     val gpuLoadHistory: List<Float> = emptyList(),
-    val gpuTempHistory: List<Float> = emptyList()
+    val gpuTempHistory: List<Float> = emptyList(),
+    
+    // Camera confirmation
+    val showCameraConfirmDialog: Boolean = false,
+    val pendingCameraRequest: CameraRequest.Start? = null
 )
 
 data class MediaUIState(
@@ -84,4 +89,7 @@ sealed class DashboardIntent {
     data class ChangeThemeColor(val color: Long) : DashboardIntent()
     object StartReordering : DashboardIntent()
     object StopReordering : DashboardIntent()
+    
+    // Camera confirmation
+    data class ConfirmCamera(val accept: Boolean) : DashboardIntent()
 }

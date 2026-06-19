@@ -220,6 +220,7 @@ class YandexLyricsClient(baseClient: OkHttpClient) {
                 val totalMs = (m.toInt() * 60 + s.toInt()) * 1000 + normalizedMs
                 lines.add(LyricLine(totalMs.toLong(), text.trim()))
             }
+
         }
         return lines
     }

@@ -29,12 +29,12 @@ val appModule = module {
     single { PcDiscovery(androidContext()) }
     single { YandexStationClient(androidContext(), get()) }
     single { YandexLyricsClient(get()) }
-    single<PluginRepository> { PluginRepositoryImpl(get<PcSocketClient>(), get<YandexStationClient>(), get<YandexLyricsClient>()) }
+    single<PluginRepository> { PluginRepositoryImpl(androidContext(), get<PcSocketClient>(), get<YandexStationClient>(), get<YandexLyricsClient>(), get<SettingsRepository>()) }
     single<SettingsRepository> { SettingsRepositoryImpl(androidContext()) }
     
     factory { ObserveMediaProgressUseCase() }
     factory { SyncLyricsUseCase() }
     
     // ViewModels
-    viewModel { DashboardViewModel(get<PcSocketClient>(), get<PcDiscovery>(), get<PluginRepository>(), get<SettingsRepository>()) }
+    viewModel { DashboardViewModel(androidContext(), get<PcSocketClient>(), get<PcDiscovery>(), get<PluginRepository>(), get<SettingsRepository>()) }
 }

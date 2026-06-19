@@ -35,6 +35,7 @@ sealed class SocketEvent {
     data class StatsJson(val data: JSONObject) : SocketEvent()
     data class StatsBinary(val map: Map<String, Any>) : SocketEvent()
     data class YandexConfig(val data: JSONObject) : SocketEvent()
+    data class PluginEvent(val pluginId: String, val event: String, val data: JSONObject) : SocketEvent()
 }
 
 class PcSocketClient(private val okHttpClient: OkHttpClient) {
@@ -230,6 +231,24 @@ class PcSocketClient(private val okHttpClient: OkHttpClient) {
             }
             obj?.let {
                 _events.tryEmit(SocketEvent.YandexConfig(it))
+            }
+        }
+
+        onData(s, "plugin_event:virtual_camera") { data ->
+            Log.i("PcSocketClient", "Received virtual_camera plugin event: $data")
+            try {
+                val obj = when (data) {
+                    is JSONObject -> data
+                    is String -> JSONObject(data)
+                    else -> null
+                }
+                obj?.let {
+                    val eventName = it.optString("event")
+                    val eventData = it.optJSONObject("data") ?: JSONObject()
+                    _events.tryEmit(SocketEvent.PluginEvent("virtual_camera", eventName, eventData))
+                }
+            } catch (e: Exception) {
+                Log.e("PcSocketClient", "Error parsing virtual_camera event", e)
             }
         }
     }
