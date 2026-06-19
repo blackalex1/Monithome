@@ -129,7 +129,8 @@ class ElevationManager:
 
     async def _stop_helper(self):
         try:
-            subprocess.run(["taskkill", "/F", "/IM", "MonitHomeHelper.exe"], capture_output=True)
+            flags = 0x08000000 if os.name == 'nt' else 0
+            subprocess.run(["taskkill", "/F", "/IM", "MonitHomeHelper.exe"], capture_output=True, creationflags=flags)
         except:
             pass
 

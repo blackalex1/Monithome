@@ -23,10 +23,21 @@ class DeviceWorker:
                     if self.device_id not in self.plugin.states:
                         self.plugin.states[self.device_id] = {"online": False}
                     
-                    await asyncio.gather(
-                        self._monitor_loop(), 
-                        self._control_loop()
-                    )
+                    t1 = asyncio.create_task(self._monitor_loop())
+                    t2 = asyncio.create_task(self._control_loop())
+                    try:
+                        done, pending = await asyncio.wait(
+                            [t1, t2],
+                            return_when=asyncio.FIRST_EXCEPTION
+                        )
+                        for t in done:
+                            if t.exception():
+                                raise t.exception()
+                    finally:
+                        for t in pending:
+                            t.cancel()
+                        if pending:
+                            await asyncio.gather(*pending, return_exceptions=True)
                 except Exception as e:
                     self.log(f"Connection error for {self.device_id}: {e}", 40)
                     if self.device_id in self.plugin.states:

@@ -1,17 +1,19 @@
 import asyncio
 import logging
 import subprocess
+import sys
 
 class ADBManager:
     def __init__(self, log_func):
         self.log = log_func
+        self.creationflags = 0x08000000 if sys.platform == "win32" else 0
 
     async def run_monitor_loop(self):
         # Check if adb command is available
         has_adb = True
         try:
             await asyncio.to_thread(
-                lambda: subprocess.run(["adb", "--version"], capture_output=True, timeout=2.0)
+                lambda: subprocess.run(["adb", "--version"], capture_output=True, timeout=2.0, creationflags=self.creationflags)
             )
         except (FileNotFoundError, subprocess.SubprocessError):
             has_adb = False
@@ -29,7 +31,7 @@ class ADBManager:
             try:
                 # Check if any ADB devices are connected
                 result = await asyncio.to_thread(
-                    lambda: subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=2.0)
+                    lambda: subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=2.0, creationflags=self.creationflags)
                 )
                 lines = result.stdout.strip().split("\n")
                 devices = [line.split()[0] for line in lines[1:] if line.strip() and "device" in line]
@@ -41,11 +43,11 @@ class ADBManager:
                         
                         # Setup ADB reverse (Tablet -> PC)
                         await asyncio.to_thread(
-                            lambda: subprocess.run(["adb", "reverse", "tcp:5000", "tcp:5000"], capture_output=True, timeout=2.0)
+                            lambda: subprocess.run(["adb", "reverse", "tcp:5000", "tcp:5000"], capture_output=True, timeout=2.0, creationflags=self.creationflags)
                         )
                         # Setup ADB forward (PC -> Tablet)
                         await asyncio.to_thread(
-                            lambda: subprocess.run(["adb", "forward", "tcp:8554", "tcp:8554"], capture_output=True, timeout=2.0)
+                            lambda: subprocess.run(["adb", "forward", "tcp:8554", "tcp:8554"], capture_output=True, timeout=2.0, creationflags=self.creationflags)
                         )
                 else:
                     if adb_connected:
@@ -58,16 +60,16 @@ class ADBManager:
     def setup_usb_forwarding_if_available(self, rtsp_url: str) -> str:
         try:
             # Check if any ADB devices are connected
-            result = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=2.0)
+            result = subprocess.run(["adb", "devices"], capture_output=True, text=True, timeout=2.0, creationflags=self.creationflags)
             lines = result.stdout.strip().split("\n")
             devices = [line.split()[0] for line in lines[1:] if line.strip() and "device" in line]
             
             if devices:
                 self.log(f"USB device detected ({devices[0]}). Setting up ADB port forwarding...")
                 # Setup ADB forward (PC -> Tablet)
-                subprocess.run(["adb", "forward", "tcp:8554", "tcp:8554"], capture_output=True, timeout=2.0)
+                subprocess.run(["adb", "forward", "tcp:8554", "tcp:8554"], capture_output=True, timeout=2.0, creationflags=self.creationflags)
                 # Setup ADB reverse (Tablet -> PC)
-                subprocess.run(["adb", "reverse", "tcp:5000", "tcp:5000"], capture_output=True, timeout=2.0)
+                subprocess.run(["adb", "reverse", "tcp:5000", "tcp:5000"], capture_output=True, timeout=2.0, creationflags=self.creationflags)
                 
                 # Replace the tablet's Wi-Fi IP address with localhost (127.0.0.1) to force streaming over USB
                 # e.g., "rtsp://192.168.1.116:8554/live" -> "rtsp://127.0.0.1:8554/live"

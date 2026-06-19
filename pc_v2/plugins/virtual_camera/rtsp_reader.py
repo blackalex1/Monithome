@@ -51,11 +51,13 @@ class RTSPStreamReader:
         self.log(f"RTSP Reader starting FFmpeg subprocess for {self.rtsp_url}...")
         try:
             self.ffmpeg_log = open(ffmpeg_log_path, "w", encoding="utf-8")
+            flags = 0x08000000 if os.name == 'nt' else 0
             self.process = subprocess.Popen(
                 cmd, 
                 stdout=subprocess.PIPE, 
                 stderr=self.ffmpeg_log, 
-                bufsize=10**7
+                bufsize=10**7,
+                creationflags=flags
             )
         except Exception as e:
             self.log(f"Failed to start FFmpeg subprocess: {e}")

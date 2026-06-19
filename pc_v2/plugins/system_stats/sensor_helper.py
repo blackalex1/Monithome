@@ -198,6 +198,10 @@ class SensorHelper:
                 except:
                     pass
 
+                # В конце цикла вызываем gc.collect() для очистки pythonnet оберток
+                import gc
+                gc.collect()
+
                 time.sleep(1)
         except Exception as e:
             log(f"Fatal Error: {e}")

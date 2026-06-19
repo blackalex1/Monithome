@@ -138,6 +138,7 @@ async def main_loop():
     is_first_run = True
     last_poll_time = time.time()
     last_manager_refresh = time.time()
+    last_mem_check = 0
     
     print(json.dumps({"log": "Entering main_loop"}), flush=True)
     vol_manager = SystemVolume(trigger_update)
@@ -157,6 +158,20 @@ async def main_loop():
 
     while True:
         try:
+            # Периодическая проверка утечки памяти (раз в 30 секунд)
+            now_time = time.time()
+            if now_time - last_mem_check > 30.0:
+                last_mem_check = now_time
+                try:
+                    import psutil
+                    process = psutil.Process(os.getpid())
+                    mem_mb = process.memory_info().rss / (1024 * 1024)
+                    if mem_mb > 150: # Лимит 150 МБ
+                        print(json.dumps({"log": f"Memory threshold exceeded ({mem_mb:.1f} MB). Restarting scanner..."}), flush=True)
+                        break
+                except Exception as mem_err:
+                    pass
+
             # 1. Громкость
             cur_vol, cur_mute = vol_manager.get_info()
 
