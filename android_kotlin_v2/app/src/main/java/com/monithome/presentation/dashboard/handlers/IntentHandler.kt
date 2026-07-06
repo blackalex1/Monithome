@@ -25,9 +25,9 @@ class IntentHandler(
                 if (intent.url != null) {
                     settingsRepository.saveString("server_url", intent.url)
                     
-                    // Ищем UUID этого сервера среди обнаруженных
+                    // Ищем UUID этого сервера среди обнаруженных (или берем сохраненный для этого URL)
                     val discovered = state.value.discoveredServers.find { it.url == intent.url }
-                    val uuid = discovered?.uuid
+                    val uuid = discovered?.uuid ?: settingsRepository.getString("server_uuid_${intent.url}")
                     
                     val token = if (!uuid.isNullOrEmpty()) {
                         settingsRepository.getString("auth_token_$uuid")

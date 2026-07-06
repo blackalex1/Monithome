@@ -1,3 +1,7 @@
+param(
+    [switch]$Clean
+)
+
 # Скрипт для сборки проекта в ЕДИНЫЙ EXE файл
 
 $ProjectRoot = Get-Location
@@ -14,22 +18,42 @@ if (!(Get-Command pyinstaller -ErrorAction SilentlyContinue)) {
 
 # 2. Очистка
 Write-Host "Cleaning up old builds..."
-if (Test-Path $BinDir) { Remove-Item -Recurse -Force $BinDir }
-if (Test-Path $BuildTmp) { Remove-Item -Recurse -Force $BuildTmp }
-if (Test-Path "MonitHome.spec") { Remove-Item "MonitHome.spec" }
+if ($Clean) {
+    if (Test-Path $BinDir) { Remove-Item -Recurse -Force $BinDir }
+    if (Test-Path $BuildTmp) { Remove-Item -Recurse -Force $BuildTmp }
+    if (Test-Path "MonitHome.spec") { Remove-Item "MonitHome.spec" }
+} else {
+    $ExePath = Join-Path $BinDir "MonitHome.exe"
+    if (Test-Path $ExePath) { Remove-Item -Force $ExePath }
+}
 
 # 3. Сборка
 Write-Host "Building single executable (please wait)..." -ForegroundColor Green
-pyinstaller --noconsole `
-            --onefile `
-            --clean `
-            --name "MonitHome" `
-            --distpath "$BinDir" `
-            --workpath "$BuildTmp" `
-            --add-data "web;web" `
-            --add-data "plugins;plugins" `
-            --icon "web/favicon.png" `
-            "pc_gui_app.py"
+
+$ArgsList = @(
+    "--noconsole",
+    "--onefile",
+    "--name", "MonitHome",
+    "--distpath", "$BinDir",
+    "--workpath", "$BuildTmp",
+    "--noupx",
+    "--exclude-module", "numpy",
+    "--exclude-module", "pandas",
+    "--exclude-module", "matplotlib",
+    "--exclude-module", "scipy",
+    "--exclude-module", "tkinter",
+    "--exclude-module", "IPython",
+    "--add-data", "web;web",
+    "--add-data", "plugins;plugins",
+    "--icon", "web/favicon.png",
+    "pc_gui_app.py"
+)
+
+if ($Clean) {
+    $ArgsList += "--clean"
+}
+
+pyinstaller @ArgsList
 
 if ($LASTEXITCODE -eq 0) {
     # Очистка мусора

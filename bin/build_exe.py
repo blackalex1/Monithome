@@ -24,6 +24,9 @@ def build_single_exe():
             if os.path.isdir(path): shutil.rmtree(path)
             else: os.remove(path)
 
+    # Check if --clean is requested in command-line arguments
+    use_clean = "--clean" in sys.argv
+
     # 2. Сборка
     cmd = [
         sys.executable, "-m", "PyInstaller",
@@ -33,7 +36,14 @@ def build_single_exe():
         f"--distpath={bin_folder}",   # EXE упадет прямо в папку bin
         f"--workpath={work_path}",
         f"--specpath={bin_folder}",
-        "--clean",
+        "--noupx",
+        # Исключаем тяжелые неиспользуемые модули для ускорения анализа и уменьшения размера EXE
+        "--exclude-module=numpy",
+        "--exclude-module=pandas",
+        "--exclude-module=matplotlib",
+        "--exclude-module=scipy",
+        "--exclude-module=tkinter",
+        "--exclude-module=IPython",
         # Указываем полные пути к папкам данных в pc_v2
         f"--add-data={os.path.join(pc_v2_path, 'web')};web",
         f"--add-data={os.path.join(pc_v2_path, 'plugins')};plugins",
@@ -49,6 +59,9 @@ def build_single_exe():
         f"--icon={os.path.join(project_root, 'icons', 'pc_icon.ico')}",
         entry_script
     ]
+
+    if use_clean:
+        cmd.append("--clean")
 
     print(f"--- Running PyInstaller ---")
     try:

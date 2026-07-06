@@ -14,10 +14,16 @@ if not exist "venv10\Scripts\activate.bat" (
 call venv10\Scripts\activate.bat
 
 echo [2/3] Checking requirements for build...
-pip install pyinstaller pillow
+where pyinstaller >nul 2>nul
+if %ERRORLEVEL% NEQ 0 (
+    echo PyInstaller not found. Installing requirements...
+    pip install pyinstaller pillow
+) else (
+    echo PyInstaller is already installed. Skipping install check.
+)
 
 echo [3/3] Starting build script in bin...
-python bin\build_exe.py
+python bin\build_exe.py %*
 
 if %ERRORLEVEL% NEQ 0 (
     echo.

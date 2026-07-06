@@ -145,6 +145,9 @@ class DashboardViewModel(
                 val uuid = event.serverUuid
                 if (!uuid.isNullOrEmpty()) {
                     settingsRepository.saveString("auth_token_$uuid", event.token)
+                    _state.value.serverUrl?.let { url ->
+                        settingsRepository.saveString("server_uuid_$url", uuid)
+                    }
                     Log.i("DashboardVM", "Saved token for server: $uuid")
                 }
                 settingsRepository.saveString("auth_token", event.token)
