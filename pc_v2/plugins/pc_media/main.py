@@ -26,22 +26,36 @@ class Plugin(BasePlugin):
         self._process = None
 
     async def on_start(self):
-        self.log("pc_media started. Spawning scanner process...")
-        self._scanner_task = asyncio.create_task(self._media_worker())
+        config = self.get_config()
+        enabled = config.get("pc_enabled", True)
+        if enabled:
+            await self.start_scanner()
+        else:
+            self.log("pc_media is disabled by configuration. Deferring scanner startup (lazy start).")
 
     async def on_stop(self):
+        await self.stop_scanner()
+        self.log("pc_media stopped.")
+
+    async def start_scanner(self):
+        if not self._scanner_task:
+            self.log("Spawning media scanner process...")
+            self._scanner_task = asyncio.create_task(self._media_worker())
+
+    async def stop_scanner(self):
         if self._scanner_task:
             self._scanner_task.cancel()
+            self._scanner_task = None
         if self._process:
             try:
                 self._process.terminate()
-                # Даем немного времени на вежливое завершение, если нет - убиваем
                 try:
                     await asyncio.wait_for(self._process.wait(), timeout=1.0)
                 except asyncio.TimeoutError:
                     self._process.kill()
             except: pass
-        self.log("pc_media stopped.")
+            self._process = None
+        self._media_info["status"] = "offline"
 
     async def _media_worker(self):
         python_exe = sys.executable
@@ -57,6 +71,7 @@ class Plugin(BasePlugin):
                 
                 self._process = await asyncio.create_subprocess_exec(
                     python_exe, scanner_path,
+                    stdin=asyncio.subprocess.PIPE,
                     stdout=asyncio.subprocess.PIPE,
                     stderr=asyncio.subprocess.STDOUT,
                     creationflags=creationflags
@@ -155,7 +170,12 @@ class Plugin(BasePlugin):
 
     async def handle_command(self, action: str, data: any):
         if action == "handle_wizard":
-            self.save_config({"pc_enabled": "pc_media_enabled" in data})
+            enabled = "pc_media_enabled" in data
+            self.save_config({"pc_enabled": enabled})
+            if enabled:
+                await self.start_scanner()
+            else:
+                await self.stop_scanner()
             return
 
         if action.startswith("set_volume:"):
@@ -172,3 +192,13 @@ class Plugin(BasePlugin):
             press_media_key(VK_MEDIA_PREV_TRACK)
         elif action == "play_pause":
             press_media_key(VK_MEDIA_PLAY_PAUSE)
+        elif action.startswith("seek:"):
+            try:
+                pos = float(action.split(":")[1])
+                if self._process and self._process.stdin:
+                    cmd_str = json.dumps({"action": "seek", "position": pos}) + "\n"
+                    self._process.stdin.write(cmd_str.encode())
+                    await self._process.stdin.drain()
+                    self.log(f"Sent seek command to scanner: {pos}s")
+            except Exception as e:
+                self.log(f"Seek error: {e}")

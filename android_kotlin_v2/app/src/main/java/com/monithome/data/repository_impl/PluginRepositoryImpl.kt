@@ -101,13 +101,16 @@ class PluginRepositoryImpl(
                 }
                 "next_track" -> "next"
                 "prev_track" -> "prev"
-                else -> if (action.startsWith("set_volume:")) "setVolume" else null
+                else -> if (action.startsWith("set_volume:")) "setVolume" else if (action.startsWith("seek:")) "rewind" else null
             }
             
             if (yandexCommand != null) {
                 val payload = if (yandexCommand == "setVolume") {
                     val vol = action.substringAfter(":").toDouble() / 100.0
                     JSONObject().apply { put("volume", vol) }
+                } else if (yandexCommand == "rewind") {
+                    val pos = action.substringAfter(":").toDouble()
+                    JSONObject().apply { put("position", pos) }
                 } else null
                 yandexClient.sendCommand(target, yandexCommand, payload)
                 return

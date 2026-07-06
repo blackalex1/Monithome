@@ -125,10 +125,29 @@ async def save_cover_to_file(props, file_path):
 async def main_loop():
     loop = asyncio.get_running_loop()
     update_event = asyncio.Event()
+    command_queue = asyncio.Queue()
     
     def trigger_update(*args):
         # Используем сохраненный loop для потокобезопасного вызова
         loop.call_soon_threadsafe(update_event.set)
+
+    # Запускаем фоновый поток для чтения stdin
+    def stdin_thread_worker():
+        while True:
+            try:
+                line = sys.stdin.readline()
+                if not line:
+                    break
+                line = line.strip()
+                if line:
+                    def post_cmd(cmd=line):
+                        command_queue.put_nowait(cmd)
+                        update_event.set()
+                    loop.call_soon_threadsafe(post_cmd)
+            except Exception:
+                break
+
+    threading.Thread(target=stdin_thread_worker, daemon=True).start()
 
     last_info = {"title": "___INIT___", "artist": "", "playing": False, "volume": -1, "mute": None, "progress": -1.0}
     last_print_time = 0
@@ -192,6 +211,18 @@ async def main_loop():
                 if not session:
                     session = manager.get_current_session()
             except: pass
+
+            # Обрабатываем команды перемотки из stdin
+            while not command_queue.empty():
+                cmd_line = command_queue.get_nowait()
+                try:
+                    cmd_data = json.loads(cmd_line)
+                    if cmd_data.get("action") == "seek" and session:
+                        pos = float(cmd_data.get("position", 0.0))
+                        ticks = int(pos * 10_000_000)
+                        await session.try_change_playback_position_async(ticks)
+                except Exception as e:
+                    print(json.dumps({"log": f"Seek error in scanner: {e}"}), flush=True)
 
             info = {
                 "volume": cur_vol,

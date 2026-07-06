@@ -29,6 +29,7 @@ os.environ["QTWEBENGINE_CHROMIUM_FLAGS"] = (
     "--enable-low-end-device-mode "
     "--renderer-process-limit=1 "
     "--js-flags=\"--max-old-space-size=128\" "
+    "--disable-gpu "
     "--disable-gpu-shader-disk-cache "
     "--disable-gpu-program-cache "
     "--disable-extensions "
@@ -58,7 +59,7 @@ try:
         QSystemTrayIcon, QMenu
     )
     from PySide6.QtWebEngineWidgets import QWebEngineView
-    from PySide6.QtCore import QUrl, Signal, QObject, Slot, Qt, QTimer
+    from PySide6.QtCore import QUrl, Signal, QObject, Slot, Qt, QTimer, QEvent
     from PySide6.QtGui import QIcon, QAction
 except ImportError:
     print("PySide6 is not installed. Please run: pip install PySide6")
@@ -414,21 +415,19 @@ class MainWindow(QMainWindow):
         # Разрешаем самоподписанные сертификаты для локального хоста
         self.browser.page().certificateError.connect(self.handle_certificate_error)
         
-        # Установка куки с токеном ДО загрузки страницы
-        from PySide6.QtNetwork import QNetworkCookie
-        from PySide6.QtCore import QByteArray
-        
-        cookie = QNetworkCookie(QByteArray(b"gui_token"), QByteArray(config_manager.gui_token.encode()))
-        cookie.setDomain("127.0.0.1")
-        cookie.setPath("/")
-        self.browser.page().profile().cookieStore().setCookie(cookie)
-        
-        self.browser.setUrl(QUrl(self.target_url))
+        self.web_loaded = False
         
         # Обработка ошибок загрузки (например, если сервер еще не встал)
         self.browser.loadFinished.connect(self._on_load_finished)
         
         self.setup_tray()
+        
+        # Обработка выключения системы (Windows shutdown/logoff) для предотвращения зависания OS
+        QApplication.instance().commitDataRequest.connect(self._on_commit_data_request)
+
+    def _on_commit_data_request(self, manager):
+        logger.info("Session commit requested (OS shutdown/logoff). Terminating application...")
+        self.quit_application()
 
     def handle_certificate_error(self, error):
         # Автоматически доверяем нашему самоподписанному локальному SSL-сертификату
@@ -475,10 +474,51 @@ class MainWindow(QMainWindow):
         self.activateWindow()
         self.raise_()
 
+    def load_web_content(self):
+        if not self.web_loaded and not self.isMinimized() and self.isVisible():
+            logger.info("Loading dashboard web content...")
+            from PySide6.QtNetwork import QNetworkCookie
+            from PySide6.QtCore import QByteArray
+            
+            cookie = QNetworkCookie(QByteArray(b"gui_token"), QByteArray(config_manager.gui_token.encode()))
+            cookie.setDomain("127.0.0.1")
+            cookie.setPath("/")
+            self.browser.page().profile().cookieStore().setCookie(cookie)
+            
+            self.browser.setUrl(QUrl(self.target_url))
+            self.web_loaded = True
+
+    def unload_web_content(self):
+        if self.web_loaded:
+            logger.info("Unloading dashboard web content to free RAM...")
+            self.browser.setUrl(QUrl("about:blank"))
+            self.web_loaded = False
+            try:
+                self.browser.page().profile().clearHttpCache()
+            except:
+                pass
+
+    def showEvent(self, event):
+        self.load_web_content()
+        super().showEvent(event)
+
+    def hideEvent(self, event):
+        self.unload_web_content()
+        super().hideEvent(event)
+
+    def changeEvent(self, event):
+        if event.type() == QEvent.WindowStateChange:
+            if self.isMinimized():
+                self.hide()
+            else:
+                self.load_web_content()
+        super().changeEvent(event)
+
     def _on_load_finished(self, success):
         if not success:
-            logger.warning("Page load failed, retrying in 2 seconds...")
-            QTimer.singleShot(2000, lambda: self.browser.setUrl(QUrl(self.target_url)))
+            if self.web_loaded:
+                logger.warning("Page load failed, retrying in 2 seconds...")
+                QTimer.singleShot(2000, lambda: self.browser.setUrl(QUrl(self.target_url)) if self.web_loaded else None)
 
     def closeEvent(self, event):
         """Перехват закрытия окна: прячем в трей"""

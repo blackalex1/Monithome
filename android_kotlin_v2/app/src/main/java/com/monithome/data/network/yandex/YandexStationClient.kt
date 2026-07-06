@@ -32,6 +32,7 @@ class YandexStationClient(context: Context, baseClient: OkHttpClient) {
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private val activeConnections = ConcurrentHashMap<String, WebSocket>()
     private val stationConfigs = ConcurrentHashMap<String, StationConfig>()
+    private val connectionJobs = ConcurrentHashMap<String, Job>()
     private val nsdManager = context.getSystemService(Context.NSD_SERVICE) as NsdManager
     
     @Volatile
@@ -81,6 +82,8 @@ class YandexStationClient(context: Context, baseClient: OkHttpClient) {
     }
 
     fun stopAll() {
+        connectionJobs.values.forEach { it.cancel() }
+        connectionJobs.clear()
         activeConnections.values.forEach { it.close(1000, "Stopped") }
         activeConnections.clear()
         stationConfigs.clear()
@@ -89,10 +92,14 @@ class YandexStationClient(context: Context, baseClient: OkHttpClient) {
 
     private fun reconnect(deviceId: String) {
         val config = stationConfigs[deviceId] ?: return
+        
+        // Cancel any pending connection task for this device to prevent race leaks
+        connectionJobs.remove(deviceId)?.cancel()
+        
         val oldWs = activeConnections.remove(deviceId)
         oldWs?.close(1000, "Reconnecting")
         
-        scope.launch {
+        val job = scope.launch {
             var currentConfig = config
             val oauthToken = yandexToken
             if (oauthToken != null) {
@@ -179,6 +186,8 @@ class YandexStationClient(context: Context, baseClient: OkHttpClient) {
 
             client.newWebSocket(request, listener)
         }
+        
+        connectionJobs[deviceId] = job
     }
 
     private suspend fun refreshGlagolToken(deviceId: String): String? = withContext(Dispatchers.IO) {

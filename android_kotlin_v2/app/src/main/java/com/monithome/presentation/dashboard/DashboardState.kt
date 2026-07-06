@@ -76,6 +76,7 @@ sealed class DashboardIntent {
     object NextTrack : DashboardIntent()
     object PrevTrack : DashboardIntent()
     data class SetVolume(val volume: Int) : DashboardIntent()
+    data class Seek(val position: Double) : DashboardIntent()
     object ToggleLyricsFullScreen : DashboardIntent()
     object ToggleStatsExpanded : DashboardIntent()
     data class PluginCommand(

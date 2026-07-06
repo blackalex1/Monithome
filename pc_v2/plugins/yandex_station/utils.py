@@ -14,7 +14,20 @@ def parse_state(s):
     extra = p.get("extra", {})
     
     title = p.get("title") or extra.get("title") or ""
-    artist = p.get("subtitle") or extra.get("artist") or ""
+    
+    # Разбираем список артистов для коллабораций
+    artists_list = []
+    artists_raw = extra.get("artists") or p.get("artists")
+    if isinstance(artists_raw, list):
+        for art in artists_raw:
+            if isinstance(art, dict) and art.get("name"):
+                artists_list.append(art["name"])
+                
+    if artists_list:
+        artist = ", ".join(artists_list)
+    else:
+        artist = p.get("subtitle") or extra.get("artist") or ""
+        
     track_id = p.get("id") or extra.get("id") or ""
     
     cover = ""

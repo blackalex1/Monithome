@@ -8,8 +8,13 @@ import androidx.compose.material.icons.automirrored.filled.VolumeUp
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -63,6 +68,22 @@ fun MediaWidget(
                         modifier = Modifier.basicMarquee()
                     )
                 }
+            }
+
+            Spacer(modifier = Modifier.height(16.dp))
+            SmoothProgressBar(
+                baseProgress = state.baseProgress,
+                duration = state.duration,
+                lastUpdateUnixTime = state.lastUpdateUnixTime,
+                isPlaying = state.isPlaying,
+                onSeek = { position -> onIntent(DashboardIntent.Seek(position)) }
+            )
+
+            Spacer(modifier = Modifier.height(12.dp))
+            Box(
+                modifier = Modifier.fillMaxWidth(),
+                contentAlignment = Alignment.Center
+            ) {
                 MediaControls(
                     isPlaying = state.isPlaying,
                     onPlayPause = { onIntent(DashboardIntent.PlayPause) },
@@ -72,9 +93,6 @@ fun MediaWidget(
             }
 
             Spacer(modifier = Modifier.height(16.dp))
-            SmoothProgressBar(state.baseProgress, state.duration, state.lastUpdateUnixTime, state.isPlaying)
-
-            Spacer(modifier = Modifier.height(8.dp))
             VolumeControl(volume = state.volume, onVolumeChange = { onIntent(DashboardIntent.SetVolume(it)) })
         }
     }
@@ -104,15 +122,100 @@ fun MediaSourceSelector(sources: List<MediaSource>, translations: Map<String, St
 @Composable
 fun VolumeControl(volume: Int, onVolumeChange: (Int) -> Unit) {
     var localVolume by remember(volume) { mutableFloatStateOf(volume.toFloat()) }
+    var isDragging by remember { mutableStateOf(false) }
+
     Row(verticalAlignment = Alignment.CenterVertically) {
-        Icon(Icons.AutoMirrored.Filled.VolumeDown, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp))
-        Slider(
-            value = localVolume,
-            onValueChange = { localVolume = it },
-            onValueChangeFinished = { onVolumeChange(localVolume.toInt()) },
-            valueRange = 0f..100f,
-            modifier = Modifier.weight(1f).padding(horizontal = 8.dp)
+        Icon(
+            Icons.AutoMirrored.Filled.VolumeDown, 
+            contentDescription = null, 
+            tint = Color.Gray, 
+            modifier = Modifier.size(20.dp)
         )
-        Icon(Icons.AutoMirrored.Filled.VolumeUp, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(20.dp))
+        
+        BoxWithConstraints(
+            modifier = Modifier
+                .weight(1f)
+                .height(18.dp)
+                .padding(horizontal = 8.dp)
+                .pointerInput(Unit) {
+                    awaitEachGesture {
+                        val down = awaitFirstDown(requireUnconsumed = false)
+                        isDragging = true
+                        localVolume = ((down.position.x / size.width) * 100f).coerceIn(0f, 100f)
+                        
+                        val pointerId = down.id
+                        while (true) {
+                            val event = awaitPointerEvent()
+                            val change = event.changes.firstOrNull { it.id == pointerId }
+                            if (change == null || !change.pressed) {
+                                break
+                            }
+                            change.consume()
+                            localVolume = ((change.position.x / size.width) * 100f).coerceIn(0f, 100f)
+                        }
+                        
+                        isDragging = false
+                        onVolumeChange(localVolume.toInt())
+                    }
+                }
+        ) {
+            val width = constraints.maxWidth.toFloat()
+            val height = constraints.maxHeight.toFloat()
+            
+            val primaryColor = MaterialTheme.colorScheme.primary
+            val outlineColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.5f)
+            
+            val density = LocalDensity.current
+            val thumbRadius = with(density) { (if (isDragging) 8.dp else 6.dp).toPx() }
+            val trackHeight = with(density) { 4.dp.toPx() }
+            
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val centerY = height / 2
+                
+                // 1. Draw inactive track (grey line)
+                drawLine(
+                    color = outlineColor,
+                    start = androidx.compose.ui.geometry.Offset(0f, centerY),
+                    end = androidx.compose.ui.geometry.Offset(width, centerY),
+                    strokeWidth = trackHeight,
+                    cap = androidx.compose.ui.graphics.StrokeCap.Round
+                )
+                
+                // 2. Draw active track (colored progress line)
+                val activeRatio = localVolume / 100f
+                val activeX = activeRatio * width
+                if (activeX > 0f) {
+                    drawLine(
+                        color = primaryColor,
+                        start = androidx.compose.ui.geometry.Offset(0f, centerY),
+                        end = androidx.compose.ui.geometry.Offset(activeX, centerY),
+                        strokeWidth = trackHeight,
+                        cap = androidx.compose.ui.graphics.StrokeCap.Round
+                    )
+                }
+                
+                // 3. Draw thumb (white circle with colored border outline)
+                drawCircle(
+                    color = Color.White,
+                    radius = thumbRadius,
+                    center = androidx.compose.ui.geometry.Offset(activeX, centerY)
+                )
+                drawCircle(
+                    color = primaryColor,
+                    radius = thumbRadius - 1.5f.dp.toPx(),
+                    center = androidx.compose.ui.geometry.Offset(activeX, centerY),
+                    style = androidx.compose.ui.graphics.drawscope.Stroke(
+                        width = 3.dp.toPx()
+                    )
+                )
+            }
+        }
+
+        Icon(
+            Icons.AutoMirrored.Filled.VolumeUp, 
+            contentDescription = null, 
+            tint = Color.Gray, 
+            modifier = Modifier.size(20.dp)
+        )
     }
 }

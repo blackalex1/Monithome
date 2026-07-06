@@ -154,6 +154,13 @@ class DeviceWorker:
 
     async def _internal_parse_state(self, s):
         new_vals = parse_state(s)
+        
+        # Проверяем кэш соавторов на ПК
+        cached_track = self.plugin.states[self.device_id].get("_collab_track_id")
+        cached_artist = self.plugin.states[self.device_id].get("_collab_artist_cache")
+        if cached_artist and cached_track == new_vals.get("track_id"):
+            new_vals["artist"] = cached_artist
+
         core_changed = False
         core_keys = ["playing", "title", "artist", "volume", "track_id", "progress"]
         for k in core_keys:
@@ -162,18 +169,55 @@ class DeviceWorker:
                 break
         
         old_track = self.plugin.states[self.device_id].get("track_id")
-        is_new_track = bool(new_vals.get("track_id")) and new_vals.get("track_id") != old_track
+        track_id = new_vals.get("track_id")
+        is_new_track = bool(track_id) and track_id != old_track
 
         self.plugin.states[self.device_id].update(new_vals)
         self.plugin.states[self.device_id]["last_update"] = time.time()
 
         if is_new_track:
+            self.plugin.states[self.device_id]["_collab_track_id"] = track_id
+            self.plugin.states[self.device_id]["_collab_artist_cache"] = None
+            
             await self.plugin.emit_event("track_changed", {
                 "device_id": self.device_id, 
-                "track_id": new_vals["track_id"],
+                "track_id": track_id,
                 "title": new_vals.get("title"),
                 "artist": new_vals.get("artist")
             })
+            
+            # Запускаем фоновый запрос к Yandex Music API для получения списка соавторов
+            async def fetch_collab_artists():
+                import aiohttp
+                token = self.plugin.get_secret("YANDEX_TOKEN")
+                if token:
+                    headers = {
+                        "Authorization": f"OAuth {token}",
+                        "X-Yandex-Music-Client": "YandexMusicAndroid/24023621",
+                        "User-Agent": "Mozilla/5.0"
+                    }
+                    try:
+                        async with aiohttp.ClientSession(headers=headers) as session:
+                            raw_id = track_id.split(":")[0]
+                            async with session.get(f"https://api.music.yandex.net/tracks/{raw_id}", timeout=5) as r:
+                                if r.status == 200:
+                                    res_json = await r.json()
+                                    result = res_json.get("result")
+                                    if isinstance(result, list) and len(result) > 0:
+                                        result = result[0]
+                                    if isinstance(result, dict):
+                                        artists_raw = result.get("artists", [])
+                                        names = [a["name"] for a in artists_raw if isinstance(a, dict) and a.get("name")]
+                                        if names:
+                                            joined_names = ", ".join(names)
+                                            if self.plugin.states[self.device_id].get("track_id") == track_id:
+                                                self.plugin.states[self.device_id]["artist"] = joined_names
+                                                self.plugin.states[self.device_id]["_collab_artist_cache"] = joined_names
+                                                await self.plugin.broadcaster.push_state()
+                    except Exception as e:
+                        self.log(f"Failed to fetch collab artists for track {track_id}: {e}", 30)
+
+            asyncio.create_task(fetch_collab_artists())
 
         new_cover = new_vals.get("cover", "")
         old_cover = self.plugin.states[self.device_id].get("_sent_cover", "")

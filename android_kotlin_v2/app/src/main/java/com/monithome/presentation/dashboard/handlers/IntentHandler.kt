@@ -73,6 +73,11 @@ class IntentHandler(
                 val source = media.sources.find { "${it.pluginId}:${it.deviceId}" == media.selectedSourceId }
                 if (source != null) pluginRepository.sendCommand(source.pluginId, "set_volume:${intent.volume}", source.deviceId)
             }
+            is DashboardIntent.Seek -> {
+                val media = state.value.mediaState
+                val source = media.sources.find { "${it.pluginId}:${it.deviceId}" == media.selectedSourceId }
+                if (source != null) pluginRepository.sendCommand(source.pluginId, "seek:${intent.position}", source.deviceId)
+            }
             is DashboardIntent.ToggleLyricsFullScreen -> state.update { it.copy(isLyricsFullScreen = !it.isLyricsFullScreen) }
             is DashboardIntent.PluginCommand -> {
                 pluginRepository.sendCommand(intent.pluginId, intent.action, intent.target, intent.data)

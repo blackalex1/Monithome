@@ -102,6 +102,13 @@ class DeviceManager:
                 self.plugin.states[target]["volume"] = int(float(val))
                 self.plugin._force_broadcast_until[target] = time.time() + 3.0
             except: pass
+        elif cmd == "seek":
+            try:
+                pos = float(val)
+                payload_data = {"command": "rewind", "position": pos}
+                self.plugin.states[target]["progress"] = pos
+                self.plugin._force_broadcast_until[target] = time.time() + 3.0
+            except: pass
         elif cmd == "sync_track":
             if data and isinstance(data, dict):
                 track_id = data.get("track_id")

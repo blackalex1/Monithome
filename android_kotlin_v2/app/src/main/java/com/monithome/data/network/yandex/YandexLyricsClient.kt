@@ -336,4 +336,43 @@ class YandexLyricsClient(baseClient: OkHttpClient) {
 
         return null
     }
+
+    suspend fun fetchTrackArtists(trackId: String, token: String): List<String> = withContext(Dispatchers.IO) {
+        val rawId = trackId.split(":").first()
+        val headers = mapOf(
+            "Authorization" to "OAuth $token",
+            "X-Yandex-Music-Client" to "YandexMusicAndroid/24023621"
+        )
+        try {
+            val request = Request.Builder()
+                .url("https://api.music.yandex.net/tracks/$rawId")
+                .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+                .build()
+                
+            client.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext emptyList()
+                val body = response.body.string()
+                val json = JSONObject(body)
+                var result = json.optJSONObject("result")
+                if (result == null) {
+                    result = json.optJSONArray("result")?.optJSONObject(0)
+                }
+                if (result != null) {
+                    val artistsArray = result.optJSONArray("artists")
+                    if (artistsArray != null) {
+                        val names = mutableListOf<String>()
+                        for (i in 0 until artistsArray.length()) {
+                            val art = artistsArray.optJSONObject(i)
+                            val name = art?.optString("name") ?: ""
+                            if (name.isNotEmpty()) names.add(name)
+                        }
+                        return@withContext names
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error fetching track artists for $trackId: ${e.message}", e)
+        }
+        return@withContext emptyList()
+    }
 }

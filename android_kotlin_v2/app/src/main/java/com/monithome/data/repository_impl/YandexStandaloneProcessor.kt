@@ -16,6 +16,7 @@ class YandexStandaloneProcessor(
 ) {
     private val scope = CoroutineScope(Dispatchers.IO)
     private val lastTrackIds = ConcurrentHashMap<String, String>()
+    private val collabArtistsCache = ConcurrentHashMap<String, String>()
 
     fun handleYandexEvent(
         event: YandexStationEvent,
@@ -64,13 +65,43 @@ class YandexStandaloneProcessor(
         val extra = playerState.optJSONObject("extra") ?: JSONObject()
         
         val title = playerState.optString("title").ifEmpty { extra.optString("title") }.ifEmpty { "" }
-        val artist = playerState.optString("subtitle").ifEmpty { extra.optString("artist") }.ifEmpty { "" }
         val trackId = playerState.optString("id").ifEmpty { extra.optString("id") }.ifEmpty { "" }
+        
+        val rawArtist = playerState.optString("subtitle").ifEmpty { extra.optString("artist") }.ifEmpty { "" }
+        val cachedCollab = if (trackId.isNotEmpty()) collabArtistsCache[trackId] else null
+        val artist = cachedCollab ?: rawArtist
         
         // Проверка смены трека для загрузки текста
         if (trackId.isNotEmpty() && trackId != lastTrackIds[deviceId]) {
             lastTrackIds[deviceId] = trackId
             fetchLyricsForDevice(deviceId, trackId, artist, title, yandexToken, statsFlows)
+            
+            // Запускаем фоновое получение полного списка артистов для коллабораций
+            if (yandexToken != null) {
+                scope.launch {
+                    try {
+                        val artistsList = yandexLyricsClient.fetchTrackArtists(trackId, yandexToken)
+                        if (artistsList.isNotEmpty()) {
+                            val joinedArtists = artistsList.joinToString(", ")
+                            collabArtistsCache[trackId] = joinedArtists
+                            
+                            // Обновляем состояние
+                            val currentFlow = statsFlows.getOrPut("yandex_station") { MutableStateFlow(emptyMap()) }
+                            @Suppress("UNCHECKED_CAST")
+                            val devList = (currentFlow.value["devices"] as? List<Map<String, Any>>)?.toMutableList() ?: mutableListOf()
+                            val idx = devList.indexOfFirst { it["id"] == deviceId }
+                            if (idx >= 0) {
+                                val updated = devList[idx].toMutableMap()
+                                updated["artist"] = joinedArtists
+                                devList[idx] = updated
+                                currentFlow.update { it.toMutableMap().apply { put("devices", devList) } }
+                            }
+                        }
+                    } catch (e: Exception) {
+                        Log.e("YandexProcessor", "Failed to fetch artists for collab: ${e.message}")
+                    }
+                }
+            }
         } else if (trackId.isEmpty() && title.isNotEmpty() && title != lastTrackIds[deviceId]) {
             // Фолбек: если нет trackId, но есть название
             lastTrackIds[deviceId] = title

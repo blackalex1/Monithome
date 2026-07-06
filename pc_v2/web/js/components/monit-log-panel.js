@@ -36,17 +36,39 @@ class MonitLogPanel extends HTMLElement {
         // Проверяем, находится ли пользователь в самом низу (с запасом 50px)
         const isAtBottom = (container.scrollHeight - container.clientHeight - container.scrollTop) < 50;
 
-        output.innerHTML = '';
-        const fragment = document.createDocumentFragment();
-        logs.forEach(log => {
-            if (this.currentLogLevel === 'all' || this.currentLogLevel === log.level) {
+        // Фильтруем новые логи по текущему уровню
+        const filteredLogs = logs.filter(log => this.currentLogLevel === 'all' || this.currentLogLevel === log.level);
+        const children = output.children;
+
+        // Если это просто добавление новых логов в конец списка
+        if (children.length > 0 && filteredLogs.length >= children.length && 
+            filteredLogs[children.length - 1].message === children[children.length - 1].textContent) {
+            
+            const fragment = document.createDocumentFragment();
+            for (let i = children.length; i < filteredLogs.length; i++) {
+                const div = document.createElement('div');
+                div.className = `log-line log-${filteredLogs[i].level}`;
+                div.textContent = filteredLogs[i].message;
+                fragment.appendChild(div);
+            }
+            output.appendChild(fragment);
+
+            // Удаляем старые строки с начала, чтобы в DOM оставалось не больше 200 строк
+            while (children.length > 200) {
+                output.removeChild(output.firstChild);
+            }
+        } else {
+            // При первой загрузке или смене фильтра полностью перестраиваем DOM
+            output.innerHTML = '';
+            const fragment = document.createDocumentFragment();
+            filteredLogs.forEach(log => {
                 const div = document.createElement('div');
                 div.className = `log-line log-${log.level}`;
                 div.textContent = log.message;
                 fragment.appendChild(div);
-            }
-        });
-        output.appendChild(fragment);
+            });
+            output.appendChild(fragment);
+        }
         
         // Автопрокрутка срабатывает только если пользователь до этого смотрел низ
         if (isAtBottom) {

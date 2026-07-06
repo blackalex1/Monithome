@@ -147,7 +147,7 @@ class SensorHelper:
                                     
                             stats["sensors"][h_name] = h_sensors
 
-                        log(f"Detected: CPU={stats.get('cpu_name')}, GPU={stats.get('gpu_name')} (T:{stats['gpu_temp']}, L:{stats['gpu_load']})")
+                        # log(f"Detected: CPU={stats.get('cpu_name')}, GPU={stats.get('gpu_name')} (T:{stats['gpu_temp']}, L:{stats['gpu_load']})")
 
                     except Exception as e:
                         log(f"Update Loop Error: {e}")
